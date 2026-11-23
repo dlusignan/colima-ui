@@ -35,8 +35,8 @@ func checkInvariants(t testing.TB, res LogResult, tail int) {
 		if n := utf8.RuneCountInString(l); n > maxLogLineRunes {
 			t.Fatalf("line of %d runes", n)
 		}
-		if strings.ContainsAny(l[max(0, len(l)-1):], "\n") {
-			t.Fatalf("line keeps its newline")
+		if strings.ContainsAny(l, "\n") {
+			t.Fatalf("line contains a newline: %q", l)
 		}
 	}
 }
@@ -133,10 +133,49 @@ func TestDecodeMuxTailAndOlder(t *testing.T) {
 }
 
 func TestDecodeMuxSkipsStdinAndEmptyFrames(t *testing.T) {
-	body := mux(frame(0, "stdin\n"), frame(3, "docker error\n"), frame(1, ""), frame(2, "kept\n"))
+	body := mux(frame(0, "stdin\n"), frame(1, ""), frame(2, "kept\n"))
 	res, err := decodeLogs(bytes.NewReader(body), false, 10)
-	if err != nil || fmt.Sprint(res.Lines) != "[kept]" {
+	if err != nil || fmt.Sprint(res.Lines) != "[kept]" || res.Cut {
 		t.Fatalf("%v %+v", err, res)
+	}
+}
+
+// A frame on Docker's error channel (stream 3) means a read failed part way.
+// The snapshot is flagged as truncated and the text never appears.
+func TestDecodeMuxErrorChannelMarksTruncated(t *testing.T) {
+	body := mux(frame(1, "a\n"), frame(3, "SECRET read error\n"), frame(1, "b\n"))
+	res, err := decodeLogs(bytes.NewReader(body), false, 10)
+	if err != nil || fmt.Sprint(res.Lines) != "[a b]" || !res.Cut {
+		t.Fatalf("%v %+v", err, res)
+	}
+}
+
+// One frame can hold several lines, and a line can span frames of one stream.
+func TestDecodeMuxSplitsOnNewlines(t *testing.T) {
+	cases := map[string]struct {
+		body []byte
+		want string
+	}{
+		"two lines in one frame":    {mux(frame(1, "a\nb\n")), "[a b]"},
+		"blank lines":               {mux(frame(1, "\n\n")), "[ ]"},
+		"no trailing newline":       {mux(frame(1, "a\nb")), "[a b]"},
+		"line spans frames":         {mux(frame(1, "he"), frame(1, "llo\n")), "[hello]"},
+		"spans around other stream": {mux(frame(1, "he"), frame(2, "err\n"), frame(1, "llo\n")), "[err hello]"},
+		"unfinished lines flush":    {mux(frame(1, "out"), frame(2, "err")), "[out err]"},
+		"unfinished, stderr first":  {mux(frame(2, "err"), frame(1, "out")), "[err out]"},
+		"crlf inside a frame":       {mux(frame(1, "a\r\nb\r\n")), "[a b]"},
+	}
+	for name, tc := range cases {
+		res, err := decodeLogs(bytes.NewReader(tc.body), false, 10)
+		if err != nil || fmt.Sprint(res.Lines) != tc.want {
+			t.Fatalf("%s: %v %q", name, err, res.Lines)
+		}
+		for pos := 0; pos <= len(tc.body); pos++ {
+			res, err := decodeLogs(&splitReader{data: tc.body, pos: pos}, false, 10)
+			if err != nil || fmt.Sprint(res.Lines) != tc.want {
+				t.Fatalf("%s split %d: %v %q", name, pos, err, res.Lines)
+			}
+		}
 	}
 }
 
@@ -236,7 +275,7 @@ func TestDecodeOversizedFrameIsBoundedAndCut(t *testing.T) {
 	size := 3 << 20
 	body := mux(
 		frame(1, "before\n"),
-		frame(1, strings.Repeat("x", size)),
+		frame(1, strings.Repeat("x", size)+"\n"),
 		frame(2, "after\n"),
 	)
 	res, err := decodeLogs(bytes.NewReader(body), false, 10)
@@ -348,6 +387,7 @@ var fuzzSeeds = [][]byte{
 	{1, 0, 0, 0, 0xff, 0xff, 0xff, 0xff, 'x'},
 	{2, 0, 0, 0, 0, 0, 0, 3, 0xff, 0xfe, '\n'},
 	{3, 0, 0, 0, 0, 0, 0, 1, 'x', 0, 0, 0, 0, 0, 0, 0},
+	{1, 0, 0, 0, 0, 0, 0, 2, '\n', '\n'},
 	{4, 0, 0, 0, 0, 0, 0, 1, 'x'},
 	{1, 1, 0, 0, 0, 0, 0, 1, 'x'},
 	[]byte("plain text\r\nsecond\n"),

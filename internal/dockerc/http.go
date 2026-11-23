@@ -24,10 +24,6 @@ const (
 	maxBodyBytes     = 8 << 20
 )
 
-// logIDPattern is the only id shape the logs call accepts: lowercase hex as
-// Docker prints it, never a name or a prefix.
-var logIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
-
 var idPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
 
 type httpClient struct {
@@ -125,7 +121,7 @@ func (c *httpClient) get(ctx context.Context, timeout time.Duration, path string
 // two read-only calls: an inspect, for Config.Tty and a clean not-found, then
 // the logs call with tail+1 so that older lines can be detected.
 func (c *httpClient) Logs(ctx context.Context, id string, tail int) (LogResult, error) {
-	if !logIDPattern.MatchString(id) {
+	if !ValidLogID(id) {
 		return LogResult{}, ErrContainerNotFound
 	}
 	if tail < 1 {
@@ -140,7 +136,7 @@ func (c *httpClient) Logs(ctx context.Context, id string, tail int) (LogResult, 
 		} `json:"Config"`
 	}
 	if err := c.get(ctx, c.listTimeout, "/containers/"+id+"/json", nil, &info); err != nil {
-		return LogResult{}, err
+		return LogResult{}, logsDeadline(err)
 	}
 	q := url.Values{
 		"stdout":     {"1"},
@@ -151,7 +147,7 @@ func (c *httpClient) Logs(ctx context.Context, id string, tail int) (LogResult, 
 	special := map[int]error{http.StatusNotImplemented: ErrLogsUnavailable}
 	resp, callCtx, cancel, err := c.do(ctx, c.logsTimeout, "/containers/"+id+"/logs", q, special)
 	if err != nil {
-		return LogResult{}, err
+		return LogResult{}, logsDeadline(err)
 	}
 	defer cancel()
 	defer resp.Body.Close()
@@ -160,9 +156,18 @@ func (c *httpClient) Logs(ctx context.Context, id string, tail int) (LogResult, 
 		if errors.Is(err, ErrDockerUnavailable) {
 			return LogResult{}, err
 		}
-		return LogResult{}, c.transportErr(ctx, callCtx)
+		return LogResult{}, logsDeadline(c.transportErr(ctx, callCtx))
 	}
 	return res, nil
+}
+
+// logsDeadline turns an expired read deadline into ErrDockerUnavailable, so the
+// route answers 502 as documented. A cancelled caller keeps its own error.
+func logsDeadline(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: log read timed out", ErrDockerUnavailable)
+	}
+	return err
 }
 
 // transportErr maps a failed round trip without leaking the socket path.

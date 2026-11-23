@@ -1,11 +1,12 @@
 package dockerc
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -15,11 +16,13 @@ const (
 	MaxLogTail = 1000
 	// maxLogLineRunes cuts one line. The timestamp counts toward it.
 	maxLogLineRunes = 4000
-	// maxLogFrame is how much of one frame (or one raw line) is kept. The
-	// rest is read and discarded, so memory stays bounded.
+	// maxLogFrame is how much of one unfinished line is kept. The rest of the
+	// line is read and discarded, so memory stays bounded.
 	maxLogFrame = 64 << 10
 	// logHeaderLen is the size of a multiplexed frame header.
 	logHeaderLen = 8
+	// logReadChunk is the size of one read from the body.
+	logReadChunk = 32 << 10
 )
 
 // LogResult is the decoded tail of one container's output.
@@ -32,6 +35,9 @@ type LogResult struct {
 	// Cut is true when at least one line was shortened.
 	Cut bool
 }
+
+// logIDPattern is the id shape Logs accepts, see ValidLogID.
+var logIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 
 // errMalformedLogs marks a stream that is not valid Docker log framing. It
 // wraps ErrDockerUnavailable, so callers answer 502.
@@ -62,12 +68,15 @@ func decodeLogs(r io.Reader, tty bool, tail int) (LogResult, error) {
 
 func decodeMux(r io.Reader, b *logBuilder) error {
 	var hdr [logHeaderLen]byte
-	buf := make([]byte, maxLogFrame)
+	buf := make([]byte, logReadChunk)
+	var asm [2]lineAsm // stdout, stderr; each keeps its own unfinished line
+	seq := 0
 	for {
 		n, err := io.ReadFull(r, hdr[:])
 		if err != nil {
 			if n == 0 && errors.Is(err, io.EOF) {
-				return nil // clean end at a frame boundary
+				flushLines(b, &asm[0], &asm[1]) // clean end at a frame boundary
+				return nil
 			}
 			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 				return errMalformedLogs
@@ -77,63 +86,99 @@ func decodeMux(r io.Reader, b *logBuilder) error {
 		if hdr[0] > 3 || hdr[1] != 0 || hdr[2] != 0 || hdr[3] != 0 {
 			return errMalformedLogs
 		}
-		size := int64(binary.BigEndian.Uint32(hdr[4:]))
-		keep := size
-		if keep > maxLogFrame {
-			keep = maxLogFrame
+		stream := hdr[0]
+		// Stream 3 is Docker's error channel: a read failed part way, so the
+		// snapshot is incomplete. Its text is never kept.
+		if stream == 3 {
+			b.cut = true
 		}
-		if _, err := io.ReadFull(r, buf[:keep]); err != nil {
-			if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
-				return errMalformedLogs
-			}
-			return err
-		}
-		if rest := size - keep; rest > 0 {
-			if _, err := io.CopyN(io.Discard, r, rest); err != nil {
-				if errors.Is(err, io.EOF) {
+		for remaining := int64(binary.BigEndian.Uint32(hdr[4:])); remaining > 0; {
+			chunk := buf[:min(remaining, int64(len(buf)))]
+			if _, err := io.ReadFull(r, chunk); err != nil {
+				if errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, io.EOF) {
 					return errMalformedLogs
 				}
 				return err
 			}
-		}
-		// Stream 0 is stdin and 3 is a Docker error channel: no output.
-		if hdr[0] == 1 || hdr[0] == 2 {
-			if size == 0 {
-				continue
+			remaining -= int64(len(chunk))
+			if stream == 1 || stream == 2 { // 0 is stdin, 3 is the error channel
+				asm[stream-1].feed(chunk, b, &seq)
 			}
-			b.add(buf[:keep], size > keep)
 		}
 	}
 }
 
 func decodeRaw(r io.Reader, b *logBuilder) error {
-	br := bufio.NewReaderSize(r, 4096)
-	var line []byte
-	over := false
+	buf := make([]byte, logReadChunk)
+	var asm lineAsm
+	seq := 0
 	for {
-		chunk, err := br.ReadSlice('\n')
-		if room := maxLogFrame - len(line); len(chunk) <= room {
-			line = append(line, chunk...)
-		} else {
-			if room > 0 {
-				line = append(line, chunk[:room]...)
-			}
-			over = true
+		n, err := r.Read(buf)
+		if n > 0 {
+			asm.feed(buf[:n], b, &seq)
 		}
 		switch {
 		case err == nil:
-			b.add(line, over)
-			line, over = line[:0], false
-		case errors.Is(err, bufio.ErrBufferFull):
-			// The line continues in the next chunk.
 		case errors.Is(err, io.EOF):
-			if len(line) > 0 || over {
-				b.add(line, over)
-			}
+			flushLines(b, &asm)
 			return nil
 		default:
 			return err
 		}
+	}
+}
+
+// lineAsm builds lines from bytes that arrive in arbitrary pieces. It keeps at
+// most maxLogFrame bytes of the current line and drops the rest.
+type lineAsm struct {
+	buf   []byte
+	over  bool
+	start int // arrival order of the first byte of the pending line
+}
+
+func (a *lineAsm) pending() bool { return len(a.buf) > 0 || a.over }
+
+func (a *lineAsm) take(p []byte, seq *int) {
+	if !a.pending() && len(p) > 0 {
+		*seq++
+		a.start = *seq
+	}
+	if room := maxLogFrame - len(a.buf); len(p) <= room {
+		a.buf = append(a.buf, p...)
+	} else {
+		a.buf = append(a.buf, p[:room]...)
+		a.over = true
+	}
+}
+
+func (a *lineAsm) feed(p []byte, b *logBuilder, seq *int) {
+	for len(p) > 0 {
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			a.take(p, seq)
+			return
+		}
+		a.take(p[:i], seq)
+		b.add(a.buf, a.over)
+		a.buf, a.over = a.buf[:0], false
+		p = p[i+1:]
+	}
+}
+
+// flushLines emits unfinished lines at the end of the stream, oldest first.
+func flushLines(b *logBuilder, asm ...*lineAsm) {
+	for {
+		var first *lineAsm
+		for _, a := range asm {
+			if a.pending() && (first == nil || a.start < first.start) {
+				first = a
+			}
+		}
+		if first == nil {
+			return
+		}
+		b.add(first.buf, first.over)
+		first.buf, first.over = nil, false
 	}
 }
 
@@ -150,13 +195,10 @@ func newLogBuilder(tail int) *logBuilder {
 	return &logBuilder{tail: tail, ring: make([]string, tail+1)}
 }
 
-// add takes one entry. over means the entry was longer than the bytes given.
+// add takes one line without its newline. over means the entry was longer than the bytes given.
 func (b *logBuilder) add(raw []byte, over bool) {
 	if over {
 		b.cut = true
-	}
-	if n := len(raw); n > 0 && raw[n-1] == '\n' {
-		raw = raw[:n-1]
 	}
 	if n := len(raw); n > 0 && raw[n-1] == '\r' {
 		raw = raw[:n-1]
@@ -176,6 +218,8 @@ func (b *logBuilder) add(raw []byte, over bool) {
 			runes++
 		}
 	}
+	// The kept string must not share the (up to 64 KiB) buffer it was cut from.
+	s = strings.Clone(s)
 	if b.count < len(b.ring) {
 		b.ring[(b.start+b.count)%len(b.ring)] = s
 		b.count++
@@ -198,3 +242,8 @@ func (b *logBuilder) result() LogResult {
 	}
 	return res
 }
+
+// ValidLogID reports whether id has the only shape Logs accepts: 12 to 64
+// lowercase hexadecimal characters, as Docker prints container ids. Names and
+// prefixes never reach a Docker URL.
+func ValidLogID(id string) bool { return logIDPattern.MatchString(id) }

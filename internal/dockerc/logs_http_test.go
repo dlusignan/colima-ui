@@ -194,7 +194,8 @@ func TestLogsStalledStreamTimesOut(t *testing.T) {
 	c.logsTimeout = 150 * time.Millisecond
 	start := time.Now()
 	_, err := c.Logs(context.Background(), logID, 5)
-	if !errors.Is(err, context.DeadlineExceeded) {
+	// A deadline is a 502 for the route, never an unclassified error.
+	if !errors.Is(err, ErrDockerUnavailable) {
 		t.Fatalf("%v", err)
 	}
 	if time.Since(start) > 3*time.Second {
