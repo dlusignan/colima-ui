@@ -40,7 +40,7 @@ This list moves from "planned" to "done" as each issue merges.
 2. `GET /healthz`, which needs no token.
 3. Profile list and detail: `GET /api/profiles` and `GET /api/profiles/{name}`.
 4. Start, stop and restart of a profile as jobs, plus job status and cancel: `GET /api/jobs/{id}` and `POST /api/jobs/{id}/cancel`. Jobs run one at a time per profile.
-5. Live per-container usage for a profile: `GET /api/profiles/{name}/containers`, read from the Docker API over the Colima socket.
+5. Live per-container usage for a profile, plus each container's status text, creation time and ports: `GET /api/profiles/{name}/containers`, read from the Docker API over the Colima socket.
 6. Reading and editing a profile's resources: `GET` and `PUT /api/profiles/{name}/config`. A write is validated, applied atomically to the profile file and refused while a job runs on that profile.
 7. The event stream: `GET /api/events` (Server Sent Events) carries `job.output` and `job.finished` for every job, and a `metric` event for each sample.
 8. The history route `GET /api/profiles/{name}/metrics`, fed by the sampler.

@@ -16,6 +16,19 @@ type Container struct {
 	Name  string // without the leading "/"
 	Image string
 	State string // "running", "exited", ...
+
+	Status  string    // Docker's status text, "Up 2 hours"
+	Created time.Time // UTC
+	Ports   []Port    // nil when Docker reports none
+}
+
+// Port is one port entry of a container. An empty HostIP and a zero HostPort
+// mean the port is exposed but not published.
+type Port struct {
+	ContainerPort uint16
+	Protocol      string // "tcp", "udp", "sctp"
+	HostIP        string
+	HostPort      uint16
 }
 
 // Reading is the raw counters of one stats call.

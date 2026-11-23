@@ -13,7 +13,7 @@ import { ProfileView } from './ProfileView'
 
 afterEach(() => vi.restoreAllMocks())
 
-const container = { id: 'c1', name: 'synthetic-web', image: 'synthetic/web:1', state: 'running', cpuPercent: 1.25, memoryBytes: 64 * 1024 ** 2 }
+const container = { id: 'c1', name: 'synthetic-web', image: 'synthetic/web:1', state: 'running', cpuPercent: 1.25, memoryBytes: 64 * 1024 ** 2, status: 'Up 2 hours', createdAt: '2026-01-01T00:00:00Z', ports: [] }
 
 function setup(profiles: Profile[] | Error, at = '/profiles/dev') {
   const list = vi.spyOn(api, 'listProfiles')

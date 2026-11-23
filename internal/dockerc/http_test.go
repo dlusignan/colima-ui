@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -27,10 +28,17 @@ func TestContainers(t *testing.T) {
 		t.Fatalf("request = %s?%s", gotPath, gotQuery)
 	}
 	want := []Container{
-		{ID: "aaaaaaaaaaaa", Name: "synthetic-web", Image: "synthetic/web:1", State: "running"},
-		{ID: "bbbbbbbbbbbb", Name: "synthetic-db", Image: "synthetic/db:2", State: "exited"},
+		{ID: "aaaaaaaaaaaa", Name: "synthetic-web", Image: "synthetic/web:1", State: "running",
+			Status: "Up 2 hours", Created: time.Unix(1700000000, 0).UTC(),
+			Ports: []Port{
+				{ContainerPort: 80, Protocol: "tcp"},
+				{ContainerPort: 443, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 8443},
+			}},
+		// No Ports key in the answer: the field stays nil.
+		{ID: "bbbbbbbbbbbb", Name: "synthetic-db", Image: "synthetic/db:2", State: "exited",
+			Status: "Exited (0) 3 days ago", Created: time.Unix(1700000100, 0).UTC()},
 	}
-	if len(cs) != 2 || cs[0] != want[0] || cs[1] != want[1] {
+	if len(cs) != 2 || !reflect.DeepEqual(cs[0], want[0]) || !reflect.DeepEqual(cs[1], want[1]) {
 		t.Fatalf("got %+v", cs)
 	}
 }
