@@ -1,6 +1,7 @@
 package events
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -24,15 +25,24 @@ func (h *Hub) Handler() http.Handler {
 }
 
 func (h *Hub) serve(w http.ResponseWriter, r *http.Request) {
+	if !canFlush(w) {
+		// Streaming is impossible; fail loudly instead of a silent empty 200
+		// that the client would retry in a loop.
+		writeError(w, http.StatusInternalServerError, "internal_error", "The event stream is not supported here.")
+		return
+	}
 	q := r.URL.Query()
 	sub, err := h.Subscribe(q.Get("profile"), q.Get("job"))
 	if err != nil {
-		http.Error(w, "event stream unavailable", http.StatusServiceUnavailable)
+		writeError(w, http.StatusServiceUnavailable, "unavailable", "The event stream is shutting down.")
 		return
 	}
 	defer sub.Close()
 
 	rc := http.NewResponseController(w)
+	// Do not leave a stale deadline on the connection: net/http still writes
+	// the final chunk after we return, and a keep-alive connection is reused.
+	defer func() { _ = rc.SetWriteDeadline(time.Time{}) }()
 	hdr := w.Header()
 	hdr.Set("Content-Type", "text/event-stream")
 	hdr.Set("Cache-Control", "no-cache")
@@ -73,4 +83,31 @@ func (h *Hub) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// canFlush reports whether w, or a writer reachable through Unwrap, can
+// flush, which is what http.ResponseController needs.
+func canFlush(w http.ResponseWriter) bool {
+	for {
+		switch v := w.(type) {
+		case http.Flusher:
+			return true
+		case interface{ FlushError() error }:
+			return true
+		case interface{ Unwrap() http.ResponseWriter }:
+			w = v.Unwrap()
+		default:
+			return false
+		}
+	}
+}
+
+// writeError writes the docs/api.md section 2 error body.
+func writeError(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+		"code": code, "message": message, "details": map[string]any{},
+	}})
 }

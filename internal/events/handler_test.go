@@ -3,7 +3,9 @@ package events
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -266,4 +268,119 @@ func TestNoGoroutineLeak(t *testing.T) {
 	tr.CloseIdleConnections()
 
 	waitFor(t, "goroutines back to baseline", func() bool { return settle() <= baseline })
+}
+
+func TestWriteDeadlineReleasesStalledReader(t *testing.T) {
+	// Buffer far above the 100 events published: the hub cannot drop the client, so only the
+	// write deadline can release the handler blocked in Write.
+	h := New(WithBuffer(10000), WithWriteDeadline(100*time.Millisecond), WithKeepalive(time.Hour))
+	srv := httptest.NewServer(h.Handler())
+	defer srv.Close()
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.(*net.TCPConn).SetReadBuffer(4096)
+	if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	br := bufio.NewReader(conn)
+	for { // read the headers, then never read again
+		l, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if l == "\r\n" {
+			break
+		}
+	}
+	waitFor(t, "subscription", func() bool { return h.clientCount() == 1 })
+
+	big := strings.Repeat("x", 512*1024)
+	for i := 0; i < 100; i++ {
+		h.Publish(JobOutput{JobID: "j", Profile: "p", Seq: i, Line: big})
+	}
+	waitFor(t, "release by write deadline", func() bool { return h.clientCount() == 0 })
+}
+
+func TestWriteDeadlineClearedOnReturn(t *testing.T) {
+	h := New(WithWriteDeadline(50*time.Millisecond), WithKeepalive(time.Hour))
+	srv := httptest.NewServer(h.Handler())
+	defer srv.Close()
+	resp, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	waitFor(t, "subscription", func() bool { return h.clientCount() == 1 })
+	time.Sleep(200 * time.Millisecond) // idle past the deadline
+	h.Shutdown()
+	done := make(chan error, 1)
+	go func() { _, err := io.Copy(io.Discard, resp.Body); done <- err }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("stream did not end cleanly: %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream still open")
+	}
+}
+
+func TestFrameInjectionPinned(t *testing.T) {
+	inputs := []string{
+		"a\nb", "a\rb", "a\r\nb", "x\n\nevent: x\ndata: y", "id: 99\n\n",
+		"a\u2028b", "a\u2029b", "\x00\x1b[0m",
+	}
+	h := New()
+	s, _ := h.Subscribe("", "")
+	for i, in := range inputs {
+		h.Publish(JobOutput{JobID: "j", Profile: in, Seq: i, Line: in})
+		frame := recv(t, s)
+		if n := strings.Count(frame, "\n"); n != 4 || !strings.HasSuffix(frame, "\n\n") {
+			t.Fatalf("input %q: frame has %d newlines: %q", in, n, frame)
+		}
+		lines := strings.Split(frame, "\n")
+		if lines[0] != "id: "+strings.TrimPrefix(lines[0], "id: ") || !strings.HasPrefix(lines[0], "id: ") ||
+			lines[1] != "event: job.output" || !strings.HasPrefix(lines[2], "data: ") {
+			t.Fatalf("input %q: forged field layout: %q", in, frame)
+		}
+		if strings.ContainsAny(frame, "\r\u2028\u2029") {
+			t.Fatalf("input %q: raw separator in frame: %q", in, frame)
+		}
+		var ev JobOutput
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(lines[2], "data: ")), &ev); err != nil || ev.Line != in || ev.Profile != in {
+			t.Fatalf("input %q: did not round-trip: %+v %v", in, ev, err)
+		}
+	}
+}
+
+// plainWriter hides Flush and Unwrap by embedding only the interface.
+type plainWriter struct{ http.ResponseWriter }
+
+func TestHandlerWithoutFlushFails(t *testing.T) {
+	h := New()
+	rec := httptest.NewRecorder()
+	h.Handler().ServeHTTP(plainWriter{rec}, httptest.NewRequest("GET", "/", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	var body struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Message string         `json:"message"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || body.Error.Code == "" || body.Error.Details == nil {
+		t.Fatalf("not the contract error shape: %q %v", rec.Body.String(), err)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+		t.Fatalf("Content-Type = %q", ct)
+	}
+	if n := h.clientCount(); n != 0 {
+		t.Fatalf("clientCount = %d", n)
+	}
 }
