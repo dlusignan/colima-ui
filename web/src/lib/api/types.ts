@@ -119,6 +119,18 @@ export interface ContainerList {
   containers: Container[]
 }
 
+export interface DockerImage {
+  id: string
+  tags: string[]
+  sizeBytes: number
+  createdAt: string
+  containers: number
+}
+
+export interface ImageList {
+  images: DockerImage[]
+}
+
 export type ActionOutcome = 'success' | 'failed' | 'cancelled'
 
 export interface ActionEntry {
