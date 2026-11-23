@@ -1,8 +1,17 @@
 import { Link } from 'react-router-dom'
 import { ApiError } from '@/lib/api/client'
 import { useContainers } from '@/lib/api/useContainers'
-import { formatBytes } from '@/lib/format'
+import { containerHealth, formatPorts } from '@/lib/containerStatus'
+import { formatBytes, formatRelativeTime } from '@/lib/format'
 import type { Profile } from '@/lib/api/types'
+
+const dotClass = {
+  running: 'bg-success',
+  paused: 'bg-muted-foreground',
+  exited: 'bg-muted-foreground',
+  crashed: 'bg-destructive',
+  other: 'bg-muted-foreground',
+}
 
 const note = 'rounded-lg border border-border px-3 py-3 text-sm text-muted-foreground'
 
@@ -46,7 +55,7 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
           <caption className="sr-only">Containers in {profile.name}</caption>
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              {['Name', 'Image', 'State', 'CPU', 'Memory'].map((c) => (
+              {['Name', 'Image', 'Status', 'Ports', 'Created', 'CPU', 'Memory'].map((c) => (
                 <th key={c} scope="col" className="px-3 py-2 font-medium">
                   {c}
                 </th>
@@ -54,17 +63,39 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
             </tr>
           </thead>
           <tbody>
-            {list.map((c) => (
-              <tr key={c.id} className="border-b border-border last:border-0">
-                <th scope="row" className="px-3 py-2 text-left font-mono font-medium">
-                  {c.name}
-                </th>
-                <td className="px-3 py-2 font-mono">{c.image}</td>
-                <td className="px-3 py-2">{c.state}</td>
-                <td className="px-3 py-2 font-mono">{c.cpuPercent.toFixed(1)}%</td>
-                <td className="px-3 py-2 font-mono">{formatBytes(c.memoryBytes)}</td>
-              </tr>
-            ))}
+            {list.map((c) => {
+              const health = containerHealth(c.status, c.state)
+              const ports = formatPorts(c.ports)
+              const created = new Date(c.createdAt)
+              return (
+                <tr key={c.id} className="border-b border-border last:border-0 align-top">
+                  <th scope="row" className="px-3 py-2 text-left font-mono font-medium">
+                    {c.name}
+                  </th>
+                  <td className="px-3 py-2 font-mono">{c.image}</td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span aria-hidden="true" className={`mr-2 inline-block size-2 rounded-full ${dotClass[health]}`} />
+                    {c.status || c.state}
+                    {health === 'paused' && <span className="ml-2 font-medium text-muted-foreground">(paused)</span>}
+                    {health === 'crashed' && <span className="ml-2 font-medium text-destructive">(crashed)</span>}
+                  </td>
+                  <td className="px-3 py-2 font-mono whitespace-nowrap">
+                    {ports.length === 0 ? (
+                      <span className="font-sans">None</span>
+                    ) : (
+                      ports.map((p) => <div key={p}>{p}</div>)
+                    )}
+                  </td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span title={Number.isNaN(created.getTime()) ? undefined : created.toLocaleString()}>
+                      {formatRelativeTime(c.createdAt)}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 font-mono">{c.cpuPercent.toFixed(1)}%</td>
+                  <td className="px-3 py-2 font-mono">{formatBytes(c.memoryBytes)}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
