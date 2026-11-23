@@ -97,6 +97,13 @@ describe('routes', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
+  it('renders the docker tab, loaded lazily', async () => {
+    renderApp('/profiles/dev/docker')
+    expect(screen.getByRole('link', { name: 'Docker' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
   it('renders the configuration tab and requests the config', () => {
     renderApp('/profiles/dev/config')
     expect(screen.getByRole('link', { name: 'Configuration' })).toHaveAttribute('aria-current', 'page')
@@ -121,5 +128,6 @@ describe('routes', () => {
       'href',
       '/profiles/dev/capacity',
     )
+    expect(screen.getByRole('link', { name: 'Docker' })).toHaveAttribute('href', '/profiles/dev/docker')
   })
 })

@@ -12,6 +12,7 @@ export const queryKeys = {
   metricsRange: (name: string, scope: string, rangeId: string) =>
     ['profiles', name, 'metrics', scope, rangeId] as const,
   containers: (name: string) => ['profiles', name, 'containers'] as const,
+  images: (name: string) => ['profiles', name, 'images'] as const,
   actions: (name: string, limit?: number) =>
     ['profiles', name, 'actions', limit] as const,
 }
