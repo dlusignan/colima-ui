@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -86,13 +87,17 @@ func Parse(data []byte) (p *Profile, err error) {
 	if root.Kind == yaml.AliasNode || root.Kind != yaml.MappingNode {
 		return nil, &ParseError{Line: root.Line, Message: "top level must be a mapping"}
 	}
+	problems := intKeyProblems(root)
 	p = &Profile{node: root}
 	if derr := root.Decode(p); derr != nil {
 		var te *yaml.TypeError
-		if errors.As(derr, &te) {
-			return nil, &TypeError{Problems: te.Errors}
+		if !errors.As(derr, &te) {
+			return nil, toParseError(derr)
 		}
-		return nil, toParseError(derr)
+		problems = append(problems, te.Errors...)
+	}
+	if len(problems) > 0 {
+		return nil, &TypeError{Problems: problems}
 	}
 	return p, nil
 }
@@ -138,4 +143,19 @@ func (s *Service) Read(name string) (*Profile, error) {
 		return nil, &ReadError{Err: stripPath(err)}
 	}
 	return Parse(data)
+}
+
+// intKeys must hold whole numbers. yaml.v3 silently truncates 2.5 into an int
+// field, so the node tag is checked before decoding.
+var intKeys = map[string]bool{"cpu": true, "disk": true, "rootDisk": true}
+
+func intKeyProblems(root *yaml.Node) []string {
+	var out []string
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		k, v := root.Content[i], root.Content[i+1]
+		if intKeys[k.Value] && v.Kind == yaml.ScalarNode && v.Tag != "!!int" && v.Tag != "!!null" {
+			out = append(out, fmt.Sprintf("line %d: %s must be a whole number", v.Line, k.Value))
+		}
+	}
+	return out
 }
