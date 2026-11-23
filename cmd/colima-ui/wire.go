@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -116,26 +117,29 @@ func (a *app) handler() http.Handler {
 	return httpapi.NewAPI(opts...)
 }
 
-// shutdown stops the components, in reverse start order. The HTTP server has
-// already stopped when it runs.
+// shutdown stops the components in reverse start order (the blocks below run
+// from #39 back to #15) and joins their errors, so one failure never skips the
+// rest. The HTTP server has already stopped when it runs.
 func (a *app) shutdown(ctx context.Context) error {
-	// #15 events
+	var errs []error
 
-	// #16 profiles
+	// #39 actions
+
+	// #38 containers
+
+	// #23 metrics
+
+	// #18 config
 
 	// #17 jobs
 	// Cancels running jobs and waits for their output pumps.
 	if err := a.mgr.Shutdown(ctx); err != nil {
-		return fmt.Errorf("operations: %w", err)
+		errs = append(errs, fmt.Errorf("operations: %w", err))
 	}
 
-	// #18 config
+	// #16 profiles
 
-	// #23 metrics
+	// #15 events
 
-	// #38 containers
-
-	// #39 actions
-
-	return nil
+	return errors.Join(errs...)
 }
