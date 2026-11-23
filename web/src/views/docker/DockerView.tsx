@@ -1,8 +1,10 @@
 import { useParams } from 'react-router-dom'
 import { useProfiles } from '@/lib/api/useProfiles'
 import { ImagesSection } from './ImagesSection'
+import { NetworksSection } from './NetworksSection'
+import { VolumesSection } from './VolumesSection'
 
-/** The Docker resources of one profile. Images today; volumes and networks follow. */
+/** The Docker resources of one profile. Images, volumes and networks, each with its own loading and error state. */
 export function DockerView() {
   const { name = '' } = useParams()
   const profiles = useProfiles()
@@ -18,7 +20,14 @@ export function DockerView() {
       </p>
     )
   } else {
-    body = <ImagesSection profile={profile} />
+    body = (
+      <>
+        {/* The engine overview card (issue #85) goes here, above the sections. */}
+        <ImagesSection profile={profile} />
+        <VolumesSection profile={profile} />
+        <NetworksSection profile={profile} />
+      </>
+    )
   }
 
   return (
