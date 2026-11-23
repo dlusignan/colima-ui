@@ -7,6 +7,7 @@ import type { Profile } from '@/lib/api/types'
 
 const dotClass = {
   running: 'bg-success',
+  paused: 'bg-muted-foreground',
   exited: 'bg-muted-foreground',
   crashed: 'bg-destructive',
   other: 'bg-muted-foreground',
@@ -63,7 +64,7 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
           </thead>
           <tbody>
             {list.map((c) => {
-              const health = containerHealth(c.status)
+              const health = containerHealth(c.status, c.state)
               const ports = formatPorts(c.ports)
               const created = new Date(c.createdAt)
               return (
@@ -75,6 +76,7 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
                   <td className="px-3 py-2 whitespace-nowrap">
                     <span aria-hidden="true" className={`mr-2 inline-block size-2 rounded-full ${dotClass[health]}`} />
                     {c.status || c.state}
+                    {health === 'paused' && <span className="ml-2 font-medium text-muted-foreground">(paused)</span>}
                     {health === 'crashed' && <span className="ml-2 font-medium text-destructive">(crashed)</span>}
                   </td>
                   <td className="px-3 py-2 font-mono whitespace-nowrap">

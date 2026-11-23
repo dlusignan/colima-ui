@@ -13,6 +13,15 @@ describe('containerHealth', () => {
   ])('%j is %s', (status, want) => {
     expect(containerHealth(status)).toBe(want)
   })
+
+  it.each([
+    ['Up 5 minutes (Paused)', 'paused', 'paused'],
+    ['Up 5 minutes', 'paused', 'paused'],
+    ['Up 5 minutes', 'running', 'running'],
+    ['Exited (137) 2 hours ago', 'exited', 'crashed'],
+  ])('%j with state %s is %s', (status, state, want) => {
+    expect(containerHealth(status, state)).toBe(want)
+  })
 })
 
 describe('formatPorts', () => {

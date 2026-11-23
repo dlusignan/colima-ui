@@ -186,6 +186,7 @@ describe('containers table details', () => {
       { containerPort: 5432, protocol: 'tcp', hostIp: null, hostPort: null },
     ] },
     { ...base, id: 'b', name: 'synthetic-done', state: 'exited', status: 'Exited (0) 3 days ago' },
+    { ...base, id: 'p', name: 'synthetic-paused', state: 'paused', status: 'Up 5 minutes (Paused)' },
     { ...base, id: 'c', name: 'synthetic-crash', state: 'exited', status: 'Exited (137) 2 hours ago' },
   ]
 
@@ -205,6 +206,9 @@ describe('containers table details', () => {
     expect(within(done).getByText('Exited (0) 3 days ago')).toBeInTheDocument()
     expect(within(done).getByText('None')).toBeInTheDocument()
     expect(within(done).queryByText('(crashed)')).not.toBeInTheDocument()
+    const paused = within(table).getByRole('row', { name: /synthetic-paused/ })
+    expect(within(paused).getByText('(paused)')).toBeInTheDocument()
+    expect(within(up).queryByText('(paused)')).not.toBeInTheDocument()
     const crash = within(table).getByRole('row', { name: /synthetic-crash/ })
     expect(within(crash).getByText('(crashed)')).toBeInTheDocument()
     const created = within(up).getByText(/ago$|just now/, { selector: 'span[title]' })
