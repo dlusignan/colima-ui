@@ -45,6 +45,19 @@ func writeAPIError(w http.ResponseWriter, e *APIError) {
 type apiHandler func(http.ResponseWriter, *http.Request) error
 
 func (h apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	tw := &trackWriter{ResponseWriter: w}
+	defer func() {
+		if p := recover(); p != nil {
+			if p == http.ErrAbortHandler {
+				panic(p)
+			}
+			slog.Error("api handler panicked", "method", r.Method, "panic", p)
+			if !tw.wrote {
+				writeAPIError(w, errInternal())
+			}
+		}
+	}()
+	w = tw
 	err := h(w, r)
 	if err == nil {
 		return
@@ -57,6 +70,26 @@ func (h apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	slog.Error("api handler failed", "method", r.Method, "error", err)
 	writeAPIError(w, errInternal())
 }
+
+// trackWriter records whether a response has started, so the panic recovery
+// does not write a second header. It forwards Flush for streaming handlers.
+type trackWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (t *trackWriter) WriteHeader(code int) { t.wrote = true; t.ResponseWriter.WriteHeader(code) }
+
+func (t *trackWriter) Write(b []byte) (int, error) { t.wrote = true; return t.ResponseWriter.Write(b) }
+
+func (t *trackWriter) Flush() {
+	t.wrote = true
+	if f, ok := t.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (t *trackWriter) Unwrap() http.ResponseWriter { return t.ResponseWriter }
 
 func newAPIError(status int, code, message string, details map[string]any) *APIError {
 	return &APIError{Status: status, Code: code, Message: message, Details: details}

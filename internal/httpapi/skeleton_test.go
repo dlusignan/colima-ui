@@ -264,3 +264,30 @@ func TestEmptyBody(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAPIHandlerRecoversPanic(t *testing.T) {
+	var logs bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	defer slog.SetDefault(old)
+	api := NewAPI(func(rt *Router) {
+		rt.Handle("GET /api/early", func(http.ResponseWriter, *http.Request) error { panic("secret /home/user") })
+		rt.Handle("GET /api/late", func(w http.ResponseWriter, _ *http.Request) error {
+			w.WriteHeader(200)
+			panic("late")
+		})
+	})
+	rec := httptest.NewRecorder()
+	api.ServeHTTP(rec, httptest.NewRequest("GET", "/api/early", nil))
+	if w := decodeErr(t, rec); rec.Code != 500 || w.Error.Code != "internal_error" {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "secret") || !strings.Contains(logs.String(), "secret") {
+		t.Fatalf("leak or missing log: %q / %q", rec.Body.String(), logs.String())
+	}
+	rec = httptest.NewRecorder()
+	api.ServeHTTP(rec, httptest.NewRequest("GET", "/api/late", nil))
+	if rec.Code != 200 || rec.Body.Len() != 0 {
+		t.Fatalf("late panic rewrote response: %d %q", rec.Code, rec.Body.String())
+	}
+}
