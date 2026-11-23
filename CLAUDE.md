@@ -9,14 +9,21 @@ Colima UI is a local web interface on top of Colima (VM profiles: start/stop/res
 ## Commands
 
 ```sh
-go build ./...                                   # build everything
-go vet ./...                                     # static checks
-gofmt -l .                                       # must print nothing
-go test ./...                                    # all tests (add -race before pushing)
+make setup                                       # once per clone: npm ci in web/, then make hooks
+make check                                       # the local gate (see below); run before every push
+make hooks                                       # git config core.hooksPath .githooks (pre-push runs make check)
+go build ./cmd/... ./internal/...                # build everything
+go vet ./cmd/... ./internal/...                  # static checks
+gofmt -l $(git ls-files '*.go')                  # must print nothing
+go test -race ./cmd/... ./internal/...           # all tests (-race needs cgo on)
 go test ./internal/httpapi -run TestHealthz -v   # a single test
 go run ./cmd/colima-ui                           # run on 127.0.0.1:8787
 go run ./cmd/colima-ui -port 9000                # or set COLIMA_UI_PORT
 ```
+
+Name Go packages explicitly (`./cmd/... ./internal/...`), never `./...` or `gofmt -l .`: after `npm ci`, `web/node_modules` contains a third-party Go package that the wildcard would pick up.
+
+`make check` is the gate and stops at the first failure: gofmt check, `go vet`, `go test -race`, then in `web/` lint, test and build, then `CGO_ENABLED=0 go build` (the frontend builds before the Go build so the gate stays valid once #25 embeds `web/dist`). It fails with a pointer to `make setup` if `web/node_modules` is missing and never installs anything itself. The `.githooks/pre-push` hook runs it from the worktree being pushed and skips branch-delete pushes. Agents must never push with `--no-verify`.
 
 On start the backend generates a fresh token and prints `http://127.0.0.1:<port>/#token=<token>` to stdout (via `fmt`, never the logger). Every `/api` call must send it as `Authorization: Bearer <token>` (no query-string fallback); `/healthz` needs no token. All requests must carry a loopback `Host` (`127.0.0.1:<port>` or `localhost:<port>`) and any `Origin` must be the server's own. `GET /api/ping` is a placeholder to delete once real routes land.
 
@@ -66,7 +73,9 @@ The backend is the security perimeter, since controlling the VM and Docker socke
 | `<repo-slug>` / `<owner>/<repo>` | `dlusignan/colima-ui` (GitHub account `dlusignan`; `gh auth switch -u dlusignan` if another account is active) |
 | `<integration-branch>` | `main` (the repo default, so `Closes #N` auto-closes issues) |
 | `<merge-strategy>` | `--squash`, one commit per PR. No merge queue, and auto-merge and branch protection are unavailable on this plan, so agents open PRs and the owner merges. |
-| `<local-gate>`, `<required-checks>`, `<derived-artifacts>` | Undecided. No code or CI yet. |
+| `<local-gate>` | `make check` (also run by the `.githooks/pre-push` hook; install with `make hooks`, or `make setup` on a fresh clone). `--no-verify` is forbidden for agents. |
+| `<required-checks>` | None. There is no hosted CI and no branch protection, so `make check` is the only gate. |
+| `<derived-artifacts>` | `web/dist` (gitignored; rebuilt by `make check`) |
 | `<bot-reviewer>`, `<ai-mention-trigger>`, `<per-pr-deploy>`, `<flake-ledger>`, `<failure-catalog>` | None |
 | `<force-push-policy>` | `--force-with-lease` on feature branches only, never on `main` |
 | `<commit-convention>` | Undecided |
