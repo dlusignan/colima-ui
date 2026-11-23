@@ -208,3 +208,59 @@ func TestAppRejectsRelativeColimaHome(t *testing.T) {
 		t.Fatal("relative COLIMA_HOME accepted")
 	}
 }
+
+func TestAppConfigRoutesRequireTokenAndWork(t *testing.T) {
+	r := &fakeRunner{list: listJSON}
+	a := testApp(t, r)
+	const tok = "synthetic-token"
+	h := httpapi.NewHandler(8787, tok, a.handler(), nil)
+	do := func(method, path, body, auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		req.Host = "127.0.0.1:8787"
+		if auth != "" {
+			req.Header.Set("Authorization", auth)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	for _, m := range []string{"GET", "PUT"} {
+		if rec := do(m, "/api/profiles/fileonly/config", `{"cpu":3}`, ""); rec.Code != 401 {
+			t.Fatalf("%s without token: %d", m, rec.Code)
+		}
+		if rec := do(m, "/api/profiles/fileonly/config", `{"cpu":3}`, "Bearer wrong"); rec.Code != 401 {
+			t.Fatalf("%s wrong token: %d", m, rec.Code)
+		}
+	}
+	rec := do("GET", "/api/profiles/fileonly/config", "", "Bearer "+tok)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"cpu":2`) {
+		t.Fatalf("get: %d %s", rec.Code, rec.Body)
+	}
+	rec = do("PUT", "/api/profiles/fileonly/config", `{"cpu":3}`, "Bearer "+tok)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"cpu":3`) {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body)
+	}
+	// A running job on the profile makes the write a 409 and changes nothing.
+	if rec := do("POST", "/api/profiles/fileonly/start", "", "Bearer "+tok); rec.Code != 202 {
+		t.Fatalf("start: %d %s", rec.Code, rec.Body)
+	}
+	rec = do("PUT", "/api/profiles/fileonly/config", `{"cpu":5}`, "Bearer "+tok)
+	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "profile_busy") || !strings.Contains(rec.Body.String(), "jobId") {
+		t.Fatalf("busy put: %d %s", rec.Code, rec.Body)
+	}
+	// Another spelling of the name must not slip past the busy check.
+	for _, n := range []string{"Fileonly", "FILEONLY"} {
+		rec = do("PUT", "/api/profiles/"+n+"/config", `{"cpu":7}`, "Bearer "+tok)
+		if rec.Code != 404 && rec.Code != 409 {
+			t.Fatalf("spelling %s: %d %s", n, rec.Code, rec.Body)
+		}
+	}
+	if rec := do("GET", "/api/profiles/fileonly/config", "", "Bearer "+tok); !strings.Contains(rec.Body.String(), `"cpu":3`) {
+		t.Fatalf("file changed while busy: %s", rec.Body)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := a.shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
