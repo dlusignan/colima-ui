@@ -34,7 +34,7 @@ func (h *Hub) serve(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sub, err := h.Subscribe(q.Get("profile"), q.Get("job"))
 	if err != nil {
-		writeError(w, http.StatusServiceUnavailable, "unavailable", "The event stream is shutting down.")
+		writeError(w, http.StatusServiceUnavailable, "shutting_down", "The event stream is shutting down.")
 		return
 	}
 	defer sub.Close()
