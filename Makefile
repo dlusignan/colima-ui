@@ -3,7 +3,9 @@
 
 GO_PKGS := ./cmd/... ./internal/...
 
-.PHONY: check setup hooks check-web-deps
+BIN := bin/colima-ui
+
+.PHONY: check setup hooks check-web-deps build
 
 # Runs every step in order and stops at the first failure.
 check: check-web-deps
@@ -36,3 +38,9 @@ setup:
 
 hooks:
 	git config core.hooksPath .githooks
+
+# One command from a clean checkout to one binary with the UI embedded.
+build:
+	cd web && npm ci && npm run build
+	CGO_ENABLED=0 go build -o $(BIN) ./cmd/colima-ui
+	@echo "built $(BIN)"

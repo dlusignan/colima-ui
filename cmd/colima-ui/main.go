@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dlusignan/colima-ui/internal/httpapi"
+	"github.com/dlusignan/colima-ui/web"
 )
 
 const (
@@ -54,7 +55,7 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	s := httpapi.NewServer(token, httpapi.NewPlaceholderAPI())
+	s := httpapi.NewServer(token, httpapi.NewPlaceholderAPI(), web.UI())
 	ln, err := s.Listen(port)
 	if err != nil {
 		return err

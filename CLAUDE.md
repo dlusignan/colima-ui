@@ -13,6 +13,7 @@ make setup                                       # once per clone: npm ci in web
 make check                                       # the local gate (see below); run before every push
 make hooks                                       # git config core.hooksPath .githooks (pre-push runs make check)
 go build ./cmd/... ./internal/...                # build everything
+make build                                       # npm ci + frontend build, then bin/colima-ui with the UI embedded
 go vet ./cmd/... ./internal/...                  # static checks
 gofmt -l $(git ls-files '*.go')                  # must print nothing
 go test -race ./cmd/... ./internal/...           # all tests (-race needs cgo on)
@@ -25,7 +26,7 @@ Name Go packages explicitly (`./cmd/... ./internal/...`), never `./...` or `gofm
 
 `make check` is the gate and stops at the first failure: gofmt check, `go vet`, `go test -race`, then in `web/` lint, test and build, then `CGO_ENABLED=0 go build` (the frontend builds before the Go build so the gate stays valid once #25 embeds `web/dist`). It fails with a pointer to `make setup` if `web/node_modules` is missing and never installs anything itself. The `.githooks/pre-push` hook runs it from the worktree being pushed and skips branch-delete pushes. Agents must never push with `--no-verify`.
 
-On start the backend generates a fresh token and prints `http://127.0.0.1:<port>/#token=<token>` to stdout (via `fmt`, never the logger). Every `/api` call must send it as `Authorization: Bearer <token>` (no query-string fallback); `/healthz` needs no token. All requests must carry a loopback `Host` (`127.0.0.1:<port>` or `localhost:<port>`) and any `Origin` must be the server's own. `GET /api/ping` is a placeholder to delete once real routes land.
+On start the backend generates a fresh token and prints `http://127.0.0.1:<port>/#token=<token>` to stdout (via `fmt`, never the logger). Every `/api` call must send it as `Authorization: Bearer <token>` (no query-string fallback); `/healthz` needs no token. The embedded UI (`/`, `/assets/*`, `/theme-init.js`, deep links) also needs no token, since the page must load before it reads the `#token` fragment, but still passes the Host and Origin guard. Missing paths with a file extension return 404; extensionless paths get `index.html` only when `Accept` includes `text/html`. A binary built without the frontend (only `web/dist/.gitkeep`) answers `/` with 503 pointing at `make build`. All requests must carry a loopback `Host` (`127.0.0.1:<port>` or `localhost:<port>`) and any `Origin` must be the server's own. `GET /api/ping` is a placeholder to delete once real routes land.
 
 `C4_Architecture.md` is the design source of truth. Keep it updated when decisions change, and check its "Decisions" table (supported Colima versions, runtimes, history retention, profiles, platform, finished job output) and its "Open Questions" section before assuming an answer.
 
@@ -35,7 +36,7 @@ The React app lives in `web/` (Vite, React, TypeScript strict, Tailwind CSS v4, 
 
 - Install: `npm ci` (clean, from the lockfile) or `npm install`
 - Dev server: `npm run dev`. It proxies `/api` to the Go backend at `COLIMA_UI_API`, default `http://127.0.0.1:8787` (port convention shared with the Go backend).
-- Build: `npm run build` (writes `web/dist`, the path issue #25 will embed)
+- Build: `npm run build` (writes `web/dist`, which `web/embed.go` embeds with `//go:embed all:dist`; the script recreates the tracked empty `web/dist/.gitkeep` afterwards because Vite deletes it)
 - Lint: `npm run lint`
 - Test: `npm run test` (one-shot `vitest run`); watch mode `npm run test:watch`
 - Single test: `npm run test -- src/App.test.tsx -t "test name"`
