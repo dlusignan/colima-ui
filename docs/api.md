@@ -83,7 +83,7 @@ Error codes in use:
 | `502` | `docker_unavailable` | The Docker socket is missing or not answering | `{}` |
 | `503` | `shutting_down` | The backend is stopping and accepts no new jobs | `{}` |
 
-Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1), together with an optional `warnings` array on profile payloads. Both are additive and no route changes if they arrive.
+Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
 For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys (`cpu`, `memoryGiB`, `diskGiB`).
 
@@ -163,6 +163,7 @@ Fields:
 - `colimaVersion`: a string. Empty string when unknown.
 - `source`: `both` (known to the CLI and to a config file), `cli_only` (running without a file) or `file_only` (a file that Colima does not list).
 - `activeJobId`: the id of the running job on this profile, or `null`. The frontend uses it to disable buttons and to open the log panel.
+- `warnings`: optional array of `{"code": "...", "message": "..."}` for non-fatal problems with that profile. The key is omitted when there are none. The codes in use are `colima_unavailable` (Colima could not be queried, so live fields are unknown), `config_unreadable` (the configuration folder could not be read), `config_invalid` (the profile file could not be read or parsed) and `colima_version_unsupported` (the installed Colima version is outside the tested 0.10.x line). Messages are fixed texts without paths. Clients must ignore codes they do not know.
 
 State is read live on every call. An empty list is `{"profiles":[]}`.
 
@@ -172,7 +173,7 @@ Errors: `502` `colima_failed` when Colima cannot be queried and no profile data 
 
 Token: yes. Request body: none. Used by the profile detail page.
 
-Response `200`: one profile object, the same fields as an element of the list above (not wrapped).
+Response `200`: one profile object, the same fields as an element of the list above (not wrapped), including the optional `warnings` array.
 
 Errors: `404` `profile_not_found`, `502` `colima_failed`.
 
@@ -367,7 +368,7 @@ Response `200`:
 - `id` is the value used as `scope` in the metrics route and in `metric` events.
 - `state` is the Docker state string (`running`, `exited`, `paused`, and so on).
 - `cpuPercent` and `memoryBytes` are current usage read live from the Docker Client when the request is handled. For a container that is not running both are `0`.
-- A running VM with no containers returns `{"containers":[]}`.
+- A running VM with no containers returns `{"containers":[]}`. So does a running profile whose runtime is not Docker.
 
 This route only reads. There is no container control.
 

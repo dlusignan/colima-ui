@@ -9,8 +9,10 @@ import (
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 	"github.com/dlusignan/colima-ui/internal/config"
+	"github.com/dlusignan/colima-ui/internal/dockerc"
 	"github.com/dlusignan/colima-ui/internal/httpapi"
 	"github.com/dlusignan/colima-ui/internal/operations"
+	"github.com/dlusignan/colima-ui/internal/profiles"
 )
 
 // colimaRunner is the colima adapter as the wiring needs it: one-shot runs for
@@ -29,6 +31,7 @@ type app struct {
 	// #15 events
 
 	// #16 profiles
+	profiles *profiles.Service
 
 	// #17 jobs
 	runner colimaRunner
@@ -40,6 +43,7 @@ type app struct {
 	// #23 metrics
 
 	// #38 containers
+	containers dockerc.Provider
 
 	// #39 actions
 
@@ -62,6 +66,19 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir func() 
 	// #15 events
 
 	// #16 profiles
+	// Built before the #17 block, so Busy is read lazily through a.mgr and the
+	// service gets its own config service over the same folder.
+	profHome, _ := homeDir()
+	profBase, err := config.Locate(getenv, profHome)
+	if err != nil {
+		return nil, fmt.Errorf("locate colima folder: %w", err)
+	}
+	profCfg, err := config.New(profBase)
+	if err != nil {
+		return nil, fmt.Errorf("open colima folder: %w", err)
+	}
+	a.profiles = profiles.New(profiles.NewColimaSource(runner), profCfg,
+		func(p string) (string, bool) { return a.mgr.Busy(p) })
 
 	// #17 jobs
 	a.runner = runner
@@ -86,6 +103,7 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir func() 
 	// #23 metrics
 
 	// #38 containers
+	a.containers = dockerc.NewProvider(dockerc.NewColimaResolver(runner))
 
 	// #39 actions
 
@@ -102,6 +120,7 @@ func (a *app) handler() http.Handler {
 	// #15 events
 
 	// #16 profiles
+	opts = append(opts, httpapi.WithProfiles(a.profiles))
 
 	// #17 jobs
 	opts = append(opts, httpapi.WithJobs(a.mgr, a.gate))
@@ -111,6 +130,7 @@ func (a *app) handler() http.Handler {
 	// #23 metrics
 
 	// #38 containers
+	opts = append(opts, httpapi.WithContainers(a.gate, a.containers))
 
 	// #39 actions
 
