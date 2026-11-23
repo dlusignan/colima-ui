@@ -1,9 +1,9 @@
 import type { AppRoute } from '@/app/types'
-import { CapacityView } from './CapacityView'
+import { LazyCapacityView } from './LazyCapacityView'
 
 export const capacityRoute: AppRoute = {
   id: 'capacity',
   path: '/profiles/:name/capacity',
   label: 'Capacity',
-  element: <CapacityView />,
+  element: <LazyCapacityView />,
 }

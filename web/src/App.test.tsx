@@ -81,12 +81,20 @@ describe('routes', () => {
   it.each([
     ['/', 'Dashboard'],
     ['/profiles/dev', 'Detail'],
-    ['/profiles/dev/capacity', 'Capacity'],
   ])('renders %s', (path, title) => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(fetchMock.mock.calls.every(([url]) => url === '/api/events')).toBe(true)
+    expect(
+      fetchMock.mock.calls.every(([url]) => url === '/api/events' || url === '/api/profiles'),
+    ).toBe(true)
+  })
+
+  it('renders the capacity tab, loaded lazily', async () => {
+    renderApp('/profiles/dev/capacity')
+    expect(screen.getByRole('link', { name: 'Capacity' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('renders the configuration tab and requests the config', () => {

@@ -105,9 +105,9 @@ export const configUpdateResultShape = {
 
 export const metricPointShape = {
   takenAt: 'string',
-  cpuPercent: 'number',
-  memoryBytes: 'number',
-  diskBytes: 'number',
+  cpuPercent: 'number|null',
+  memoryBytes: 'number|null',
+  diskBytes: 'number|null',
 } as const satisfies Record<keyof MetricPoint, Kind>
 
 export const metricsShape = {
