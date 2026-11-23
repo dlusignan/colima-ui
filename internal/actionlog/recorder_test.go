@@ -20,6 +20,7 @@ type fakeSink struct {
 	err     error
 	gate    chan struct{} // when non-nil, AppendAction blocks until closed
 	entered chan struct{}
+	calls   int
 }
 
 func (f *fakeSink) AppendAction(ctx context.Context, e store.ActionEntry) error {
@@ -34,6 +35,7 @@ func (f *fakeSink) AppendAction(ctx context.Context, e store.ActionEntry) error 
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.calls++
 	if f.err != nil {
 		return f.err
 	}
@@ -45,6 +47,12 @@ func (f *fakeSink) snapshot() []store.ActionEntry {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]store.ActionEntry(nil), f.rows...)
+}
+
+func (f *fakeSink) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
 }
 
 func (f *fakeSink) setErr(err error) {
@@ -221,8 +229,8 @@ func TestOverflowDropsAndWarns(t *testing.T) {
 	if r.Dropped() != 3 {
 		t.Fatalf("dropped = %d, want 3", r.Dropped())
 	}
-	if n := strings.Count(lb.String(), "queue full"); n != 3 {
-		t.Fatalf("warn lines = %d, want 3", n)
+	if n := strings.Count(lb.String(), "queue full"); n != 1 {
+		t.Fatalf("warn lines = %d, want 1 per burst", n)
 	}
 	close(fs.gate)
 	if err := r.Close(ctxT(t)); err != nil {
@@ -260,16 +268,13 @@ func TestCloseDeadlineWithBlockedSink(t *testing.T) {
 	if err := r.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
 	}
-	if r.Dropped() != 2 {
-		t.Fatalf("dropped = %d, want 2", r.Dropped())
-	}
 	close(fs.gate)
 	<-r.done // writer exits and discards the abandoned rows
 	if n := len(fs.snapshot()); n != 1 {
 		t.Fatalf("written = %d, want 1", n)
 	}
 	if r.Dropped() != 2 {
-		t.Fatalf("dropped changed to %d", r.Dropped())
+		t.Fatalf("dropped = %d, want 2", r.Dropped())
 	}
 }
 
@@ -317,7 +322,7 @@ func TestFailingSinkLogsOncePerBurst(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		r.JobFinished(summary(operations.ActionStart, operations.StateFailed, intp(1)))
 	}
-	waitFor(t, func() bool { return strings.Count(lb.String(), "write failed") >= 1 })
+	waitFor(t, func() bool { return fs.callCount() == 3 })
 	fs.setErr(nil)
 	r.JobFinished(summary(operations.ActionStart, operations.StateSucceeded, intp(0)))
 	if err := r.Close(ctxT(t)); err != nil {
@@ -361,5 +366,67 @@ func TestWritesThroughRealStore(t *testing.T) {
 	rows, err := s.RecentActions(ctxT(t), "synthetic-dev", 10)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("rows=%d err=%v", len(rows), err)
+	}
+}
+
+func TestSecondFailureBurstLogsAgain(t *testing.T) {
+	fs := &fakeSink{err: errors.New("disk full")}
+	var lb logBuf
+	r := New(fs, WithLogger(newLogger(&lb)))
+	send := func(n int) {
+		for i := 0; i < n; i++ {
+			r.JobFinished(summary(operations.ActionStart, operations.StateSucceeded, intp(0)))
+		}
+	}
+	send(2)
+	waitFor(t, func() bool { return fs.callCount() == 2 })
+	fs.setErr(nil)
+	send(1)
+	waitFor(t, func() bool { return fs.callCount() == 3 && strings.Contains(lb.String(), "recovered") })
+	fs.setErr(errors.New("disk full again"))
+	send(2)
+	waitFor(t, func() bool { return fs.callCount() == 5 })
+	if err := r.Close(ctxT(t)); err != nil {
+		t.Fatal(err)
+	}
+	out := lb.String()
+	if n := strings.Count(out, "write failed"); n != 2 {
+		t.Fatalf("error lines = %d, want 2:\n%s", n, out)
+	}
+	if n := strings.Count(out, "recovered"); n != 1 {
+		t.Fatalf("recovery lines = %d, want 1:\n%s", n, out)
+	}
+}
+
+type ctxSink struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (c *ctxSink) AppendAction(ctx context.Context, _ store.ActionEntry) error {
+	c.mu.Lock()
+	c.calls++
+	c.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestWriteTimeoutMovesOn(t *testing.T) {
+	cs := &ctxSink{}
+	var lb logBuf
+	r := New(cs, WithWriteTimeout(20*time.Millisecond), WithLogger(newLogger(&lb)))
+	r.JobFinished(summary(operations.ActionStart, operations.StateSucceeded, intp(0)))
+	r.JobFinished(summary(operations.ActionStop, operations.StateSucceeded, intp(0)))
+	if err := r.Close(ctxT(t)); err != nil {
+		t.Fatal(err)
+	}
+	cs.mu.Lock()
+	calls := cs.calls
+	cs.mu.Unlock()
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+	if n := strings.Count(lb.String(), "write failed"); n != 1 {
+		t.Fatalf("error lines = %d, want 1:\n%s", n, lb.String())
 	}
 }

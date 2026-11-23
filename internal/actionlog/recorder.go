@@ -2,6 +2,7 @@ package actionlog
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -69,9 +70,10 @@ type Recorder struct {
 	mu     sync.RWMutex
 	closed bool
 
-	abandoned atomic.Bool
-	dropped   atomic.Uint64
-	failing   bool // writer goroutine only
+	abandoned   atomic.Bool
+	dropped     atomic.Uint64
+	overflowing atomic.Bool
+	failing     bool // writer goroutine only
 }
 
 var _ operations.Observer = (*Recorder)(nil)
@@ -123,23 +125,34 @@ func (r *Recorder) RecordConfigChange(profile string, fields []string) {
 func (r *Recorder) Dropped() uint64 { return r.dropped.Load() }
 
 func (r *Recorder) enqueue(e store.ActionEntry) {
+	if !r.tryQueue(e) {
+		r.dropped.Add(1)
+		// Log once per overflow burst, outside the lock.
+		if r.overflowing.CompareAndSwap(false, true) {
+			r.log.Warn("action log: queue full or closed, rows dropped", "profile", e.Profile, "action", e.Action)
+		}
+		return
+	}
+	r.overflowing.Store(false)
+}
+
+func (r *Recorder) tryQueue(e store.ActionEntry) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if r.closed {
-		r.dropped.Add(1)
-		return
+		return false
 	}
 	select {
 	case r.queue <- e:
+		return true
 	default:
-		r.dropped.Add(1)
-		r.log.Warn("action log: queue full, row dropped", "profile", e.Profile, "action", e.Action)
+		return false
 	}
 }
 
 // Close stops accepting rows and waits for the queued ones to be written. It
-// returns ctx.Err() when the deadline passes first; rows still queued then are
-// counted as dropped. It is safe to call more than once.
+// returns ctx.Err() when the deadline passes first; the writer then counts the
+// rows it skips as dropped. It is safe to call more than once.
 func (r *Recorder) Close(ctx context.Context) error {
 	r.mu.Lock()
 	if !r.closed {
@@ -151,11 +164,15 @@ func (r *Recorder) Close(ctx context.Context) error {
 	select {
 	case <-r.done:
 		return nil
+	default:
+	}
+	select {
+	case <-r.done:
+		return nil
 	case <-ctx.Done():
 		r.abandoned.Store(true)
 		if n := len(r.queue); n > 0 {
-			r.dropped.Add(uint64(n))
-			r.log.Warn("action log: close deadline passed, rows dropped", "rows", n)
+			r.log.Warn("action log: close deadline passed, rows will be dropped", "rows", n)
 		}
 		return ctx.Err()
 	}
@@ -166,18 +183,12 @@ func (r *Recorder) run() {
 	for {
 		select {
 		case e := <-r.queue:
-			if r.abandoned.Load() {
-				continue // already counted by Close
-			}
-			r.write(e)
+			r.handle(e)
 		case <-r.stop:
 			for {
 				select {
 				case e := <-r.queue:
-					if r.abandoned.Load() {
-						continue // already counted by Close
-					}
-					r.write(e)
+					r.handle(e)
 				default:
 					return
 				}
@@ -186,11 +197,22 @@ func (r *Recorder) run() {
 	}
 }
 
+// handle writes e, or counts it as dropped once Close gave up waiting.
+func (r *Recorder) handle(e store.ActionEntry) {
+	if r.abandoned.Load() {
+		r.dropped.Add(1)
+		return
+	}
+	r.write(e)
+}
+
 func (r *Recorder) write(e store.ActionEntry) {
 	ctx, cancel := context.WithTimeout(context.Background(), r.writeTimeout)
 	defer cancel()
 	err := r.sink.AppendAction(ctx, e)
 	switch {
+	case err != nil && (r.abandoned.Load() || errors.Is(err, store.ErrClosed)):
+		// shutting down: stay quiet
 	case err != nil && !r.failing:
 		r.failing = true
 		r.log.Error("action log: write failed", "profile", e.Profile, "action", e.Action, "err", err)
