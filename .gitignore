@@ -1,3 +1,5 @@
 .idea/
 .DS_Store
 .mcp.json
+web/node_modules
+web/dist
