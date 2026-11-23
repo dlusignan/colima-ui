@@ -82,12 +82,18 @@ describe('routes', () => {
     ['/', 'Dashboard'],
     ['/profiles/dev', 'Detail'],
     ['/profiles/dev/capacity', 'Capacity'],
-    ['/profiles/dev/config', 'Configuration'],
   ])('renders %s', (path, title) => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.every(([url]) => url === '/api/events')).toBe(true)
+  })
+
+  it('renders the configuration tab and requests the config', () => {
+    renderApp('/profiles/dev/config')
+    expect(screen.getByRole('link', { name: 'Configuration' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByText('Loading configuration...')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/profiles/dev/config')).toBe(true)
   })
 
   it('renders the operation log tab, loaded lazily', async () => {
