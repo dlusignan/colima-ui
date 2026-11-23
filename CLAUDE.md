@@ -46,6 +46,15 @@ The backend is the security perimeter, since controlling the VM and Docker socke
 | `<force-push-policy>` | `--force-with-lease` on feature branches only, never on `main` |
 | `<commit-convention>` | Undecided |
 | `<traceability-scheme>`, `<second-tracker>` | None |
-| Labels | Not yet created in the repo. `.claude/skills/gh-issue-labels/scripts/bootstrap-labels.sh` creates them (writes to GitHub: run only with the owner's approval). |
+| Labels | Control-plane labels created in the repo via `.claude/skills/gh-issue-labels/scripts/bootstrap-labels.sh sonnet opus` (`agent-model:*`, `agent-effort:*`, `agent-claimed`, `do-not-dispatch`, `do-not-rebase`, `ready-to-dispatch`). Upstream descriptions exceeded GitHub's 100-char limit, so two were shortened in the vendored script. Type, priority, and triage labels (`needs-spec-input`, `blocked`, etc.) are not created yet. |
 
 The PR watcher lanes (`pr-comments`, `pr-checks`, `pr-cleanup`, `pr-dispatcher`) assume CI and PR review; they have nothing to do until those exist. `/gh-issue`, `/gh-issue-groom` and `/gh-issue-recon` work now.
+
+## Model selection policy
+
+Adopted unchanged from agents-skills (vendored as [`MODEL-DEFAULTS.md`](MODEL-DEFAULTS.md), the full task-to-tier matrix and model IDs).
+
+- **Cheap / mechanical**: `ls`/`grep`/`git status`, file lookups, listing, fixed-command runs. Haiku. Offloaded to a cheap-tier subagent that returns a distilled answer, never run in the main session.
+- **Workhorse (default)**: the orchestration loop, verification, dev work, filing/grooming/recon. Sonnet.
+- **Premium (operator-gated)**: hard, cross-cutting reasoning only, never self-escalated. Opus. Used only on an explicit operator instruction or an `agent-model:opus` label.
+- There is deliberately no cheap-tier label: Haiku is never forced onto code-writing.
