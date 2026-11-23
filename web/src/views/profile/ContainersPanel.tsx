@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
 import { ApiError } from '@/lib/api/client'
+import { ContainerLogsDialog } from './ContainerLogsDialog'
 import { useContainers } from '@/lib/api/useContainers'
 import { containerHealth, formatPorts } from '@/lib/containerStatus'
 import { formatBytes, formatRelativeTime } from '@/lib/format'
@@ -55,7 +56,7 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
           <caption className="sr-only">Containers in {profile.name}</caption>
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              {['Name', 'Image', 'Status', 'Ports', 'Created', 'CPU', 'Memory'].map((c) => (
+              {['Name', 'Image', 'Status', 'Ports', 'Created', 'CPU', 'Memory', 'Logs'].map((c) => (
                 <th key={c} scope="col" className="px-3 py-2 font-medium">
                   {c}
                 </th>
@@ -93,6 +94,9 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
                   </td>
                   <td className="px-3 py-2 font-mono">{c.cpuPercent.toFixed(1)}%</td>
                   <td className="px-3 py-2 font-mono">{formatBytes(c.memoryBytes)}</td>
+                  <td className="px-3 py-2">
+                    <ContainerLogsDialog profile={profile.name} container={c} />
+                  </td>
                 </tr>
               )
             })}

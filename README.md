@@ -20,14 +20,13 @@ Colima UI runs on your machine as a single binary. It reads Colima's own state (
 10. **Docker tab.** A profile tab with an Images section: tags, image ID, size, when each image was created and how many containers use it, with unused images marked. It refreshes every 30 seconds.
 11. **Volumes and Networks in the Docker tab.** A Volumes section (name, driver, size, when created and how many containers mount each, with unused volumes marked and a dash where the engine has no figure) and a Networks section (name, driver, scope, whether it is internal and how many containers are attached, stopped ones included). Each section loads, fails and retries on its own.
 12. **Engine overview in the Docker tab.** An Overview card at the top with the Docker and API versions, OS and architecture, container counts, image count and the engine's CPUs and memory, plus a disk usage breakdown (images, containers, volumes and build cache) as a stacked bar with a text legend. A profile that does not use Docker shows a short note instead. It refreshes every 30 seconds.
+13. **Container logs.** A Logs button on each container row opens a read-only snapshot of its recent output (the last 200 lines, or 100, 500 or 1000), with a Refresh button and a Copy button. Stopped containers work too. Lines show as plain text with Docker's timestamps, and the dialog says when some output is not shown. There is no live follow mode.
 
 If the history file cannot be opened (for example a newer version wrote it), the binary refuses to start and says so, because the file holds history only and can be deleted to start fresh.
 
 ### Added to the backlog this round: planned, not built yet
 
-An enhanced Docker view. Today the app shows containers, images, volumes and networks. The plan, tracked as issues #78 to #86 and #92 (the Docker tab with images, volumes and networks is done), is:
-
-1. **Container logs** (#86, #92): a read-only snapshot of a container's recent output (the last 200 lines by default, at most 1000). A live follow mode is not planned yet.
+The enhanced Docker view (issues #78 to #86 and #92) is done. Nothing else from that plan is left.
 
 Also under discussion, with no issues yet: creating a new profile (VM) from the interface, with the settings Colima accepts at creation. Colima has no rename command, so renaming is not planned.
 
