@@ -12,6 +12,7 @@ export const queryKeys = {
   metricsRange: (name: string, scope: string, rangeId: string) =>
     ['profiles', name, 'metrics', scope, rangeId] as const,
   containers: (name: string) => ['profiles', name, 'containers'] as const,
+  engine: (name: string) => ['profiles', name, 'engine'] as const,
   images: (name: string) => ['profiles', name, 'images'] as const,
   volumes: (name: string) => ['profiles', name, 'volumes'] as const,
   networks: (name: string) => ['profiles', name, 'networks'] as const,
