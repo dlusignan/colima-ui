@@ -83,3 +83,9 @@ Adopted unchanged from agents-skills (vendored as [`MODEL-DEFAULTS.md`](MODEL-DE
 - **Workhorse (default)**: the orchestration loop, verification, dev work, filing/grooming/recon. Sonnet.
 - **Premium (operator-gated)**: hard, cross-cutting reasoning only, never self-escalated. Opus. Used only on an explicit operator instruction or an `agent-model:opus` label.
 - There is deliberately no cheap-tier label: Haiku is never forced onto code-writing.
+
+## Writing style
+
+When you enumerate elements, in chat replies, issue bodies, PR descriptions and docs, always use a numbered list (`1.`, `2.`, `3.`). Never use hyphen or asterisk bullets. This applies to every list: next steps, findings, options, caveats, summaries and acceptance criteria prose.
+
+Checklists are the one exception: acceptance criteria in issue bodies keep the `- [ ]` checkbox form, because GitHub renders that syntax as tickable boxes and the agent skills read it that way.
