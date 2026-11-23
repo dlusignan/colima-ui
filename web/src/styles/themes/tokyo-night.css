@@ -1,0 +1,44 @@
+/* Tokyo Night (dark). */
+[data-theme='tokyo-night'] {
+  color-scheme: dark;
+  --background: #1a1b26;
+  --foreground: #c0caf5;
+  --card: #16161e;
+  --card-foreground: #c0caf5;
+  --popover: #16161e;
+  --popover-foreground: #c0caf5;
+  --primary: #7aa2f7;
+  --primary-foreground: #1a1b26;
+  --secondary: #292e42;
+  --secondary-foreground: #c0caf5;
+  --muted: #292e42;
+  --muted-foreground: #a9b1d6;
+  --accent: #292e42;
+  --accent-foreground: #c0caf5;
+  --destructive: #f7768e;
+  --destructive-foreground: #1a1b26;
+  --success: #9ece6a;
+  --success-foreground: #1a1b26;
+  --warning: #e0af68;
+  --warning-foreground: #1a1b26;
+  --info: #7dcfff;
+  --info-foreground: #1a1b26;
+  --border: #3b4261;
+  --input: #6f7aa8;
+  --ring: #6f7aa8;
+  --scrim: #16161e99;
+  --chart-1: #7aa2f7;
+  --chart-2: #bb9af7;
+  --chart-3: #73daca;
+  --chart-4: #ff9e64;
+  --chart-5: #f7768e;
+  --radius: 0.625rem;
+  --sidebar: #16161e;
+  --sidebar-foreground: #c0caf5;
+  --sidebar-primary: #7aa2f7;
+  --sidebar-primary-foreground: #1a1b26;
+  --sidebar-accent: #292e42;
+  --sidebar-accent-foreground: #c0caf5;
+  --sidebar-border: #3b4261;
+  --sidebar-ring: #6f7aa8;
+}

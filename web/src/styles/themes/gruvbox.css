@@ -1,0 +1,44 @@
+/* Gruvbox (dark). */
+[data-theme='gruvbox'] {
+  color-scheme: dark;
+  --background: #282828;
+  --foreground: #ebdbb2;
+  --card: #1d2021;
+  --card-foreground: #ebdbb2;
+  --popover: #1d2021;
+  --popover-foreground: #ebdbb2;
+  --primary: #d3869b;
+  --primary-foreground: #282828;
+  --secondary: #3c3836;
+  --secondary-foreground: #ebdbb2;
+  --muted: #3c3836;
+  --muted-foreground: #bdae93;
+  --accent: #3c3836;
+  --accent-foreground: #ebdbb2;
+  --destructive: #fe6a58;
+  --destructive-foreground: #282828;
+  --success: #b8bb26;
+  --success-foreground: #282828;
+  --warning: #fabd2f;
+  --warning-foreground: #282828;
+  --info: #83a598;
+  --info-foreground: #282828;
+  --border: #504945;
+  --input: #928374;
+  --ring: #928374;
+  --scrim: #1d202199;
+  --chart-1: #83a598;
+  --chart-2: #d3869b;
+  --chart-3: #8ec07c;
+  --chart-4: #fe8019;
+  --chart-5: #fabd2f;
+  --radius: 0.625rem;
+  --sidebar: #1d2021;
+  --sidebar-foreground: #ebdbb2;
+  --sidebar-primary: #d3869b;
+  --sidebar-primary-foreground: #282828;
+  --sidebar-accent: #3c3836;
+  --sidebar-accent-foreground: #ebdbb2;
+  --sidebar-border: #504945;
+  --sidebar-ring: #928374;
+}

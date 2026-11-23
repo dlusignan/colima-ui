@@ -236,4 +236,4 @@ One Go binary containing the embedded React build. It runs as a normal process o
 
 ## 10. Open Questions
 
-Which additional themes ship in the first release? The theme system already follows the operating system setting by default and ships Catppuccin Mocha and a light theme. The other palettes are tracked in the themes issue.
+The first release ships Catppuccin Mocha, Tokyo Night, Gruvbox, Nord, Dracula and a light theme, and the theme system follows the operating system setting by default. Each palette meets the contrast test in `web/src/styles/themes/contrast.test.ts`.

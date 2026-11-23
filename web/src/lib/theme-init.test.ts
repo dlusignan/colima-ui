@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { STORAGE_KEY } from '@/lib/theme'
+import { STORAGE_KEY, themes } from '@/lib/theme'
 import { setPrefersDark } from '@/test/setup'
 
 const script = readFileSync(
@@ -34,4 +34,15 @@ describe('theme-init.js', () => {
     expect(html.dataset.theme).toBe('mocha')
     expect(html.classList.contains('dark')).toBe(true)
   })
+
+  it.each(themes.map((t) => [t.id, t.colorScheme]))(
+    'applies stored %s theme (%s)',
+    (id, scheme) => {
+      localStorage.setItem(STORAGE_KEY, id)
+      run()
+      expect(html.dataset.theme).toBe(id)
+      expect(html.classList.contains('dark')).toBe(scheme === 'dark')
+      expect(html.style.colorScheme).toBe(scheme)
+    },
+  )
 })

@@ -1,6 +1,7 @@
 // Classic blocking script: runs before first paint to avoid a theme flash.
 // Keep in sync with src/lib/theme.ts (storage key, theme ids, dark ids).
 ;(function () {
+  var THEMES = ['mocha', 'tokyo-night', 'gruvbox', 'nord', 'dracula', 'light']
   var root = document.documentElement
   var id = 'mocha'
   var dark = true
@@ -9,7 +10,7 @@
     try {
       stored = localStorage.getItem('colima-ui-theme')
     } catch (e) {}
-    if (stored === 'light' || stored === 'mocha') {
+    if (stored && THEMES.indexOf(stored) !== -1) {
       id = stored
     } else if (window.matchMedia) {
       id = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'mocha'
