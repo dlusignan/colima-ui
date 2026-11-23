@@ -75,6 +75,14 @@ describe('request', () => {
     expect(fetchMock.mock.calls[2][0]).toBe('/api/profiles/dev/actions')
   })
 
+  it('builds the container logs path and tail query', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, { lines: [], truncated: false })))
+    await api.getContainerLogs('a b', 'aaaaaaaaaaaa', 50)
+    await api.getContainerLogs('dev', 'aaaaaaaaaaaa')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/profiles/a%20b/containers/aaaaaaaaaaaa/logs?tail=50')
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/profiles/dev/containers/aaaaaaaaaaaa/logs')
+  })
+
   it('decodes the contract error shape (profile_busy)', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(409, {

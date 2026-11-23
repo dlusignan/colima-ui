@@ -90,7 +90,7 @@ C4Component
         Component(adapter, "Colima Adapter", "Go, os/exec", "Only place that runs the colima binary. Whitelist of subcommands and arguments, parses JSON output, isolates version differences")
         Component(ops, "Operation Manager", "Go, goroutines", "Tracks long running jobs such as start and stop, supports cancellation, captures output")
         Component(events, "Event Stream", "Server Sent Events", "Pushes operation output and live metrics to connected browsers")
-        Component(dockerc, "Docker Client", "Docker Engine API, hand-rolled client over the Colima Unix socket", "Containers, per container stats, disk usage")
+        Component(dockerc, "Docker Client", "Docker Engine API, hand-rolled client over the Colima Unix socket", "Containers, per container stats, disk usage, container log snapshots")
         Component(sampler, "Metrics Sampler", "Go, ticker", "Collects VM and container usage at a fixed interval")
         Component(store, "History Store", "Ring buffer and SQLite", "Short window in memory, long history on disk, retention cleanup")
     }
@@ -236,6 +236,7 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Observer fan-out | The Operation Manager calls three observers in order for every job: the action log recorder (bounded queue, own writer goroutine), the event stream (non-blocking publish) and a sampler refresh signal | Each observer is non-blocking, so a slow database or browser never stalls a job's output. A finished job also makes a start or stop show up in sampling within seconds. |
 | Shutdown order | Event streams end first, then the HTTP server stops, then the sampler, the Operation Manager, the action log recorder and finally the History Store | An open stream would otherwise hold the HTTP shutdown for its whole timeout, and the recorder must drain after the manager so the last finished job is written before the store closes. |
 | Finished job output | Kept in memory only. After a backend restart a finished job shows its action log summary and no output | Matches the API contract, which already treats output after a restart as unavailable. |
+| Container logs | A read-only snapshot of the last 200 lines by default (at most 1000) per container, fetched on demand. No streaming and no follow mode | Container output can contain secrets, and a live stream needs bounds on followers and retained output. The snapshot keeps the backend stateless and bounded (64 KiB per frame, 4000 characters per line, 512 KiB per response). A follow mode can be added later on top of it. |
 
 ## 10. Open Questions
 
