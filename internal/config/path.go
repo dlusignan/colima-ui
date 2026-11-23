@@ -68,6 +68,7 @@ type Service struct {
 	gate      Gate
 	vmRunning func(profile string) (bool, error)
 	limits    Limits
+	onWritten func(profile string, fields []string)
 
 	// Test seams for the write path; nil means the real behaviour.
 	renameFn     func(oldpath, newpath string) error
@@ -83,6 +84,16 @@ func WithGate(g Gate) Option { return func(s *Service) { s.gate = g } }
 // WithVMRunning sets the probe that says whether a profile's VM is running.
 func WithVMRunning(fn func(profile string) (bool, error)) Option {
 	return func(s *Service) { s.vmRunning = fn }
+}
+
+// WithOnWritten sets a hook Apply calls right after the file was replaced, with
+// the profile and the names of the fields that changed (cpu, memory, disk, in
+// Diff order, whatever the VM state). It does not fire for a no-op, a failed
+// validation or a failed write. The hook runs inside the exclusive hold, so it
+// must not call back into the Service, and a hook that blocks holds the profile's
+// slot. A panic in the hook is logged and swallowed. Nil (the default) means none.
+func WithOnWritten(fn func(profile string, fields []string)) Option {
+	return func(s *Service) { s.onWritten = fn }
 }
 
 // WithLimits overrides the default host caps used to validate edits.
@@ -143,7 +154,23 @@ func (s *Service) resolveProfileDir(name string) (string, error) {
 	if filepath.Dir(realDir) != realBase {
 		return "", fmt.Errorf("%w: escapes base folder", ErrInvalidProfileName)
 	}
-	return realDir, nil
+	// The exclusive hold is keyed by the request name, so the folder must be
+	// found under exactly that spelling: a case-insensitive filesystem or a
+	// symlinked sibling (q -> p) would otherwise reach p's file under another
+	// key and bypass the busy check.
+	if filepath.Base(realDir) != name {
+		return "", ErrProfileNotFound
+	}
+	entries, err := os.ReadDir(realBase)
+	if err != nil {
+		return "", notFoundOrRead(err)
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return realDir, nil
+		}
+	}
+	return "", ErrProfileNotFound
 }
 
 func notFoundOrRead(err error) error {

@@ -155,13 +155,45 @@ func TestSymlinkedProfileEscapingBaseRejected(t *testing.T) {
 	if got, _ := s.ListProfiles(); len(got) != 0 {
 		t.Fatalf("listed %v", got)
 	}
-	// A symlink that stays inside the base is fine.
+}
+
+// The exclusive hold is keyed by the request name, so a second spelling of the
+// same folder must not resolve.
+func TestAlternateSpellingsOfAProfileDoNotResolve(t *testing.T) {
+	base := t.TempDir()
 	copyFixture(t, "minimal.yaml", base, "real")
 	if err := os.Symlink(filepath.Join(base, "real"), filepath.Join(base, "alias")); err != nil {
-		t.Fatal(err)
+		t.Skip("symlinks unavailable:", err)
 	}
-	if _, err := s.Read("alias"); err != nil {
-		t.Fatalf("inside symlink: %v", err)
+	g := &fakeGate{busy: map[string]bool{}}
+	s, _ := New(base, WithGate(g))
+	if _, err := s.Read("real"); err != nil {
+		t.Fatalf("exact name: %v", err)
+	}
+	if _, err := s.Read("alias"); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("symlinked sibling read: %v", err)
+	}
+	if _, err := s.Apply("alias", Changes{CPU: ip(3)}); !errors.Is(err, ErrProfileNotFound) {
+		t.Fatalf("symlinked sibling apply: %v", err)
+	}
+	// Case variant: on a case-insensitive filesystem the stat succeeds, so the
+	// exact-spelling check is what must refuse it. On a case-sensitive one it
+	// is simply absent. Either way: not found, and the file is untouched.
+	before, _ := os.ReadFile(filepath.Join(base, "real", ConfigFileName))
+	for _, n := range []string{"REAL", "Real"} {
+		if _, err := s.Read(n); !errors.Is(err, ErrProfileNotFound) {
+			t.Fatalf("%s read: %v", n, err)
+		}
+		if _, err := s.Apply(n, Changes{CPU: ip(3)}); !errors.Is(err, ErrProfileNotFound) {
+			t.Fatalf("%s apply: %v", n, err)
+		}
+	}
+	after, _ := os.ReadFile(filepath.Join(base, "real", ConfigFileName))
+	if string(before) != string(after) {
+		t.Fatal("file changed through an alternate spelling")
+	}
+	if got, _ := s.ListProfiles(); strings.Join(got, ",") != "real" {
+		t.Fatalf("listed %v", got)
 	}
 }
 
