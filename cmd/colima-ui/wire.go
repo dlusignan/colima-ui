@@ -246,6 +246,9 @@ func (a *app) handler() http.Handler {
 	// #81 engine
 	opts = append(opts, httpapi.WithEngine(a.gate, a.containers))
 
+	// #86 logs
+	opts = append(opts, httpapi.WithLogs(a.gate, a.containers))
+
 	// #39 actions
 	opts = append(opts, httpapi.WithActions(a.store, a.gate))
 

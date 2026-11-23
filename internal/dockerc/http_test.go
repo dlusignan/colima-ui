@@ -451,6 +451,9 @@ func (f *fakeClient) Info(context.Context) (Engine, error)            { return E
 func (f *fakeClient) Images(context.Context) ([]Image, error)         { return nil, nil }
 func (f *fakeClient) Volumes(context.Context) ([]Volume, error)       { return nil, nil }
 func (f *fakeClient) Networks(context.Context) ([]Network, error)     { return nil, nil }
+func (f *fakeClient) Logs(context.Context, string, int) (LogResult, error) {
+	return LogResult{}, nil
+}
 func (f *fakeClient) Stats(ctx context.Context, id string) (Reading, error) {
 	f.calls.Add(1)
 	f.mu.Lock()

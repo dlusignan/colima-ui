@@ -121,6 +121,10 @@ type Client interface {
 	// Networks lists all networks. The attached count comes from the
 	// container list, because the network list has no Containers map.
 	Networks(ctx context.Context) ([]Network, error)
+	// Logs reads the last tail lines (1 to MaxLogTail) of a container's
+	// stdout and stderr, running or stopped. An unknown container gives
+	// ErrContainerNotFound and an unreadable log driver ErrLogsUnavailable.
+	Logs(ctx context.Context, id string, tail int) (LogResult, error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,
