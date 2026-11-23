@@ -1,0 +1,8 @@
+# top comment stays
+cpu: 2 # inline comment stays
+memory: 4.5
+futureKey: keep-me
+futureMap:
+  nested:
+    - 1
+    - two

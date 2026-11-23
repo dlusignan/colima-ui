@@ -1,0 +1,3 @@
+cpu: "four"
+memory: 4
+disk: [1, 2]

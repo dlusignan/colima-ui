@@ -1,0 +1,45 @@
+# Synthetic fixture modelled on the Colima 0.10 key set. Not a real profile.
+cpu: 4
+memory: 8
+disk: 100
+rootDisk: 20
+arch: aarch64
+runtime: docker
+vmType: vz
+mountType: virtiofs
+mountInotify: false
+hostname: colima
+autoActivate: true
+sshPort: 0
+forwardAgent: false
+rosetta: false
+binfmt: true
+nestedVirtualization: false
+portForwarder: ssh
+diskImage: ""
+mounts:
+  - location: /home/user/work
+    mountPoint: /work
+    writable: true
+  - location: /home/user/data
+env:
+  FOO: bar
+  PORT: 8080
+docker: {}
+provision: null
+kubernetes:
+  enabled: true
+  version: v1.31.2+k3s1
+  k3sArgs:
+    - --disable=traefik
+  port: 0
+network:
+  address: false
+  mode: shared
+  interface: en0
+  preferredRoute: false
+  dns: null
+  dnsHosts:
+    example.com: 1.2.3.4
+  hostAddresses: false
+  gatewayAddress: 192.168.5.2
