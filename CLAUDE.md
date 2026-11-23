@@ -21,7 +21,7 @@ Invariants that span multiple components:
 - **Metrics Sampler** (ticker) records allocated (config) vs. used (VM and per-container) figures into the History Store (in-memory ring buffer plus SQLite, with retention cleanup) and publishes live values over SSE.
 - **HTTP Layer is thin**: routing, auth, static assets; no Colima knowledge.
 - Container and image data uses the Docker Engine API (Go SDK over the Colima-exposed Unix socket), not CLI parsing.
-- Frontend: React with a query cache library for REST data and a single SSE connection for live data. Planned views: dashboard, profile detail, capacity charts, config editor, operation log.
+- Frontend: React with a query cache library for REST data and a single SSE connection for live data. Planned views: dashboard, profile detail, capacity charts, config editor, operation log (xterm.js), plus a Cmd+K command palette (cmdk). Styling is Tailwind CSS with shadcn/ui components copied into the repo (not a dependency), a dark terminal-style default, and themes driven by CSS variables (a light theme ships too). Charts use uPlot, with Recharts as fallback. Retro component libraries (NES.css, 98.css) are deliberately avoided. See the C4 doc's "Frontend visual design" section.
 
 ## Security requirements
 
