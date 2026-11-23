@@ -20,7 +20,9 @@ func NewAPI(opts ...Option) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h, pattern := rt.mux.Handler(r)
 		if pattern != "" {
-			h.ServeHTTP(w, r)
+			// Dispatch through the mux itself: it fills in the path values
+			// (r.PathValue) that Handler alone does not.
+			rt.mux.ServeHTTP(w, r)
 			return
 		}
 		// No route: let the mux decide between 404 and 405, but replace its
