@@ -31,3 +31,21 @@ The backend is the security perimeter, since controlling the VM and Docker socke
 - Require a random per-startup token on every API call.
 - Check `Host` and `Origin` headers (DNS rebinding and cross-site request defense).
 - Validate config values before they touch disk or a command line.
+
+## Agent toolkit bindings
+
+`.claude/` holds skills, agents and commands vendored from `skyfox675/agents-skills` (upstream commit `6b9d66f`), plus `caveman` (`JuliusBrussee/caveman` `70f4f34`, SKILL.md only, installer and hooks deliberately not used) and `humanizer` (`blader/humanizer` `a32f244`). Vendored files are plain copies: edit them freely, and keep the upstream commits above when re-syncing. They are project-agnostic and refer to the placeholders below.
+
+| Placeholder | Value |
+| --- | --- |
+| `<repo-slug>` / `<owner>/<repo>` | `dlusignan/colima-ui` (GitHub account `dlusignan`; `gh auth switch -u dlusignan` if another account is active) |
+| `<integration-branch>` | `main` (the repo default, so `Closes #N` auto-closes issues) |
+| `<merge-strategy>` | Undecided. No merge queue. |
+| `<local-gate>`, `<required-checks>`, `<derived-artifacts>` | Undecided. No code or CI yet. |
+| `<bot-reviewer>`, `<ai-mention-trigger>`, `<per-pr-deploy>`, `<flake-ledger>`, `<failure-catalog>` | None |
+| `<force-push-policy>` | `--force-with-lease` on feature branches only, never on `main` |
+| `<commit-convention>` | Undecided |
+| `<traceability-scheme>`, `<second-tracker>` | None |
+| Labels | Not yet created in the repo. `.claude/skills/gh-issue-labels/scripts/bootstrap-labels.sh` creates them (writes to GitHub: run only with the owner's approval). |
+
+The PR watcher lanes (`pr-comments`, `pr-checks`, `pr-cleanup`, `pr-dispatcher`) assume CI and PR review; they have nothing to do until those exist. `/gh-issue`, `/gh-issue-groom` and `/gh-issue-recon` work now.
