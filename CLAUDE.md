@@ -63,7 +63,7 @@ The backend is the security perimeter, since controlling the VM and Docker socke
 | --- | --- |
 | `<repo-slug>` / `<owner>/<repo>` | `dlusignan/colima-ui` (GitHub account `dlusignan`; `gh auth switch -u dlusignan` if another account is active) |
 | `<integration-branch>` | `main` (the repo default, so `Closes #N` auto-closes issues) |
-| `<merge-strategy>` | Undecided. No merge queue. |
+| `<merge-strategy>` | `--squash`, one commit per PR. No merge queue, and auto-merge and branch protection are unavailable on this plan, so agents open PRs and the owner merges. |
 | `<local-gate>`, `<required-checks>`, `<derived-artifacts>` | Undecided. No code or CI yet. |
 | `<bot-reviewer>`, `<ai-mention-trigger>`, `<per-pr-deploy>`, `<flake-ledger>`, `<failure-catalog>` | None |
 | `<force-push-policy>` | `--force-with-lease` on feature branches only, never on `main` |

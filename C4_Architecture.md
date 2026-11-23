@@ -63,7 +63,7 @@ C4Container
 
 | Container | Technology | Responsibility |
 | --- | --- | --- |
-| Web Application | React, Tailwind CSS, shadcn/ui (Radix primitives), built to static files | Presents state, sends user intent to the API, shows streamed progress. Holds no business rules beyond input validation for convenience. |
+| Web Application | React, Tailwind CSS, shadcn/ui (Base UI primitives), built to static files | Presents state, sends user intent to the API, shows streamed progress. Holds no business rules beyond input validation for convenience. |
 | Backend | Go, standard library HTTP, Docker Go SDK | Owns every interaction with the machine. Validates requests, runs Colima commands, streams output, samples metrics, enforces security rules. |
 | History Database | SQLite through a pure Go driver (modernc.org/sqlite), no cgo | Stores time series samples and an action log so history survives restarts. |
 
@@ -131,7 +131,7 @@ The React application is organized around five views: a dashboard of all profile
 
 ### Frontend visual design
 
-The interface targets developers, so the look is a dense, dark, terminal inspired style, built on Tailwind CSS and shadcn/ui. shadcn/ui components are copied into the repository instead of installed as a dependency, which keeps full control over every detail and avoids fighting a heavy component library. The Radix primitives underneath provide accessibility for dialogs, menus, and focus handling.
+The interface targets developers, so the look is a dense, dark, terminal inspired style, built on Tailwind CSS and shadcn/ui. shadcn/ui components are copied into the repository instead of installed as a dependency, which keeps full control over every detail and avoids fighting a heavy component library. The Base UI primitives underneath (the shadcn/ui `base-nova` style) provide accessibility for dialogs, menus, and focus handling.
 
 Theming is driven entirely by CSS variables, so a theme is one file. Dark is the default. The planned palettes are Catppuccin Mocha, Tokyo Night, Gruvbox, Nord, and Dracula, selectable by the user. A light theme is built from the start so that contrast and accessibility problems do not hide in a dark only design.
 
@@ -197,7 +197,7 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Container data | Docker Engine API, not CLI parsing | Stable, typed, documented. |
 | Colima data | CLI JSON output plus config files | Colima has no stable API, so access is isolated in one adapter. |
 | Live updates | Server Sent Events | One way streaming is enough, simpler than WebSockets. |
-| Styling | Tailwind CSS with shadcn/ui | Components live in the repo, so every detail can be restyled. Accessible Radix primitives underneath. |
+| Styling | Tailwind CSS with shadcn/ui | Components live in the repo, so every detail can be restyled. Accessible Base UI primitives underneath. |
 | Visual identity | Dark terminal style, themeable through CSS variables | Appeals to the developer audience. A palette is a single file swap, and a light theme ships too. |
 | Operation log | xterm.js | Renders streamed command output, colors included, like a real terminal. |
 | Charts | uPlot, Recharts as fallback | uPlot is small and fast for live time series. Recharts is easier to theme if needed. |
