@@ -149,7 +149,13 @@ Response `200`:
       "diskBytes": 64424509440,
       "colimaVersion": "0.8.1",
       "source": "file_only",
-      "activeJobId": "j_8f3a2c"
+      "activeJobId": "j_8f3a2c",
+      "warnings": [
+        {
+          "code": "colima_version_unsupported",
+          "message": "The installed Colima version is outside the tested 0.10.x line."
+        }
+      ]
     }
   ]
 }

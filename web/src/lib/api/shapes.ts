@@ -23,6 +23,7 @@ import type {
   Profile,
   ProfileConfig,
   ProfileList,
+  ProfileWarning,
 } from './types'
 
 export type Shape = { readonly [field: string]: Kind }
@@ -36,7 +37,14 @@ export type Kind =
   | 'string[]'
   | 'record'
   | { readonly arrayOf: Shape }
+  /** Like arrayOf, but the key may be absent. */
+  | { readonly optionalArrayOf: Shape }
   | { readonly shape: Shape }
+
+export const profileWarningShape = {
+  code: 'string',
+  message: 'string',
+} as const satisfies Record<keyof ProfileWarning, Kind>
 
 export const profileShape = {
   name: 'string',
@@ -48,6 +56,7 @@ export const profileShape = {
   colimaVersion: 'string',
   source: 'string',
   activeJobId: 'string|null',
+  warnings: { optionalArrayOf: profileWarningShape },
 } as const satisfies Record<keyof Profile, Kind>
 
 export const profileListShape = {
