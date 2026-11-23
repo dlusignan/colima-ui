@@ -13,6 +13,9 @@ import type {
   DockerImage,
   DockerNetwork,
   DockerVolume,
+  EngineContainers,
+  EngineDiskUsage,
+  EngineInfo,
   ImageList,
   NetworkList,
   VolumeList,
@@ -184,6 +187,33 @@ export const dockerNetworkShape = {
 export const networkListShape = {
   networks: { arrayOf: dockerNetworkShape },
 } as const satisfies Record<keyof NetworkList, Kind>
+
+export const engineContainersShape = {
+  total: 'number',
+  running: 'number',
+  paused: 'number',
+  stopped: 'number',
+} as const satisfies Record<keyof EngineContainers, Kind>
+
+export const engineDiskUsageShape = {
+  imagesBytes: 'number',
+  containersBytes: 'number',
+  volumesBytes: 'number',
+  buildCacheBytes: 'number',
+  layersBytes: 'number',
+} as const satisfies Record<keyof EngineDiskUsage, Kind>
+
+export const engineInfoShape = {
+  version: 'string',
+  apiVersion: 'string',
+  os: 'string',
+  arch: 'string',
+  cpus: 'number',
+  memoryBytes: 'number',
+  containers: { shape: engineContainersShape },
+  images: 'number',
+  diskUsage: { shape: engineDiskUsageShape },
+} as const satisfies Record<keyof EngineInfo, Kind>
 
 export const actionEntryShape = {
   startedAt: 'string',

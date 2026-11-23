@@ -156,6 +156,33 @@ export interface NetworkList {
   networks: DockerNetwork[]
 }
 
+export interface EngineContainers {
+  total: number
+  running: number
+  paused: number
+  stopped: number
+}
+
+export interface EngineDiskUsage {
+  imagesBytes: number
+  containersBytes: number
+  volumesBytes: number
+  buildCacheBytes: number
+  layersBytes: number
+}
+
+export interface EngineInfo {
+  version: string
+  apiVersion: string
+  os: string
+  arch: string
+  cpus: number
+  memoryBytes: number
+  containers: EngineContainers
+  images: number
+  diskUsage: EngineDiskUsage
+}
+
 export type ActionOutcome = 'success' | 'failed' | 'cancelled'
 
 export interface ActionEntry {
