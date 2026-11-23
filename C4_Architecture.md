@@ -232,6 +232,9 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Metric history | Sample every 5 seconds. Keep raw samples for 24 hours, then 1 minute averages for 30 days, then delete. Not user configurable in the first release | Keeps the SQLite file small while showing recent detail and a month of trend. |
 | Profiles | All profiles are listed and managed at launch, and every profile route carries the profile name | The dashboard is a table of profiles by design, so several profiles cost nothing extra. |
 | Platform | macOS only in the first release | Socket and configuration folder discovery assume macOS. Linux is a later addition. |
+| History database failure | A history database that cannot be opened, including one written by a newer version, stops the backend at startup with a clear message | The file holds history only and can be deleted, so failing fast is simpler than running without history. The same stance as a missing `colima` binary. |
+| Observer fan-out | The Operation Manager calls three observers in order for every job: the action log recorder (bounded queue, own writer goroutine), the event stream (non-blocking publish) and a sampler refresh signal | Each observer is non-blocking, so a slow database or browser never stalls a job's output. A finished job also makes a start or stop show up in sampling within seconds. |
+| Shutdown order | Event streams end first, then the HTTP server stops, then the sampler, the Operation Manager, the action log recorder and finally the History Store | An open stream would otherwise hold the HTTP shutdown for its whole timeout, and the recorder must drain after the manager so the last finished job is written before the store closes. |
 | Finished job output | Kept in memory only. After a backend restart a finished job shows its action log summary and no output | Matches the API contract, which already treats output after a restart as unavailable. |
 
 ## 10. Open Questions
