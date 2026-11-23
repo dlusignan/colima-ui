@@ -4,6 +4,7 @@ import type {
   ConfigUpdate,
   ConfigUpdateResult,
   ContainerList,
+  ImageList,
   Job,
   JobRef,
   Metrics,
@@ -55,6 +56,8 @@ export const api = {
     ),
   getContainers: (name: string, signal?: AbortSignal) =>
     request<ContainerList>('GET', `/api/profiles/${enc(name)}/containers`, { signal }),
+  getImages: (name: string, signal?: AbortSignal) =>
+    request<ImageList>('GET', `/api/profiles/${enc(name)}/images`, { signal }),
   getActions: (name: string, limit?: number, signal?: AbortSignal) =>
     request<ActionList>('GET', withQuery(`/api/profiles/${enc(name)}/actions`, { limit }), {
       signal,

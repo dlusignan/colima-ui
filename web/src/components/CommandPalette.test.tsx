@@ -104,6 +104,17 @@ describe('palette', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
+  it('has a go-to entry for the Docker tab', async () => {
+    const { user } = setup([a, b])
+    await screen.findByRole('button', { name: 'row dev' })
+    await user.keyboard('{Meta>}k{/Meta}')
+    await palette()
+    await user.keyboard('prod docker')
+    expect(screen.getAllByRole('option')).toHaveLength(1)
+    await user.keyboard('{Enter}')
+    expect(screen.getByTestId('where')).toHaveTextContent('/profiles/prod/docker')
+  })
+
   it('start runs at once without a confirmation', async () => {
     const { user, start } = setup([a, b])
     await screen.findByRole('button', { name: 'row dev' })

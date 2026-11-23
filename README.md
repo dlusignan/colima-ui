@@ -17,17 +17,17 @@ Colima UI runs on your machine as a single binary. It reads Colima's own state (
 7. **Themes.** Six themes (Mocha, Light, Tokyo Night, Gruvbox, Nord and Dracula) plus System, which follows your operating system.
 8. **Live updates.** One event stream carries job output, job completion and metric samples to the browser, so the operation log and the capacity charts update as things happen. The dashboard also refreshes its profile list every few seconds.
 9. **History.** A metrics sampler records VM and per-container usage every 5 seconds, and an action log records every finished job and every applied config change. Both live in a local SQLite file.
+10. **Docker tab.** A profile tab with an Images section: tags, image ID, size, when each image was created and how many containers use it, with unused images marked. It refreshes every 30 seconds.
 
 If the history file cannot be opened (for example a newer version wrote it), the binary refuses to start and says so, because the file holds history only and can be deleted to start fresh.
 
 ### Added to the backlog this round: planned, not built yet
 
-An enhanced Docker view. Today the app shows containers only. The plan, tracked as issues #78 to #86, is:
+An enhanced Docker view. Today the app shows containers and images. The plan, tracked as issues #78 to #86 and #92 (the Docker tab with images is done), is:
 
-1. **Docker tab** (#79, #83): a new profile tab, starting with an Images section (tags, size, creation time and how many containers use each image).
-2. **Volumes and networks** (#80, #84): what holds your data and which networks exist.
-3. **Engine overview** (#81, #85): Docker version, container and image counts, and a breakdown of Docker's disk usage.
-4. **Container logs** (#86): waiting on a decision about a read-only snapshot versus a live follow mode.
+1. **Volumes and networks** (#80, #84): what holds your data and which networks exist.
+2. **Engine overview** (#81, #85): Docker version, container and image counts, and a breakdown of Docker's disk usage.
+3. **Container logs** (#86, #92): a read-only snapshot of a container's recent output (the last 200 lines by default, at most 1000). A live follow mode is not planned yet.
 
 Also under discussion, with no issues yet: creating a new profile (VM) from the interface, with the settings Colima accepts at creation. Colima has no rename command, so renaming is not planned.
 
