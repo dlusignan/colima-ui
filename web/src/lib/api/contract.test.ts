@@ -1,0 +1,154 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { describe, expect, it } from 'vitest'
+import * as s from './shapes'
+import type { Kind, Shape } from './shapes'
+
+// Extracts the fenced json blocks from docs/api.md, attaches each to the
+// nearest preceding heading and checks it against the field tables in
+// shapes.ts. A json block that is not mapped below fails the test, so a
+// contract edit cannot go unchecked.
+
+const docPath = path.resolve(import.meta.dirname, '../../../../docs/api.md')
+const doc = readFileSync(docPath, 'utf8')
+
+interface Block {
+  key: string
+  heading: string
+  body: unknown
+}
+
+function extractBlocks(markdown: string): Block[] {
+  const blocks: Block[] = []
+  const counts = new Map<string, number>()
+  let heading = ''
+  let num = ''
+  let inJson = false
+  let inOther = false
+  let buf: string[] = []
+  for (const line of markdown.split('\n')) {
+    if (inJson) {
+      if (line.startsWith('```')) {
+        const idx = counts.get(num) ?? 0
+        counts.set(num, idx + 1)
+        blocks.push({ key: `${num}#${idx}`, heading, body: JSON.parse(buf.join('\n')) })
+        inJson = false
+        buf = []
+      } else buf.push(line)
+      continue
+    }
+    if (inOther) {
+      if (line.startsWith('```')) inOther = false
+      continue
+    }
+    const h = /^#{2,3} (\d+(?:\.\d+)?)\.? (.*)$/.exec(line)
+    if (h) {
+      num = h[1]
+      heading = line
+      continue
+    }
+    if (line.startsWith('```json')) inJson = true
+    else if (line.startsWith('```')) inOther = true
+  }
+  return blocks
+}
+
+function checkKind(kind: Kind, value: unknown, where: string): void {
+  switch (kind) {
+    case 'string':
+    case 'number':
+    case 'boolean':
+      expect(typeof value, where).toBe(kind)
+      return
+    case 'string|null':
+      expect(value === null || typeof value === 'string', where).toBe(true)
+      return
+    case 'number|null':
+      expect(value === null || typeof value === 'number', where).toBe(true)
+      return
+    case 'string[]':
+      expect(Array.isArray(value), where).toBe(true)
+      for (const v of value as unknown[]) expect(typeof v, where).toBe('string')
+      return
+    case 'record':
+      expect(typeof value === 'object' && value !== null && !Array.isArray(value), where).toBe(true)
+      return
+  }
+  if ('arrayOf' in kind) {
+    expect(Array.isArray(value), where).toBe(true)
+    ;(value as unknown[]).forEach((v, i) => checkShape(kind.arrayOf, v, `${where}[${i}]`))
+    return
+  }
+  checkShape(kind.shape, value, where)
+}
+
+function checkShape(shape: Shape, value: unknown, where: string, partial = false): void {
+  expect(typeof value === 'object' && value !== null && !Array.isArray(value), where).toBe(true)
+  const obj = value as Record<string, unknown>
+  const expected = Object.keys(shape).sort()
+  const actual = Object.keys(obj).sort()
+  if (partial) {
+    for (const k of actual) expect(expected, `${where}: unexpected key ${k}`).toContain(k)
+  } else {
+    expect(actual, `${where}: key set`).toEqual(expected)
+  }
+  for (const k of actual) checkKind(shape[k], obj[k], `${where}.${k}`)
+}
+
+interface Mapping {
+  shape: Shape
+  partial?: boolean
+}
+
+const mapped: Record<string, Mapping> = {
+  '2#0': { shape: s.apiErrorShape },
+  '3.1#0': { shape: s.healthShape },
+  '3.2#0': { shape: s.profileListShape },
+  '3.4#0': { shape: s.jobRefShape },
+  '3.5#0': { shape: s.jobShape },
+  '3.7#0': { shape: s.configShape },
+  '3.8#0': { shape: s.configUpdateShape, partial: true },
+  '3.8#1': { shape: s.configUpdateResultShape },
+  '3.8#2': { shape: s.apiErrorShape },
+  '3.9#0': { shape: s.metricsShape },
+  '3.10#0': { shape: s.containerListShape },
+  '3.11#0': { shape: s.actionListShape },
+  '5.3#0': { shape: s.jobOutputEventShape },
+  '5.3#1': { shape: s.jobFinishedEventShape },
+  '5.3#2': { shape: s.metricEventShape },
+}
+
+// Json blocks deliberately not checked. Empty on purpose.
+const ignored = new Set<string>()
+
+const blocks = extractBlocks(doc)
+
+describe('docs/api.md contract', () => {
+  it('finds the json blocks', () => {
+    expect(blocks.length).toBeGreaterThanOrEqual(Object.keys(mapped).length)
+  })
+
+  it('has a block for every mapped heading', () => {
+    const keys = new Set(blocks.map((b) => b.key))
+    for (const k of Object.keys(mapped)) expect(keys.has(k), `missing block ${k}`).toBe(true)
+  })
+
+  it('maps every json block (a new unmapped block fails)', () => {
+    const unmapped = blocks.filter((b) => !(b.key in mapped) && !ignored.has(b.key))
+    expect(unmapped.map((b) => `${b.key} under "${b.heading}"`)).toEqual([])
+  })
+
+  for (const b of blocks) {
+    const m = mapped[b.key]
+    if (!m) continue
+    it(`block ${b.key} (${b.heading}) matches its shape`, () => {
+      checkShape(m.shape, b.body, b.key, m.partial)
+    })
+  }
+
+  it('the checker rejects missing and extra keys', () => {
+    expect(() => checkShape(s.healthShape, {}, 't')).toThrow()
+    expect(() => checkShape(s.healthShape, { status: 'ok', extra: 1 }, 't')).toThrow()
+    expect(() => checkShape(s.healthShape, { status: 1 }, 't')).toThrow()
+  })
+})

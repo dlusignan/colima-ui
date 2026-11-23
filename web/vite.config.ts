@@ -17,7 +17,14 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       proxy: {
-        '/api': { target: apiTarget, changeOrigin: true },
+        // changeOrigin rewrites Host but not Origin. Browsers send Origin on
+        // same-origin POST and PUT, and the Go guard rejects the dev page's
+        // origin, so the proxy sets the backend's own origin.
+        '/api': {
+          target: apiTarget,
+          changeOrigin: true,
+          headers: { Origin: apiTarget },
+        },
       },
     },
   }
