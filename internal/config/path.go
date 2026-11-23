@@ -192,6 +192,30 @@ func stripPath(err error) error {
 	return err
 }
 
+// ProfileFolderExists reports whether the base folder holds any entry named
+// like name, ignoring case and whether it is a folder, holds a colima.yaml or
+// is a symlink. The default macOS filesystem treats Dev and dev as one folder,
+// so a creation must count either as taken. The name must pass
+// ValidateProfileName. A missing base folder means no.
+func (s *Service) ProfileFolderExists(name string) (bool, error) {
+	if err := ValidateProfileName(name); err != nil {
+		return false, err
+	}
+	entries, err := os.ReadDir(s.base)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, &ReadError{Err: stripPath(err)}
+	}
+	for _, e := range entries {
+		if strings.EqualFold(e.Name(), name) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListProfiles returns the sorted names of profile folders that hold a
 // colima.yaml. Names starting with "_" (_templates, _lima, _store), names that
 // fail validation, non-folders and escaping symlinks are skipped. A missing base

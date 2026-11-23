@@ -21,6 +21,7 @@ import type {
   NetworkList,
   VolumeList,
   ConfigUpdate,
+  CreateProfileRequest,
   ConfigUpdateResult,
   Health,
   Job,
@@ -33,6 +34,7 @@ import type {
   Metrics,
   Profile,
   ProfileConfig,
+  ProfileCreated,
   ProfileList,
   ProfileWarning,
 } from './types'
@@ -77,6 +79,25 @@ export const profileListShape = {
 export const jobRefShape = {
   jobId: 'string',
 } as const satisfies Record<keyof JobRef, Kind>
+
+export const createProfileRequestShape = {
+  name: 'string',
+  cpus: 'number',
+  memoryGiB: 'number',
+  diskGiB: 'number',
+  rootDiskGiB: 'number',
+  runtime: 'string',
+  vmType: 'string',
+  arch: 'string',
+  mountType: 'string',
+  kubernetes: 'boolean',
+  kubernetesVersion: 'string',
+} as const satisfies Record<keyof CreateProfileRequest, Kind>
+
+export const profileCreatedShape = {
+  jobId: 'string',
+  profile: 'string',
+} as const satisfies Record<keyof ProfileCreated, Kind>
 
 export const jobOutputLineShape = {
   seq: 'number',

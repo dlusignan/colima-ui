@@ -85,17 +85,18 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys (`cpu`, `memoryGiB`, `diskGiB`).
+For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType` and `kubernetesVersion` for profile creation (3.17).
 
 ## 3. Routes
 
-There are 18 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 19 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/healthz` | Liveness, no token |
 | `GET` | `/api/profiles` | List profiles |
 | `GET` | `/api/profiles/{name}` | One profile |
+| `POST` | `/api/profiles` | Create a profile (a start job on a new name) |
 | `POST` | `/api/profiles/{name}/start` | Start a profile |
 | `POST` | `/api/profiles/{name}/stop` | Stop a profile |
 | `POST` | `/api/profiles/{name}/restart` | Restart a profile |
@@ -238,7 +239,7 @@ Response `200`:
 
 Fields:
 
-- `action`: `start`, `stop` or `restart`.
+- `action`: `start`, `stop`, `restart` or `create` (3.17).
 - `state`: `running`, `succeeded`, `failed` or `cancelled`.
 - `finishedAt` and `exitCode` are `null` while the job is running. `exitCode` is also `null` for a cancelled job whose process was killed.
 - `output` holds the captured lines in order. Each line has a per-job `seq` that starts at 1 and rises by 1. Lines keep their ANSI escape sequences.
@@ -432,7 +433,7 @@ Response `200`, newest first:
 }
 ```
 
-- `action` is a string such as `start`, `stop`, `restart` or `config_change`. Clients must tolerate new values.
+- `action` is a string such as `start`, `stop`, `restart`, `create` or `config_change`. Clients must tolerate new values.
 - `outcome` is `success`, `failed` or `cancelled`.
 - `detail` is a short string or `null`.
 - Entries carry no job id. Finished job output is not kept across a restart (see the C4 decisions table), so there is nothing to reopen.
@@ -622,9 +623,68 @@ Errors:
 5. `409` `invalid_state`: the log driver cannot be read (`details.reason` is `logs_unavailable`).
 6. `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering, or Docker sent a stream that is not valid log framing.
 
+### 3.17 `POST /api/profiles`
+
+Token: yes. Creates a profile by starting a new VM with the basic settings. It is the same kind of job as a start (3.4), so the call returns at once, the output streams over the event stream (section 5) and the job appears in the action log with the action `create`.
+
+Request body: a JSON object with a required `name` and these optional settings. Unknown keys are rejected, keys match exactly (case included) and may appear once. A key set to `null` counts as absent. The body is at most 64 KiB.
+
+```json
+{
+  "name": "dev",
+  "cpus": 4,
+  "memoryGiB": 8,
+  "diskGiB": 100,
+  "rootDiskGiB": 20,
+  "runtime": "docker",
+  "vmType": "vz",
+  "arch": "aarch64",
+  "mountType": "virtiofs",
+  "kubernetes": false,
+  "kubernetesVersion": ""
+}
+```
+
+1. A setting that is left out is not passed to Colima, so Colima's default applies. A body with only `name` is valid.
+2. `name` follows the same rules as every other route (a letter or digit first, then letters, digits, dots, underscores and hyphens, at most 64 characters, no `..`). `default` is allowed. Names that differ only by letter case are the same profile.
+3. `cpus`, `memoryGiB`, `diskGiB` and `rootDiskGiB` use the same ranges as the config route (3.8). `runtime` is `docker`, `containerd` or `incus`; `vmType` is `qemu`, `vz` or `krunkit`; `arch` is `aarch64` or `x86_64`; `mountType` is `sshfs`, `9p` or `virtiofs`. `kubernetesVersion` must look like `v1.31.2+k3s1`.
+4. The route does not check which combinations Colima accepts (for example Kubernetes with the `incus` runtime, or `9p` with the `vz` VM type). Colima refuses those itself and the job then fails with its output.
+5. Colima saves the settings to the new profile's YAML file, so later starts reuse them.
+
+Response `202`:
+
+```json
+{ "jobId": "j_8f3a2c", "profile": "dev" }
+```
+
+`profile` echoes the requested name. The client then follows the job as in 3.4.
+
+Errors:
+
+1. `400` `bad_request`: malformed JSON, a body that is not an object, an unknown, repeated or differently cased key, a value of the wrong type (including a number that is not an integer where one is needed or does not fit), or a body over 64 KiB. Nothing is launched.
+2. `422` `validation_failed`: `details.fields` maps every rejected key to a fixed message, `name` included (missing, empty or malformed). Messages never repeat the request text. Nothing is launched. Example:
+
+```json
+{
+  "error": {
+    "code": "validation_failed",
+    "message": "Some values are not allowed.",
+    "details": { "fields": { "name": "is required", "cpus": "must be between 1 and 16" } }
+  }
+}
+```
+
+3. `409` `profile_exists`: the name is listed by Colima or has a folder under the Colima home, in any letter case. Nothing is launched, so an existing profile's settings are never rewritten.
+4. `409` `profile_busy`: a job is already running on that name, in any letter case. `details.jobId` is the running job.
+5. `502` `colima_failed`: Colima could not be queried or launched.
+6. `503` `shutting_down`: the backend is stopping and accepts no new jobs.
+7. `500` `internal_error`: unexpected failure.
+
+A failed creation can leave a half-created profile behind (a folder, a YAML file, a partial VM). It then shows up in the profile list as stopped. The API has no delete route, so the user removes it in a terminal. Until Colima has written the profile's folder, `GET /api/profiles/{name}/actions` answers `404` for the new name, even though the job and its action row exist.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile creation or deletion, YAML editing, or VM and control logs. Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic settings only; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 
@@ -705,6 +765,7 @@ The `profile` field appears on every event so one connection can serve all views
 | Dashboard | `GET /api/profiles`, start, stop and restart (3.4), `GET /api/jobs/{id}`, `GET /api/events` |
 | Profile detail | `GET /api/profiles/{name}`, start, stop and restart, `GET /api/profiles/{name}/actions`, `GET /api/profiles/{name}/config` |
 | Capacity | `GET /api/profiles/{name}/metrics`, `GET /api/profiles/{name}/containers`, `GET /api/events` (`metric`) |
+| Create profile dialog | `POST /api/profiles` (3.17), `GET /api/jobs/{id}`, `GET /api/events` (`job.output`, `job.finished`) |
 | Configuration editor | `GET` and `PUT /api/profiles/{name}/config`, restart (3.4) |
 | Operation log panel | `GET /api/jobs/{id}`, `POST /api/jobs/{id}/cancel`, `GET /api/events` (`job.output`, `job.finished`) |
 

@@ -56,6 +56,17 @@ describe('request', () => {
     expect(init.body).toBe('{"cpu":6}')
   })
 
+  it('sends the creation request as a JSON POST', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(202, { jobId: 'j_1', profile: 'dev' }))
+    const out = await api.createProfile({ name: 'dev', cpus: 4, kubernetes: false })
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/profiles')
+    expect(init.method).toBe('POST')
+    expect(init.headers['Content-Type']).toBe('application/json')
+    expect(init.body).toBe('{"name":"dev","cpus":4,"kubernetes":false}')
+    expect(out).toEqual({ jobId: 'j_1', profile: 'dev' })
+  })
+
   it('sends POST without body or Content-Type and escapes names', async () => {
     fetchMock.mockResolvedValue(jsonResponse(202, { jobId: 'j_1' }))
     await api.startProfile('a/b c')

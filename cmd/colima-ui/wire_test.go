@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -53,11 +54,12 @@ func (f *fakeRunner) runCount() int {
 func (f *fakeRunner) Run(_ context.Context, args []string) (colima.Result, error) {
 	f.mu.Lock()
 	f.runs++
+	list, listErr := f.list, f.listErr
 	f.mu.Unlock()
-	if f.listErr != nil {
-		return colima.Result{}, f.listErr
+	if listErr != nil {
+		return colima.Result{}, listErr
 	}
-	return colima.Result{Stdout: []byte(f.list)}, nil
+	return colima.Result{Stdout: []byte(list)}, nil
 }
 
 func (f *fakeRunner) Stream(_ context.Context, args []string) (colima.Process, error) {
@@ -961,5 +963,196 @@ func TestShutdownIdempotent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("shutdown %d: %v", i, err)
 		}
+	}
+}
+
+func TestAppCreateProfileFlow(t *testing.T) {
+	baseline := ownGoroutines()
+	r := &fakeRunner{list: listJSON, script: []string{"creating", "done"}, exit: 0}
+	a, dbPath := testAppAt(t, r)
+	ts := serve(t, a)
+
+	// Token required.
+	req, _ := http.NewRequest("POST", ts.base+"/api/profiles", strings.NewReader(`{"name":"fresh"}`))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 401 || r.streamCount() != 0 {
+		t.Fatalf("no token: %d, streams %d", resp.StatusCode, r.streamCount())
+	}
+
+	// Invalid input never reaches colima.
+	for body, want := range map[string]int{
+		`{}`:                             422,
+		`{"name":"fresh","cpus":9999}`:   422,
+		`{"name":"-p"}`:                  422,
+		`{"name":"fresh","runtime":"x"}`: 422,
+		`{"name":"fresh","unknown":1}`:   400,
+		`{"name":"fresh","cpus":"2"}`:    400,
+		`{"name":"a/b"}`:                 422,
+		`{"name":"fresh","kubernetesVersion":"--edit"}`: 422,
+	} {
+		if code, out := ts.do(t, "POST", "/api/profiles", body); code != want {
+			t.Fatalf("%s: %d %s, want %d", body, code, out, want)
+		}
+	}
+	if code, out := ts.do(t, "POST", "/api/profiles", strings.Repeat(" ", 65<<10)+`{"name":"fresh"}`); code != 400 {
+		t.Fatalf("oversized: %d %s", code, out)
+	}
+	if r.streamCount() != 0 {
+		t.Fatalf("colima launched for invalid input: %v", r.streams)
+	}
+
+	// Existing profiles in any case: listed, listed in another case, folder only.
+	for _, name := range []string{"dev", "Dev", "DEV", "default", "fileonly", "FileOnly"} {
+		code, out := ts.do(t, "POST", "/api/profiles", `{"name":"`+name+`"}`)
+		if code != 409 || !strings.Contains(out, "profile_exists") {
+			t.Fatalf("%s: %d %s", name, code, out)
+		}
+	}
+	if r.streamCount() != 0 {
+		t.Fatal("colima launched for an existing profile")
+	}
+
+	ch, _ := ts.openStream(t, "?profile=fresh")
+	code, out := ts.do(t, "POST", "/api/profiles", `{"name":"fresh","cpus":2,"memoryGiB":4,"diskGiB":60,"runtime":"docker","vmType":"vz","kubernetes":true,"kubernetesVersion":"v1.31.2+k3s1"}`)
+	if code != 202 {
+		t.Fatalf("create: %d %s", code, out)
+	}
+	var created struct{ JobID, Profile string }
+	if err := json.Unmarshal([]byte(out), &created); err != nil || created.JobID == "" || created.Profile != "fresh" {
+		t.Fatalf("body %s", out)
+	}
+	for _, want := range []string{"creating", "done"} {
+		e := nextJobEvent(t, ch)
+		if e.name != "job.output" || e.data["line"] != want || e.data["jobId"] != created.JobID || e.data["profile"] != "fresh" {
+			t.Fatalf("output: %#v", e)
+		}
+	}
+	if fin := nextJobEvent(t, ch); fin.name != "job.finished" || fin.data["state"] != "succeeded" {
+		t.Fatalf("finished: %#v", fin)
+	}
+	want := []string{"start", "-p", "fresh", "--cpus", "2", "--memory", "4", "--disk", "60", "--runtime", "docker",
+		"--vm-type", "vz", "--kubernetes", "--kubernetes-version", "v1.31.2+k3s1"}
+	if got := r.streams[0]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv %v, want %v", got, want)
+	}
+	if code, body := ts.do(t, "GET", "/api/jobs/"+created.JobID, ""); code != 200 || !strings.Contains(body, `"action":"create"`) {
+		t.Fatalf("job: %d %s", code, body)
+	}
+
+	// Once colima lists it, the profile page reads the action log: one create row.
+	r.mu.Lock()
+	r.list += `{"name":"fresh","status":"Running","runtime":"docker"}` + "\n"
+	r.mu.Unlock()
+	eventually(t, "create row", func() bool { return len(ts.actions(t, "fresh")) == 1 })
+	if rows := ts.actions(t, "fresh"); rows[0].Action != "create" || rows[0].Outcome != "success" {
+		t.Fatalf("rows %#v", rows)
+	}
+	if code, out := ts.do(t, "POST", "/api/profiles", `{"name":"FRESH"}`); code != 409 || !strings.Contains(out, "profile_exists") {
+		t.Fatalf("recreate: %d %s", code, out)
+	}
+
+	a.closeStreams()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := ts.srv.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if rows := historyAt(t, dbPath, "fresh"); len(rows) != 1 || rows[0].Action != "create" {
+		t.Fatalf("history %+v", rows)
+	}
+	assertNoLeak(t, baseline)
+}
+
+func TestAppCreateBusyAndCaseVariantsLaunchOnce(t *testing.T) {
+	hold := make(chan struct{})
+	r := &fakeRunner{script: []string{"x"}, hold: hold}
+	a := testApp(t, r)
+	ts := serve(t, a)
+
+	// A fresh machine can create "default".
+	if code, out := ts.do(t, "POST", "/api/profiles", `{"name":"default"}`); code != 202 {
+		t.Fatalf("default: %d %s", code, out)
+	}
+	for _, name := range []string{"default", "Default", "DEFAULT"} {
+		code, out := ts.do(t, "POST", "/api/profiles", `{"name":"`+name+`"}`)
+		if code != 409 || !strings.Contains(out, "profile_busy") || !strings.Contains(out, `"jobId"`) {
+			t.Fatalf("%s: %d %s", name, code, out)
+		}
+	}
+	if r.streamCount() != 1 {
+		t.Fatalf("streams = %d, want 1", r.streamCount())
+	}
+	// A different name is independent.
+	if code, out := ts.do(t, "POST", "/api/profiles", `{"name":"other"}`); code != 202 {
+		t.Fatalf("other: %d %s", code, out)
+	}
+	close(hold)
+}
+
+func TestAppConcurrentCreatesOfOneNameLaunchOnce(t *testing.T) {
+	hold := make(chan struct{})
+	r := &fakeRunner{script: []string{"x"}, hold: hold}
+	a := testApp(t, r)
+	ts := serve(t, a)
+	names := []string{"race", "Race", "RACE", "rAcE", "race", "Race"}
+	codes := make(chan int, len(names))
+	var wg sync.WaitGroup
+	for _, n := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			code, _ := ts.do(t, "POST", "/api/profiles", `{"name":"`+n+`"}`)
+			codes <- code
+		}()
+	}
+	wg.Wait()
+	close(codes)
+	accepted := 0
+	for c := range codes {
+		switch c {
+		case 202:
+			accepted++
+		case 409:
+		default:
+			t.Errorf("unexpected status %d", c)
+		}
+	}
+	if accepted != 1 || r.streamCount() != 1 {
+		t.Fatalf("accepted %d, streams %d", accepted, r.streamCount())
+	}
+	close(hold)
+}
+
+func TestAppCreateColimaListFailureIs502(t *testing.T) {
+	r := &fakeRunner{listErr: errors.New("boom at /home/user/.colima")}
+	a := testApp(t, r)
+	ts := serve(t, a)
+	code, out := ts.do(t, "POST", "/api/profiles", `{"name":"fresh"}`)
+	if code != 502 || !strings.Contains(out, "colima_failed") || strings.Contains(out, "/home/user") || r.streamCount() != 0 {
+		t.Fatalf("%d %s streams %d", code, out, r.streamCount())
+	}
+}
+
+func TestAppCreateAfterShutdownIs503(t *testing.T) {
+	r := &fakeRunner{}
+	a := testApp(t, r)
+	h := a.handler()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := a.shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest("POST", "/api/profiles", strings.NewReader(`{"name":"fresh"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 503 || r.streamCount() != 0 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }

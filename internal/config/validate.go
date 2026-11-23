@@ -102,6 +102,17 @@ func Validate(p *Profile, lim Limits, current *Profile) []FieldError {
 	return errs
 }
 
+// ValidateNew checks a profile that is about to be created. It runs Validate
+// with no stored profile (so the disk-shrink rule is off). Creation-only rules
+// belong here and not in Validate, which also runs against stored profiles on
+// every config PUT: a new rule there could start failing a PUT for a
+// hand-edited file. There are none yet: the combinations Colima itself refuses
+// (Kubernetes with incus, 9p with vz) could not be confirmed from
+// `colima start --help`, so they surface as a failed job with its output.
+func ValidateNew(p *Profile, lim Limits) []FieldError {
+	return Validate(p, lim, nil)
+}
+
 // checkMountPath returns a problem description or "". Paths use forward
 // slashes (they are host or guest POSIX paths).
 func checkMountPath(p string, required bool) string {

@@ -40,6 +40,9 @@ var wireFieldNames = map[string]string{
 	"cpu":    "cpu",
 	"memory": "memoryGiB",
 	"disk":   "diskGiB",
+
+	"rootDisk":           "rootDiskGiB",
+	"kubernetes.version": "kubernetesVersion",
 }
 
 func wireField(name string) string {
@@ -148,54 +151,57 @@ func (c *configRoutes) put(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// configKeys are the only accepted body keys, matched exactly.
-var configKeys = map[string]bool{"cpu": true, "memoryGiB": true, "diskGiB": true}
-
-// decodeConfigUpdate is a stricter decodeBody for the PUT body. encoding/json
-// matches keys case-insensitively, lets a repeated key win and takes null as
-// an empty struct, so the top-level object is walked by hand: only exact keys,
-// each at most once, and the body must be an object.
+// decodeConfigUpdate reads the PUT body: only cpu, memoryGiB and diskGiB.
 func decodeConfigUpdate(w http.ResponseWriter, r *http.Request) (configUpdate, error) {
-	bad := errBadRequest("Request body is not valid.")
 	var out configUpdate
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, defaultBodyLimit))
+	err := decodeStrictObject(w, r, defaultBodyLimit, map[string]any{
+		"cpu": &out.CPU, "memoryGiB": &out.MemoryGiB, "diskGiB": &out.DiskGiB,
+	})
+	return out, err
+}
+
+// decodeStrictObject is a stricter decodeBody for object bodies with a fixed
+// key set. encoding/json matches keys case-insensitively, lets a repeated key
+// win and takes null as an empty struct, so the top-level object is walked by
+// hand: only the exact keys of targets, each at most once, and the body must be
+// an object. A value decodes into its target pointer; null leaves the target
+// unset, like an omitted key. Every failure is a 400 bad_request with a fixed
+// message, including a body over limit bytes.
+func decodeStrictObject(w http.ResponseWriter, r *http.Request, limit int64, targets map[string]any) error {
+	bad := errBadRequest("Request body is not valid.")
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return out, bad
+		return bad
 	}
 	seen := map[string]bool{}
 	for dec.More() {
 		t, err := dec.Token()
 		key, ok := t.(string)
-		if err != nil || !ok || !configKeys[key] || seen[key] {
-			return out, bad
+		if err != nil || !ok || seen[key] {
+			return bad
+		}
+		target, known := targets[key]
+		if !known {
+			return bad
 		}
 		seen[key] = true
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return out, bad
-		}
-		var target any
-		switch key {
-		case "cpu":
-			target = &out.CPU
-		case "memoryGiB":
-			target = &out.MemoryGiB
-		default:
-			target = &out.DiskGiB
+			return bad
 		}
 		sub := json.NewDecoder(bytes.NewReader(raw))
 		sub.DisallowUnknownFields()
 		if err := sub.Decode(target); err != nil {
-			return out, bad
+			return bad
 		}
 	}
 	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
-		return out, bad
+		return bad
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return out, bad
+		return bad
 	}
-	return out, nil
+	return nil
 }
 
 // mapError turns a Config Service error into the contract's answer. Anything

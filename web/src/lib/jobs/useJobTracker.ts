@@ -66,7 +66,9 @@ export function useJobTracker(profiles: readonly Profile[] | undefined): JobTrac
   const jobs = new Map<string, TrackedJob>()
   entries.forEach(([profile, id], i) => {
     const job = results[i]?.data
-    if (job) {
+    // A create job (POST /api/profiles) is not one of the profile's buttons, so
+    // the tracker leaves it to the code that started it.
+    if (job && job.action !== 'create') {
       jobs.set(profile, { jobId: id, action: job.action, state: job.state, exitCode: job.exitCode })
     }
   })
