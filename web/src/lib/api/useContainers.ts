@@ -11,5 +11,6 @@ export function useContainers(profile: string, enabled: boolean) {
     queryFn: ({ signal }) => api.getContainers(profile, signal),
     enabled,
     refetchInterval: CONTAINERS_REFETCH_MS,
+    retry: false,
   })
 }

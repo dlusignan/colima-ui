@@ -81,7 +81,6 @@ describe('routes', () => {
   it.each([
     ['/', 'Dashboard'],
     ['/profiles/dev', 'dev'],
-    ['/profiles/dev/config', 'Configuration'],
   ])('renders %s', (path, title) => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
@@ -96,6 +95,13 @@ describe('routes', () => {
     expect(screen.getByRole('link', { name: 'Capacity' })).toHaveAttribute('aria-current', 'page')
     expect(await screen.findByText('Loading...')).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('renders the configuration tab and requests the config', () => {
+    renderApp('/profiles/dev/config')
+    expect(screen.getByRole('link', { name: 'Configuration' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByText('Loading configuration...')).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([url]) => url === '/api/profiles/dev/config')).toBe(true)
   })
 
   it('renders the operation log tab, loaded lazily', async () => {
