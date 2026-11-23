@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -49,12 +50,23 @@ func run(args []string, getenv func(string) string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	s := httpapi.NewServer()
+	token, err := httpapi.NewToken()
+	if err != nil {
+		return err
+	}
+	s := httpapi.NewServer(token, httpapi.NewPlaceholderAPI())
 	ln, err := s.Listen(port)
 	if err != nil {
 		return err
 	}
 	log.Printf("listening on http://%s", ln.Addr())
+	// The token is printed with fmt, never the logger, as a URL fragment:
+	// browsers do not send fragments to the server, so it stays out of access
+	// logs and Referer. This is the one place it leaves the process; if the
+	// binary ever runs as a login item, stdout capture needs care.
+	if tcp, ok := ln.Addr().(*net.TCPAddr); ok {
+		fmt.Printf("open http://127.0.0.1:%d/#token=%s\n", tcp.Port, token)
+	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.Serve(ln) }()
