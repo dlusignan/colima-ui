@@ -8,6 +8,7 @@ import type {
   ActionList,
   ApiErrorBody,
   Container,
+  ContainerPort,
   ContainerList,
   ConfigUpdate,
   ConfigUpdateResult,
@@ -118,6 +119,13 @@ export const metricsShape = {
   points: { arrayOf: metricPointShape },
 } as const satisfies Record<keyof Metrics, Kind>
 
+export const containerPortShape = {
+  containerPort: 'number',
+  protocol: 'string',
+  hostIp: 'string|null',
+  hostPort: 'number|null',
+} as const satisfies Record<keyof ContainerPort, Kind>
+
 export const containerShape = {
   id: 'string',
   name: 'string',
@@ -125,6 +133,9 @@ export const containerShape = {
   state: 'string',
   cpuPercent: 'number',
   memoryBytes: 'number',
+  status: 'string',
+  createdAt: 'string',
+  ports: { arrayOf: containerPortShape },
 } as const satisfies Record<keyof Container, Kind>
 
 export const containerListShape = {

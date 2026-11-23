@@ -96,6 +96,13 @@ export interface MetricsParams {
   maxPoints?: number
 }
 
+export interface ContainerPort {
+  containerPort: number
+  protocol: string
+  hostIp: string | null
+  hostPort: number | null
+}
+
 export interface Container {
   id: string
   name: string
@@ -103,6 +110,9 @@ export interface Container {
   state: string
   cpuPercent: number
   memoryBytes: number
+  status: string
+  createdAt: string
+  ports: ContainerPort[]
 }
 
 export interface ContainerList {

@@ -367,7 +367,14 @@ Response `200`:
       "image": "nginx:1.27",
       "state": "running",
       "cpuPercent": 0.8,
-      "memoryBytes": 31457280
+      "memoryBytes": 31457280,
+      "status": "Up 2 hours",
+      "createdAt": "2025-06-01T09:30:00Z",
+      "ports": [
+        { "containerPort": 80, "protocol": "tcp", "hostIp": null, "hostPort": null },
+        { "containerPort": 443, "protocol": "tcp", "hostIp": "0.0.0.0", "hostPort": 8443 },
+        { "containerPort": 443, "protocol": "tcp", "hostIp": "::", "hostPort": 8443 }
+      ]
     }
   ]
 }
@@ -375,6 +382,9 @@ Response `200`:
 
 - `id` is the value used as `scope` in the metrics route and in `metric` events.
 - `state` is the Docker state string (`running`, `exited`, `paused`, and so on).
+- `status` is Docker's human readable status text, for example `Up 2 hours` or `Exited (0) 3 days ago`. Never null.
+- `createdAt` is the creation time as RFC 3339 in UTC.
+- `ports` is an array, `[]` when the container has none. `hostIp` and `hostPort` are `null` for a port that is exposed but not published. The array is sorted by `containerPort`, then `protocol`, then `hostPort` (unpublished first), then `hostIp`. Docker lists a published port once per bound address, so one port can appear twice (`0.0.0.0` and `::`); both entries are kept.
 - `cpuPercent` and `memoryBytes` are current usage read live from the Docker Client when the request is handled. For a container that is not running both are `0`.
 - A running VM with no containers returns `{"containers":[]}`. So does a running profile whose runtime is not Docker.
 

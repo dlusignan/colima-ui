@@ -31,8 +31,8 @@ func startFakeDocker(t *testing.T, h http.Handler) string {
 }
 
 const listJSON = `[
- {"Id":"aaaaaaaaaaaa1111111111111111111111111111111111111111111111111111","Names":["/synthetic-web"],"Image":"synthetic/web:1","State":"running"},
- {"Id":"bbbbbbbbbbbb2222","Names":["/synthetic-db"],"Image":"synthetic/db:2","State":"exited"}
+ {"Id":"aaaaaaaaaaaa1111111111111111111111111111111111111111111111111111","Names":["/synthetic-web"],"Image":"synthetic/web:1","State":"running","Status":"Up 2 hours","Created":1700000000,"Ports":[{"PrivatePort":80,"Type":"tcp"},{"IP":"0.0.0.0","PrivatePort":443,"PublicPort":8443,"Type":"tcp"}]},
+ {"Id":"bbbbbbbbbbbb2222","Names":["/synthetic-db"],"Image":"synthetic/db:2","State":"exited","Status":"Exited (0) 3 days ago","Created":1700000100}
 ]`
 
 const statsV2JSON = `{

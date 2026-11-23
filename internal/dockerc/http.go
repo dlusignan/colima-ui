@@ -110,6 +110,15 @@ func (c *httpClient) Containers(ctx context.Context) ([]Container, error) {
 		Names []string `json:"Names"`
 		Image string   `json:"Image"`
 		State string   `json:"State"`
+
+		Status  string `json:"Status"`
+		Created int64  `json:"Created"`
+		Ports   []struct {
+			IP          string `json:"IP"`
+			PrivatePort uint16 `json:"PrivatePort"`
+			PublicPort  uint16 `json:"PublicPort"`
+			Type        string `json:"Type"`
+		} `json:"Ports"`
 	}
 	if err := c.get(ctx, c.listTimeout, "/containers/json", url.Values{"all": {"1"}}, &raw); err != nil {
 		if errors.Is(err, ErrContainerNotFound) {
@@ -119,7 +128,16 @@ func (c *httpClient) Containers(ctx context.Context) ([]Container, error) {
 	}
 	out := make([]Container, 0, len(raw))
 	for _, r := range raw {
-		ct := Container{ID: shortID(r.ID), Image: r.Image, State: r.State}
+		ct := Container{
+			ID: shortID(r.ID), Image: r.Image, State: r.State,
+			Status: r.Status, Created: time.Unix(r.Created, 0).UTC(),
+		}
+		for _, p := range r.Ports {
+			ct.Ports = append(ct.Ports, Port{
+				ContainerPort: p.PrivatePort, Protocol: p.Type,
+				HostIP: p.IP, HostPort: p.PublicPort,
+			})
+		}
 		if len(r.Names) > 0 {
 			ct.Name = trimSlash(r.Names[0])
 		}

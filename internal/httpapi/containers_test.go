@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -237,5 +240,52 @@ func TestContainersWaitHonoursCancel(t *testing.T) {
 	}
 	if rec.Code != 500 {
 		t.Fatalf("status %d", rec.Code)
+	}
+}
+
+func TestContainersNewFields(t *testing.T) {
+	zeroWait(t)
+	created := time.Date(2023, 11, 14, 22, 13, 20, 0, time.UTC)
+	fc := &fakeDockerClient{list: []dockerc.Container{
+		{ID: "aaa", Name: "a", State: "running", Status: "Up 2 hours", Created: created, Ports: []dockerc.Port{
+			{ContainerPort: 443, Protocol: "tcp", HostIP: "::", HostPort: 8443},
+			{ContainerPort: 80, Protocol: "udp"},
+			{ContainerPort: 443, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 8443},
+			{ContainerPort: 80, Protocol: "tcp", HostIP: "0.0.0.0", HostPort: 8080},
+			{ContainerPort: 80, Protocol: "tcp"},
+		}},
+		{ID: "bbb", Name: "b", State: "exited", Status: "Exited (0) 3 days ago", Created: created},
+	}}
+	rec := call(t, containersServer(&fakeGate{status: "running"}, &fakeProvider{client: fc}),
+		"GET", "/api/profiles/default/containers", "")
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	var body containersBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	a := body.Containers[0]
+	if a.Status != "Up 2 hours" || a.CreatedAt != "2023-11-14T22:13:20Z" {
+		t.Fatalf("fields: %+v", a)
+	}
+	var keys []string
+	for _, p := range a.Ports {
+		ip, hp := "null", "null"
+		if p.HostIP != nil {
+			ip = *p.HostIP
+		}
+		if p.HostPort != nil {
+			hp = strconv.Itoa(*p.HostPort)
+		}
+		keys = append(keys, fmt.Sprintf("%d/%s/%s/%s", p.ContainerPort, p.Protocol, ip, hp))
+	}
+	want := []string{"80/tcp/null/null", "80/tcp/0.0.0.0/8080", "80/udp/null/null", "443/tcp/0.0.0.0/8443", "443/tcp/::/8443"}
+	if !reflect.DeepEqual(keys, want) {
+		t.Fatalf("ports %v", keys)
+	}
+	if !strings.Contains(rec.Body.String(), `"hostIp":null,"hostPort":null`) ||
+		!strings.Contains(rec.Body.String(), `"status":"Exited (0) 3 days ago","createdAt":"2023-11-14T22:13:20Z","ports":[]`) {
+		t.Fatalf("raw body %s", rec.Body.String())
 	}
 }

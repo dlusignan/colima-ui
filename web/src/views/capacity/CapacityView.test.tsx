@@ -49,6 +49,9 @@ const container = (over: Partial<Container> = {}): Container => ({
   state: 'running',
   cpuPercent: 10,
   memoryBytes: 1024 ** 3,
+  status: 'Up 2 hours',
+  createdAt: '2026-01-01T00:00:00Z',
+  ports: [],
   ...over,
 })
 

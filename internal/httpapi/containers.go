@@ -23,12 +23,70 @@ var (
 
 // containerJSON is one entry of the containers response.
 type containerJSON struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Image       string  `json:"image"`
-	State       string  `json:"state"`
-	CPUPercent  float64 `json:"cpuPercent"`
-	MemoryBytes uint64  `json:"memoryBytes"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Image       string     `json:"image"`
+	State       string     `json:"state"`
+	CPUPercent  float64    `json:"cpuPercent"`
+	MemoryBytes uint64     `json:"memoryBytes"`
+	Status      string     `json:"status"`
+	CreatedAt   string     `json:"createdAt"`
+	Ports       []portJSON `json:"ports"`
+}
+
+// portJSON is one port of a container. HostIP and HostPort are null for a port
+// that is exposed but not published.
+type portJSON struct {
+	ContainerPort int     `json:"containerPort"`
+	Protocol      string  `json:"protocol"`
+	HostIP        *string `json:"hostIp"`
+	HostPort      *int    `json:"hostPort"`
+}
+
+// portsJSON maps and sorts ports by container port, protocol, host port
+// (unpublished first) and host IP. It never returns nil, so the wire shows [].
+func portsJSON(in []dockerc.Port) []portJSON {
+	out := make([]portJSON, 0, len(in))
+	for _, p := range in {
+		pj := portJSON{ContainerPort: int(p.ContainerPort), Protocol: p.Protocol}
+		if p.HostIP != "" {
+			ip := p.HostIP
+			pj.HostIP = &ip
+		}
+		if p.HostPort != 0 {
+			hp := int(p.HostPort)
+			pj.HostPort = &hp
+		}
+		out = append(out, pj)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.ContainerPort != b.ContainerPort {
+			return a.ContainerPort < b.ContainerPort
+		}
+		if a.Protocol != b.Protocol {
+			return a.Protocol < b.Protocol
+		}
+		ah, bh := 0, 0
+		if a.HostPort != nil {
+			ah = *a.HostPort
+		}
+		if b.HostPort != nil {
+			bh = *b.HostPort
+		}
+		if ah != bh {
+			return ah < bh
+		}
+		aip, bip := "", ""
+		if a.HostIP != nil {
+			aip = *a.HostIP
+		}
+		if b.HostIP != nil {
+			bip = *b.HostIP
+		}
+		return aip < bip
+	})
+	return out
 }
 
 // WithContainers registers the container route:
@@ -98,6 +156,8 @@ func (c *containerRoutes) list(w http.ResponseWriter, r *http.Request) error {
 		out = append(out, containerJSON{
 			ID: ct.ID, Name: ct.Name, Image: ct.Image, State: ct.State,
 			CPUPercent: u.CPUPercent, MemoryBytes: u.MemoryBytes,
+			Status: ct.Status, CreatedAt: ct.Created.UTC().Format(time.RFC3339),
+			Ports: portsJSON(ct.Ports),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
