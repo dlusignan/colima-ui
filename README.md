@@ -23,11 +23,11 @@ If the history file cannot be opened (for example a newer version wrote it), the
 
 ### Added to the backlog this round: planned, not built yet
 
-An enhanced Docker view. Today the app shows containers and images. The plan, tracked as issues #78 to #86 (the Docker tab with images is done), is:
+An enhanced Docker view. Today the app shows containers and images. The plan, tracked as issues #78 to #86 and #92 (the Docker tab with images is done), is:
 
 1. **Volumes and networks** (#80, #84): what holds your data and which networks exist.
 2. **Engine overview** (#81, #85): Docker version, container and image counts, and a breakdown of Docker's disk usage.
-3. **Container logs** (#86): waiting on a decision about a read-only snapshot versus a live follow mode.
+3. **Container logs** (#86, #92): a read-only snapshot of a container's recent output (the last 200 lines by default, at most 1000). A live follow mode is not planned yet.
 
 Also under discussion, with no issues yet: creating a new profile (VM) from the interface, with the settings Colima accepts at creation. Colima has no rename command, so renaming is not planned.
 
