@@ -1,3 +1,7 @@
 /* One @import per theme. Register new themes in src/lib/theme.ts too. */
 @import './mocha.css';
 @import './light.css';
+@import './tokyo-night.css';
+@import './gruvbox.css';
+@import './nord.css';
+@import './dracula.css';

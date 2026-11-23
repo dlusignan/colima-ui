@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
+import { themes } from '@/lib/theme'
 import { describe, expect, it } from 'vitest'
 
 const dir = import.meta.dirname
@@ -70,8 +71,8 @@ const pairs: [string, string, number][] = [
 const files = readdirSync(dir).filter((f) => f.endsWith('.css') && f !== 'index.css')
 
 describe('theme contrast', () => {
-  it('finds at least mocha and light', () => {
-    expect(files).toEqual(expect.arrayContaining(['mocha.css', 'light.css']))
+  it('has one css file per registered theme', () => {
+    expect([...files].sort()).toEqual(themes.map((t) => `${t.id}.css`).sort())
   })
 
   for (const file of files) {

@@ -6,6 +6,10 @@ export type ThemeDef = { id: string; label: string; colorScheme: 'dark' | 'light
 // one line here, and the id in public/theme-init.js.
 export const themes: ThemeDef[] = [
   { id: 'mocha', label: 'Mocha (dark)', colorScheme: 'dark' },
+  { id: 'tokyo-night', label: 'Tokyo Night (dark)', colorScheme: 'dark' },
+  { id: 'gruvbox', label: 'Gruvbox (dark)', colorScheme: 'dark' },
+  { id: 'nord', label: 'Nord (dark)', colorScheme: 'dark' },
+  { id: 'dracula', label: 'Dracula (dark)', colorScheme: 'dark' },
   { id: 'light', label: 'Light', colorScheme: 'light' },
 ]
 

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
-import { STORAGE_KEY } from '@/lib/theme'
+import { STORAGE_KEY, themes } from '@/lib/theme'
 import { fireMediaChange, setPrefersDark } from '@/test/setup'
 
 const html = document.documentElement
@@ -53,6 +53,17 @@ describe('theme switcher', () => {
     await user.selectOptions(select, 'system')
     expect(localStorage.getItem(STORAGE_KEY)).toBeNull()
     expect(html.dataset.theme).toBe('mocha')
+  })
+
+  it.each(themes.map((t) => t.id))('selects %s and restores it after a reload', async (id) => {
+    const user = userEvent.setup()
+    const first = render(<ThemeSwitcher />)
+    await user.selectOptions(screen.getByLabelText(/theme/i), id)
+    expect(html.dataset.theme).toBe(id)
+    first.unmount()
+    render(<ThemeSwitcher />)
+    expect(html.dataset.theme).toBe(id)
+    expect((screen.getByLabelText(/theme/i) as HTMLSelectElement).value).toBe(id)
   })
 
   it('falls back to system when storage throws', async () => {
