@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"strconv"
@@ -19,27 +20,35 @@ type Server struct {
 	srv   *http.Server
 	token string
 	api   http.Handler
+	ui    fs.FS
 }
 
 // NewServer builds a Server that protects api with token. The handler is
-// assembled in Serve, once the real listener port is known.
-func NewServer(token string, api http.Handler) *Server {
+// assembled in Serve, once the real listener port is known. ui is the built
+// frontend; nil means no static routes.
+func NewServer(token string, api http.Handler, ui fs.FS) *Server {
 	return &Server{
 		token: token,
 		api:   api,
+		ui:    ui,
 		srv:   &http.Server{ReadHeaderTimeout: 5 * time.Second},
 	}
 }
 
 // NewHandler is a pure function that builds the full handler. port is the
 // real listener port. Every request passes the Host and Origin checks;
-// /healthz needs no token; every /api route requires the bearer token.
-func NewHandler(port int, token string, api http.Handler) http.Handler {
+// /healthz and the static UI (when ui is non-nil) need no token; every /api
+// route requires the bearer token. The "/" static pattern is shorter than
+// /api, /api/ and GET /healthz, so it never shadows them.
+func NewHandler(port int, token string, api http.Handler, ui fs.FS) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealthz)
 	guarded := requireToken(token, api)
 	mux.Handle("/api", guarded)
 	mux.Handle("/api/", guarded)
+	if ui != nil {
+		mux.Handle("/", newStaticHandler(ui))
+	}
 	return hostOriginGuard(port, mux)
 }
 
@@ -68,7 +77,7 @@ func (s *Server) Serve(ln net.Listener) error {
 	if !ok {
 		return fmt.Errorf("listener address %T is not TCP", ln.Addr())
 	}
-	s.srv.Handler = NewHandler(addr.Port, s.token, s.api)
+	s.srv.Handler = NewHandler(addr.Port, s.token, s.api, s.ui)
 	return s.srv.Serve(ln)
 }
 

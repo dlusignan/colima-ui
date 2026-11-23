@@ -29,7 +29,7 @@ func stub(hit *bool) http.Handler {
 func do(t *testing.T, method, target, host string, hdr http.Header) (*httptest.ResponseRecorder, bool) {
 	t.Helper()
 	var hit bool
-	h := NewHandler(testPort, testToken, stub(&hit))
+	h := NewHandler(testPort, testToken, stub(&hit), nil)
 	req := httptest.NewRequest(method, target, nil)
 	req.Host = host
 	for k, vs := range hdr {
@@ -207,7 +207,7 @@ func TestTokenNeverLogged(t *testing.T) {
 		_, _ = do(t, "GET", "/api/ping?token="+testToken, c.host, c.hdr)
 	}
 	// Also over a real listener.
-	s := NewServer(testToken, NewPlaceholderAPI())
+	s := NewServer(testToken, NewPlaceholderAPI(), nil)
 	ln, err := s.Listen(0)
 	if err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestTokenNeverLogged(t *testing.T) {
 }
 
 func TestPlaceholderAPIOverRealListener(t *testing.T) {
-	s := NewServer(testToken, NewPlaceholderAPI())
+	s := NewServer(testToken, NewPlaceholderAPI(), nil)
 	ln, err := s.Listen(0)
 	if err != nil {
 		t.Fatal(err)
