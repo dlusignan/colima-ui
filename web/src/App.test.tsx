@@ -80,7 +80,7 @@ describe('routes', () => {
 
   it.each([
     ['/', 'Dashboard'],
-    ['/profiles/dev', 'Detail'],
+    ['/profiles/dev', 'dev'],
     ['/profiles/dev/config', 'Configuration'],
   ])('renders %s', (path, title) => {
     renderApp(path)
