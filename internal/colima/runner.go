@@ -88,19 +88,25 @@ func (r *ExecRunner) Run(ctx context.Context, args []string) (Result, error) {
 		res.ExitCode = exitErr.ExitCode()
 		return res, nil
 	}
-	// Strip the path that exec embeds in its errors.
+	return res, mapProcessError(err)
+}
+
+// mapProcessError converts a start or wait failure that is not an ExitError
+// into the package's typed errors, stripping the path exec embeds in its
+// errors so no error text carries a filesystem path.
+func mapProcessError(err error) error {
 	cause := err
 	var pe *fs.PathError
 	if errors.As(err, &pe) {
 		cause = pe.Err
 	}
 	if errors.Is(cause, fs.ErrNotExist) || errors.Is(cause, exec.ErrNotFound) || errors.Is(cause, syscall.ENOENT) {
-		return res, &BinaryNotFoundError{Err: exec.ErrNotFound}
+		return &BinaryNotFoundError{Err: exec.ErrNotFound}
 	}
 	if errors.Is(err, exec.ErrWaitDelay) {
-		return res, fmt.Errorf("colima: %w", exec.ErrWaitDelay)
+		return fmt.Errorf("colima: %w", exec.ErrWaitDelay)
 	}
-	return res, fmt.Errorf("colima: cannot run process: %w", cause)
+	return fmt.Errorf("colima: cannot run process: %w", cause)
 }
 
 // cappedBuffer keeps at most max bytes and silently drops the rest, always

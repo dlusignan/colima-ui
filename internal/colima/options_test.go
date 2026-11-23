@@ -11,8 +11,8 @@ import (
 
 var testLimits = Limits{MaxCPU: 8, MaxMemoryGiB: 32, MaxDiskGiB: 500}
 
-func ip(i int) *int           { return &i }
-func fp(f float64) *float64   { return &f }
+func ip(i int) *int         { return &i }
+func fp(f float64) *float64 { return &f }
 
 func TestStartOptionsArgsAllFields(t *testing.T) {
 	o := StartOptions{
