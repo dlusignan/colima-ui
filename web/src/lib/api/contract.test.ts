@@ -74,23 +74,30 @@ function checkKind(kind: Kind, value: unknown, where: string): void {
       expect(typeof value === 'object' && value !== null && !Array.isArray(value), where).toBe(true)
       return
   }
-  if ('arrayOf' in kind) {
+  const element = 'arrayOf' in kind ? kind.arrayOf : 'optionalArrayOf' in kind ? kind.optionalArrayOf : undefined
+  if (element) {
     expect(Array.isArray(value), where).toBe(true)
-    ;(value as unknown[]).forEach((v, i) => checkShape(kind.arrayOf, v, `${where}[${i}]`))
+    ;(value as unknown[]).forEach((v, i) => checkShape(element, v, `${where}[${i}]`))
     return
   }
-  checkShape(kind.shape, value, where)
+  if ('shape' in kind) checkShape(kind.shape, value, where)
 }
 
 function checkShape(shape: Shape, value: unknown, where: string, partial = false): void {
   expect(typeof value === 'object' && value !== null && !Array.isArray(value), where).toBe(true)
   const obj = value as Record<string, unknown>
-  const expected = Object.keys(shape).sort()
+  const known = Object.keys(shape).sort()
+  // Keys declared optional (the server omits them) may be absent.
+  const required = known.filter((k) => {
+    const kind = shape[k]
+    return typeof kind === 'string' || !('optionalArrayOf' in kind)
+  })
   const actual = Object.keys(obj).sort()
   if (partial) {
-    for (const k of actual) expect(expected, `${where}: unexpected key ${k}`).toContain(k)
+    for (const k of actual) expect(known, `${where}: unexpected key ${k}`).toContain(k)
   } else {
-    expect(actual, `${where}: key set`).toEqual(expected)
+    for (const k of actual) expect(known, `${where}: unexpected key ${k}`).toContain(k)
+    for (const k of required) expect(actual, `${where}: missing key ${k}`).toContain(k)
   }
   for (const k of actual) checkKind(shape[k], obj[k], `${where}.${k}`)
 }
@@ -150,5 +157,21 @@ describe('docs/api.md contract', () => {
     expect(() => checkShape(s.healthShape, {}, 't')).toThrow()
     expect(() => checkShape(s.healthShape, { status: 'ok', extra: 1 }, 't')).toThrow()
     expect(() => checkShape(s.healthShape, { status: 1 }, 't')).toThrow()
+  })
+
+  it('treats warnings as optional but checks them when present', () => {
+    const base = {
+      name: 'a', status: 'running', runtime: 'docker', cpus: 1, memoryBytes: 1,
+      diskBytes: 1, colimaVersion: '', source: 'both', activeJobId: null,
+    }
+    expect(() => checkShape(s.profileShape, base, 't')).not.toThrow()
+    expect(() =>
+      checkShape(s.profileShape, { ...base, warnings: [{ code: 'x', message: 'y' }] }, 't'),
+    ).not.toThrow()
+    expect(() => checkShape(s.profileShape, { ...base, warnings: [{ code: 'x' }] }, 't')).toThrow()
+    expect(() => checkShape(s.profileShape, { ...base, warnings: 'x' }, 't')).toThrow()
+    const { name, ...noName } = base
+    void name
+    expect(() => checkShape(s.profileShape, noName, 't')).toThrow()
   })
 })

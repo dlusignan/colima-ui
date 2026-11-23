@@ -5,6 +5,12 @@
 export type ProfileStatus = 'running' | 'stopped' | 'unknown'
 export type ProfileSource = 'both' | 'cli_only' | 'file_only'
 
+export interface ProfileWarning {
+  /** colima_unavailable, config_unreadable, config_invalid, colima_version_unsupported; clients must tolerate new codes. */
+  code: string
+  message: string
+}
+
 export interface Profile {
   name: string
   status: ProfileStatus
@@ -15,6 +21,8 @@ export interface Profile {
   colimaVersion: string
   source: ProfileSource
   activeJobId: string | null
+  /** Omitted by the server when there are none. */
+  warnings?: ProfileWarning[]
 }
 
 export interface ProfileList {
