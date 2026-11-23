@@ -1,3 +1,4 @@
+import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { Button } from '@/components/ui/button'
 
 export function HomePage() {
@@ -8,6 +9,7 @@ export function HomePage() {
         Placeholder page. Views arrive in later issues.
       </p>
       <Button>Get started</Button>
+      <ThemeSwitcher />
     </main>
   )
 }

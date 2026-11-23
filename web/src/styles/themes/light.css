@@ -1,0 +1,45 @@
+/* Latte-derived light theme. Stock Latte fails AA for most accents on its
+   base, so status and accent colors are darkened (see contrast.test.ts). */
+[data-theme='light'] {
+  color-scheme: light;
+  --background: #eff1f5;
+  --foreground: #4c4f69;
+  --card: #ffffff;
+  --card-foreground: #4c4f69;
+  --popover: #ffffff;
+  --popover-foreground: #4c4f69;
+  --primary: #8839ef;
+  --primary-foreground: #ffffff;
+  --secondary: #e6e9ef;
+  --secondary-foreground: #4c4f69;
+  --muted: #e6e9ef;
+  --muted-foreground: #5c5f77;
+  --accent: #e6e9ef;
+  --accent-foreground: #4c4f69;
+  --destructive: #d20f39;
+  --destructive-foreground: #ffffff;
+  --success: #287a1a;
+  --success-foreground: #ffffff;
+  --warning: #8a5200;
+  --warning-foreground: #ffffff;
+  --info: #176087;
+  --info-foreground: #ffffff;
+  --border: #ccd0da;
+  --input: #7c7f93;
+  --ring: #7c7f93;
+  --scrim: #4c4f6980;
+  --chart-1: #1e66f5;
+  --chart-2: #8839ef;
+  --chart-3: #137a80;
+  --chart-4: #c24500;
+  --chart-5: #c2399a;
+  --radius: 0.625rem;
+  --sidebar: #e6e9ef;
+  --sidebar-foreground: #4c4f69;
+  --sidebar-primary: #8839ef;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #dce0e8;
+  --sidebar-accent-foreground: #4c4f69;
+  --sidebar-border: #ccd0da;
+  --sidebar-ring: #7c7f93;
+}
