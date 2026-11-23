@@ -72,7 +72,11 @@ describe('auth gate', () => {
 })
 
 describe('routes', () => {
-  beforeEach(() => setTokenForTests('tok'))
+  beforeEach(() => {
+    setTokenForTests('tok')
+    // The event stream opens once the token is ok; keep it pending.
+    fetchMock.mockReturnValue(new Promise(() => {}))
+  })
 
   it.each([
     ['/', 'Dashboard'],
@@ -84,7 +88,7 @@ describe('routes', () => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock.mock.calls.every(([url]) => url === '/api/events')).toBe(true)
   })
 
   it('profile routes show the profile name and tabs', () => {
