@@ -14,6 +14,8 @@ export const themes: ThemeDef[] = [
 ]
 
 export const STORAGE_KEY = 'colima-ui-theme'
+/** Fired on window after `select`, so every useTheme instance shows the same choice. */
+const CHANGE_EVENT = 'colima-ui-theme-change'
 export const DARK_QUERY = '(prefers-color-scheme: dark)'
 const DARK_DEFAULT = 'mocha'
 const LIGHT_DEFAULT = 'light'
@@ -66,9 +68,16 @@ export function useTheme() {
     return () => mq.removeEventListener('change', onChange)
   }, [choice])
 
+  useEffect(() => {
+    const sync = (e: Event) => setChoice((e as CustomEvent<string>).detail)
+    window.addEventListener(CHANGE_EVENT, sync)
+    return () => window.removeEventListener(CHANGE_EVENT, sync)
+  }, [])
+
   const select = useCallback((next: string) => {
     writeStoredTheme(next === 'system' ? null : next)
     setChoice(next)
+    window.dispatchEvent(new CustomEvent(CHANGE_EVENT, { detail: next }))
   }, [])
 
   return { choice, select, themes }

@@ -1,21 +1,10 @@
 // The only file that lists the views. A new view adds its route.tsx import and
-// one entry here (the five views of this milestone are already registered).
+// one entry here (the profile tabs live in profileRoutes.ts).
 import { Route, Routes } from 'react-router-dom'
-import { capacityRoute } from '@/views/capacity/route'
-import { configRoute } from '@/views/config/route'
 import { dashboardRoute } from '@/views/dashboard/route'
-import { logRoute } from '@/views/log/route'
-import { profileRoute } from '@/views/profile/route'
 import { Layout } from './Layout'
 import { ProfileLayout } from './ProfileLayout'
-import type { AppRoute } from './types'
-
-const profileRoutes: AppRoute[] = [
-  profileRoute,
-  capacityRoute,
-  configRoute,
-  logRoute,
-]
+import { profileRoutes } from './profileRoutes'
 
 export function AppRoutes() {
   return (

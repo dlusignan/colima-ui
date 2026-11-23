@@ -1,4 +1,8 @@
+import { useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { CommandPalette } from '@/components/CommandPalette'
+import { ShortcutsDialog } from '@/components/ShortcutsDialog'
+import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { EventStreamProvider } from '@/lib/events/EventStreamProvider'
 import { AuthGate } from './AuthGate'
@@ -6,6 +10,7 @@ import { ErrorBoundary } from './ErrorBoundary'
 
 export function Layout() {
   const { pathname } = useLocation()
+  const [helpOpen, setHelpOpen] = useState(false)
   return (
     <div className="min-h-screen bg-background text-foreground">
       <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
@@ -21,17 +26,24 @@ export function Layout() {
             </NavLink>
           </nav>
         </div>
-        <ThemeSwitcher />
+        <div className="flex items-center gap-3">
+          <Button size="sm" variant="outline" onClick={() => setHelpOpen(true)}>
+            Shortcuts
+          </Button>
+          <ThemeSwitcher />
+        </div>
       </header>
       <main className="mx-auto max-w-5xl p-6">
         <AuthGate>
           <EventStreamProvider>
+            <CommandPalette onOpenHelp={() => setHelpOpen(true)} />
             <ErrorBoundary key={pathname}>
               <Outlet />
             </ErrorBoundary>
           </EventStreamProvider>
         </AuthGate>
       </main>
+      <ShortcutsDialog open={helpOpen} onOpenChange={setHelpOpen} />
     </div>
   )
 }

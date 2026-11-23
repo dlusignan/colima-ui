@@ -46,7 +46,7 @@ export function ProfileRow({ profile, job, pending, unavailable, onAction, onDis
   const logJobId = job?.jobId ?? profile.activeJobId
 
   return (
-    <tr className="border-b border-border last:border-0">
+    <tr data-profile={profile.name} className="border-b border-border last:border-0">
       <th scope="row" className="px-3 py-2 text-left font-mono font-medium">
         <Link className="underline-offset-4 hover:underline" to={`/profiles/${encodeURIComponent(profile.name)}`}>
           {profile.name}

@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
-import { STORAGE_KEY, themes } from '@/lib/theme'
+import { STORAGE_KEY, themes, useTheme } from '@/lib/theme'
 import { fireMediaChange, setPrefersDark } from '@/test/setup'
 
 const html = document.documentElement
@@ -78,5 +78,23 @@ describe('theme switcher', () => {
     expect(html.dataset.theme).toBe('light')
     await userEvent.setup().selectOptions(screen.getByLabelText(/theme/i), 'mocha')
     expect(html.dataset.theme).toBe('mocha')
+  })
+})
+
+describe('theme sync', () => {
+  it('a choice made through one useTheme shows in the switcher', async () => {
+    function Other() {
+      const { select } = useTheme()
+      return <button onClick={() => select('nord')}>pick nord</button>
+    }
+    render(
+      <>
+        <ThemeSwitcher />
+        <Other />
+      </>,
+    )
+    await userEvent.setup().click(screen.getByRole('button', { name: 'pick nord' }))
+    expect(screen.getByRole('combobox')).toHaveValue('nord')
+    expect(html.dataset.theme).toBe('nord')
   })
 })

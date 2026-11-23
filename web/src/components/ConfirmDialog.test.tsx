@@ -55,4 +55,23 @@ describe('ConfirmDialog', () => {
     expect(onConfirm).toHaveBeenCalledTimes(1)
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
   })
+
+  it('works controlled and without a trigger', async () => {
+    const onConfirm = vi.fn()
+    const onOpenChange = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={onOpenChange}
+        title="Stop synthetic-a?"
+        description="d"
+        confirmLabel="Stop"
+        onConfirm={onConfirm}
+      />,
+    )
+    await user.click(await screen.findByRole('button', { name: 'Stop' }))
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
 })

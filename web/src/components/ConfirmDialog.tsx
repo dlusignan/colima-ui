@@ -13,7 +13,10 @@ import {
 
 interface ConfirmDialogProps {
   /** The element that opens the dialog; focus returns to it on close. */
-  trigger: ReactElement
+  trigger?: ReactElement
+  /** Controlled mode, for callers without a trigger (the command palette). */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   title: string
   description: string
   confirmLabel: string
@@ -25,6 +28,8 @@ interface ConfirmDialogProps {
 /** Cancel is the default focus, Escape cancels, confirming closes the dialog. */
 export function ConfirmDialog({
   trigger,
+  open: openProp,
+  onOpenChange,
   title,
   description,
   confirmLabel,
@@ -32,10 +37,15 @@ export function ConfirmDialog({
   destructive = false,
   onConfirm,
 }: ConfirmDialogProps) {
-  const [open, setOpen] = useState(false)
+  const [inner, setInner] = useState(false)
+  const open = openProp ?? inner
+  const setOpen = (next: boolean) => {
+    if (openProp === undefined) setInner(next)
+    onOpenChange?.(next)
+  }
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
-      <AlertDialogTrigger render={trigger} />
+      {trigger && <AlertDialogTrigger render={trigger} />}
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>

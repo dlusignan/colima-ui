@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import type { JobAction, Profile } from '@/lib/api/types'
+import { actionsDisabled, CONFIRM } from './profileActionRules'
 
 interface ProfileActionsProps {
   profile: Profile
@@ -10,27 +11,10 @@ interface ProfileActionsProps {
   onAction: (action: JobAction) => void
 }
 
-const CONFIRM: Record<'stop' | 'restart', { description: (n: string) => string; label: string }> = {
-  stop: {
-    label: 'Stop',
-    description: (n) => `Stop ${n}? Its containers stop until you start it again.`,
-  },
-  restart: {
-    label: 'Restart',
-    description: (n) =>
-      `Restart ${n}? Its containers stop and start again, so anything running in them is interrupted.`,
-  },
-}
-
 /** Start, Stop and Restart for one row. Stop and Restart ask for confirmation. */
 export function ProfileActions({ profile, busy, unavailable, onAction }: ProfileActionsProps) {
   const { name, status } = profile
-  const locked = busy || unavailable
-  const disabled: Record<JobAction, boolean> = {
-    start: locked || status === 'running',
-    stop: locked || status === 'stopped',
-    restart: locked,
-  }
+  const disabled = actionsDisabled(status, busy || unavailable)
 
   const confirmed = (action: 'stop' | 'restart') => {
     const button = (
