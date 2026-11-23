@@ -52,17 +52,6 @@ func NewHandler(port int, token string, api http.Handler, ui fs.FS) http.Handler
 	return hostOriginGuard(port, mux)
 }
 
-// NewPlaceholderAPI returns a stub /api handler so the middleware has
-// something to protect. Remove it once real routes land.
-func NewPlaceholderAPI() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ping", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
-	return mux
-}
-
 // Listen binds 127.0.0.1:port. Port 0 picks a free port (used by tests).
 func (s *Server) Listen(port int) (net.Listener, error) {
 	if port < 0 || port > 65535 {

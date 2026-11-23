@@ -55,7 +55,11 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	s := httpapi.NewServer(token, httpapi.NewPlaceholderAPI(), web.UI())
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	s := httpapi.NewServer(token, a.handler(), web.UI())
 	ln, err := s.Listen(port)
 	if err != nil {
 		return err
@@ -80,11 +84,15 @@ func run(args []string, getenv func(string) string) error {
 	log.Print("shutting down")
 	sctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
-	if err := s.Shutdown(sctx); err != nil {
-		return err
+	// The HTTP server stops first so no new request reaches the components,
+	// then the components stop. Both run even if the first fails.
+	shutErr := s.Shutdown(sctx)
+	appErr := a.shutdown(sctx)
+	if shutErr != nil {
+		return shutErr
 	}
 	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	return appErr
 }

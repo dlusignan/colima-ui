@@ -119,7 +119,8 @@ func TestOriginAbsentWithoutTokenIs401(t *testing.T) {
 
 func TestRejectionBodyFixed(t *testing.T) {
 	rec, _ := do(t, "GET", "/api/ping", "evil.example:8787", http.Header{"Authorization": {"Bearer " + testToken}})
-	if got, want := rec.Body.String(), "{\"error\":\"forbidden_host\"}\n"; got != want {
+	want := `{"error":{"code":"forbidden_host","message":"Host not allowed.","details":{}}}` + "\n"
+	if got := rec.Body.String(); got != want {
 		t.Fatalf("body = %q", got)
 	}
 }

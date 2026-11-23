@@ -207,7 +207,7 @@ func TestTokenNeverLogged(t *testing.T) {
 		_, _ = do(t, "GET", "/api/ping?token="+testToken, c.host, c.hdr)
 	}
 	// Also over a real listener.
-	s := NewServer(testToken, NewPlaceholderAPI(), nil)
+	s := NewServer(testToken, testAPI(), nil)
 	ln, err := s.Listen(0)
 	if err != nil {
 		t.Fatal(err)
@@ -233,8 +233,8 @@ func TestTokenNeverLogged(t *testing.T) {
 	}
 }
 
-func TestPlaceholderAPIOverRealListener(t *testing.T) {
-	s := NewServer(testToken, NewPlaceholderAPI(), nil)
+func TestAPIOverRealListener(t *testing.T) {
+	s := NewServer(testToken, testAPI(), nil)
 	ln, err := s.Listen(0)
 	if err != nil {
 		t.Fatal(err)

@@ -36,9 +36,12 @@ In the route tables below, "Token" is "yes" for every route under `/api`.
 | `401` | Missing or wrong token |
 | `403` | Host or Origin not allowed |
 | `404` | Unknown profile, job or path |
+| `405` | Method not allowed for the path (the `Allow` header lists the allowed methods) |
 | `409` | Conflict with current state |
 | `422` | Field validation failed (configuration writes) |
+| `500` | Unexpected server error |
 | `502` | Colima or Docker failed or is not reachable |
+| `503` | The backend is shutting down |
 
 ## 2. Error body
 
@@ -65,16 +68,20 @@ Error codes in use:
 | `400` | `bad_request` | Malformed JSON, unknown field, wrong type | `{}` |
 | `400` | `invalid_range` | `from` after `to`, non-integer or non-positive `limit` or `maxPoints`, unparseable time | `{"parameter":"from"}` |
 | `401` | `unauthorized` | Missing or wrong token | `{}` |
-| `403` | `forbidden_host` | Host or Origin not allowed | `{}` |
-| `404` | `profile_not_found` | No profile with that name | `{"name":"dev"}` |
+| `403` | `forbidden_host` | Host not allowed | `{}` |
+| `403` | `forbidden_origin` | Origin not allowed | `{}` |
+| `404` | `profile_not_found` | No profile with that name, or a malformed name | `{"name":"dev"}`, or `{}` when the name is malformed |
 | `404` | `job_not_found` | No job with that id | `{"jobId":"j_x"}` |
 | `404` | `not_found` | Unknown path (token present) | `{}` |
+| `405` | `method_not_allowed` | Known path, wrong method (`Allow` header set) | `{}` |
 | `409` | `profile_busy` | A job is running on that profile | `{"jobId":"<running job>"}` |
 | `409` | `job_not_running` | Cancel on a job that already finished | `{"jobId":"...","state":"succeeded"}` |
 | `409` | `invalid_state` | Start on a running profile, stop on a stopped one, container list on a stopped VM | `{"status":"running"}` |
 | `422` | `validation_failed` | Configuration values rejected | `{"fields":{"cpu":"must be between 1 and 16"}}` |
+| `500` | `internal_error` | Unexpected server error; the text never carries internal detail | `{}` |
 | `502` | `colima_failed` | Colima could not be run or returned an error | `{}` |
 | `502` | `docker_unavailable` | The Docker socket is missing or not answering | `{}` |
+| `503` | `shutting_down` | The backend is stopping and accepts no new jobs | `{}` |
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1), together with an optional `warnings` array on profile payloads. Both are additive and no route changes if they arrive.
 
