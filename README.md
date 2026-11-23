@@ -13,9 +13,10 @@ The project is under construction. The backend and the frontend shell exist, but
 3. Profile list and detail: `GET /api/profiles` and `GET /api/profiles/{name}`.
 4. Start, stop and restart of a profile as jobs, plus job status and cancel: `GET /api/jobs/{id}` and `POST /api/jobs/{id}/cancel`. Jobs run one at a time per profile.
 5. Live per-container usage for a profile: `GET /api/profiles/{name}/containers`, read from the Docker API over the Colima socket.
-6. The embedded React app, with a working operation log view. The dashboard, profile, capacity and config views are placeholders.
+6. Reading and editing a profile's resources: `GET` and `PUT /api/profiles/{name}/config`. A write is validated, applied atomically to the profile file and refused while a job runs on that profile.
+7. The embedded React app, with a working operation log view. The dashboard, profile, capacity and config views are placeholders.
 
-Not wired into the binary yet: the event stream (SSE), the config read and write routes, the metrics sampler and metrics route, the history database, and the action log route. They are designed and specified (see [`C4_Architecture.md`](C4_Architecture.md) and [`docs/api.md`](docs/api.md)), but nothing is recorded or served for them today. In particular no SQLite file is created yet.
+Not wired into the binary yet: the event stream (SSE), the metrics sampler and metrics route, the history database, and the action log route. They are designed and specified (see [`C4_Architecture.md`](C4_Architecture.md) and [`docs/api.md`](docs/api.md)), but nothing is recorded or served for them today. In particular no SQLite file is created yet.
 
 ## Requirements
 
