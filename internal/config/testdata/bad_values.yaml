@@ -1,0 +1,16 @@
+cpu: 0
+memory: 0.5
+disk: 0
+rootDisk: -3
+arch: sparc
+runtime: podman
+vmType: hyperv
+mountType: nfs
+mounts:
+  - location: relative/dir
+  - location: /home/user/../etc
+    mountPoint: rel
+kubernetes:
+  version: "1.2; rm -rf /"
+network:
+  mode: nat
