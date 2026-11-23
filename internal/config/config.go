@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -53,6 +54,7 @@ type Profile struct {
 	Network    Network           `yaml:"network"`
 
 	node *yaml.Node
+	doc  *yaml.Node // document node wrapping node; carries document-level comments
 }
 
 // Node returns the retained root mapping node (never nil for a parsed
@@ -78,9 +80,11 @@ func Parse(data []byte) (p *Profile, err error) {
 		return nil, toParseError(uerr)
 	}
 	root := &doc
+	docNode := &doc
 	switch {
-	case doc.Kind == 0: // empty file
+	case doc.Kind == 0: // empty or comment-only file
 		root = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		docNode = &yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}, HeadComment: commentLines(data)}
 	case doc.Kind == yaml.DocumentNode && len(doc.Content) == 1:
 		root = doc.Content[0]
 	}
@@ -88,7 +92,7 @@ func Parse(data []byte) (p *Profile, err error) {
 		return nil, &ParseError{Line: root.Line, Message: "top level must be a mapping"}
 	}
 	problems := intKeyProblems(root)
-	p = &Profile{node: root}
+	p = &Profile{node: root, doc: docNode}
 	if derr := root.Decode(p); derr != nil {
 		var te *yaml.TypeError
 		if !errors.As(derr, &te) {
@@ -100,6 +104,18 @@ func Parse(data []byte) (p *Profile, err error) {
 		return nil, &TypeError{Problems: problems}
 	}
 	return p, nil
+}
+
+// commentLines collects the comment lines of a file that has no content.
+// yaml.v3 drops them on decode, so they are rebuilt for the document node.
+func commentLines(data []byte) string {
+	var out []string
+	for _, l := range strings.Split(string(data), "\n") {
+		if l = strings.TrimSpace(l); strings.HasPrefix(l, "#") {
+			out = append(out, l)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 func toParseError(err error) *ParseError {

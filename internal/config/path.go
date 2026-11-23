@@ -62,18 +62,43 @@ func requireAbs(p string) (string, error) {
 	return filepath.Clean(p), nil
 }
 
-// Service reads profiles under one base folder.
+// Service reads and writes profiles under one base folder.
 type Service struct {
-	base string
+	base      string
+	gate      Gate
+	vmRunning func(profile string) (bool, error)
+	limits    Limits
+
+	// Test seams for the write path; nil means the real behaviour.
+	renameFn     func(oldpath, newpath string) error
+	beforeRename func()
 }
 
+// Option configures a Service.
+type Option func(*Service)
+
+// WithGate sets the per-profile exclusion Apply runs inside.
+func WithGate(g Gate) Option { return func(s *Service) { s.gate = g } }
+
+// WithVMRunning sets the probe that says whether a profile's VM is running.
+func WithVMRunning(fn func(profile string) (bool, error)) Option {
+	return func(s *Service) { s.vmRunning = fn }
+}
+
+// WithLimits overrides the default host caps used to validate edits.
+func WithLimits(l Limits) Option { return func(s *Service) { s.limits = l } }
+
 // New returns a Service rooted at base, which must be absolute.
-func New(base string) (*Service, error) {
+func New(base string, opts ...Option) (*Service, error) {
 	b, err := requireAbs(base)
 	if err != nil {
 		return nil, err
 	}
-	return &Service{base: b}, nil
+	s := &Service{base: b, limits: DefaultLimits()}
+	for _, o := range opts {
+		o(s)
+	}
+	return s, nil
 }
 
 // ProfileDir returns <base>/<name> after validating the name and confirming
