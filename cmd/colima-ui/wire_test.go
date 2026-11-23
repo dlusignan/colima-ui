@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -782,22 +784,101 @@ func TestSamplerStartsOnlyOnStart(t *testing.T) {
 	assertNoLeak(t, baseline)
 }
 
-// A job finishing asks the sampler to refresh its profile list.
+// A finished job itself asks the sampler to refresh (the test never calls it).
 func TestJobFinishedRefreshesSampler(t *testing.T) {
 	r := &fakeRunner{list: listJSON, script: []string{"x"}}
 	a := testApp(t, r)
+	var mu sync.Mutex
+	calls := 0
+	a.refresh = func() { mu.Lock(); calls++; mu.Unlock() }
+	sub, err := a.hub.Subscribe("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	mu.Lock()
+	if calls != 0 {
+		t.Fatal("refresh before any job")
+	}
+	mu.Unlock()
 	if rec := doReq(t, a.handler(), "POST", "/api/profiles/fileonly/start"); rec.Code != 202 {
 		t.Fatalf("start: %d", rec.Code)
 	}
-	// The sampler is not started, so the request stays queued: a second
-	// Refresh finds the buffer full, which is the non-blocking behaviour.
-	done := make(chan struct{})
-	go func() { a.sampler.Refresh(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("Refresh blocked")
+	waitFinished(t, sub)
+	eventually(t, "the refresh", func() bool { mu.Lock(); defer mu.Unlock(); return calls == 1 })
+}
+
+type orderStopper struct {
+	a        *app
+	sawHubUp bool
+}
+
+func (o *orderStopper) Shutdown(context.Context) error {
+	// closeStreams must already have run: a new subscription is refused.
+	_, err := o.a.hub.Subscribe("", "")
+	o.sawHubUp = err == nil
+	return nil
+}
+
+func TestStopAllClosesStreamsBeforeHTTP(t *testing.T) {
+	a := testApp(t, &fakeRunner{list: listJSON})
+	o := &orderStopper{a: a}
+	if err := stopAll(a, o); err != nil {
+		t.Fatal(err)
 	}
+	if o.sawHubUp {
+		t.Fatal("hub was still accepting streams when the HTTP server shut down")
+	}
+}
+
+func TestStopAllWithOpenStreamIsFast(t *testing.T) {
+	a := testApp(t, &fakeRunner{list: listJSON})
+	ts := serve(t, a)
+	ch, _ := ts.openStream(t, "")
+	start := time.Now()
+	if err := stopAll(a, ts.srv); err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("stopAll took %s with an open stream", d)
+	}
+	for range ch {
+	}
+}
+
+// When the port is taken, run must still close the store it opened.
+func TestRunClosesStoreWhenListenFails(t *testing.T) {
+	baseline := ownGoroutines()
+	busy, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	port := busy.Addr().(*net.TCPAddr).Port
+
+	var built *app
+	var dbPath string
+	old := buildApp
+	buildApp = func() (*app, error) {
+		a, p := testAppAt(t, &fakeRunner{list: listJSON})
+		built, dbPath = a, p
+		return a, nil
+	}
+	defer func() { buildApp = old }()
+
+	err = run([]string{"-port", strconv.Itoa(port)}, func(string) string { return "" })
+	if err == nil {
+		t.Fatal("run succeeded on a busy port")
+	}
+	if _, err := built.store.RecentActions(t.Context(), "default", 1); !errors.Is(err, store.ErrClosed) {
+		t.Fatalf("store not closed: %v", err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if _, err := os.Stat(dbPath + suffix); err == nil {
+			t.Fatalf("history.db%s left behind", suffix)
+		}
+	}
+	assertNoLeak(t, baseline)
 }
 
 func TestStoreOpenFailureIsFatal(t *testing.T) {

@@ -58,6 +58,8 @@ type app struct {
 
 	// #23 metrics
 	sampler *sampler.Sampler
+	// refresh asks the sampler to re-read the profile list (a field so tests can observe it).
+	refresh func()
 
 	// #38 containers
 	containers dockerc.Provider
@@ -168,7 +170,7 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 		Observers: []operations.Observer{
 			a.rec,
 			newHubObserver(a.hub),
-			refreshObserver{refresh: func() { a.sampler.Refresh() }},
+			refreshObserver{refresh: func() { a.refresh() }},
 		},
 	})
 
@@ -197,6 +199,8 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 		sampler.ColimaLister{Runner: runner},
 		[]sampler.Source{sampler.NewContainerSource(cache), sampler.NewDiskSource(cache, sampler.RealClock{})},
 		a.store, a.hub, sampler.Options{})
+
+	a.refresh = a.sampler.Refresh
 
 	// #38 containers
 	// a.containers is assigned in the #23 block above.

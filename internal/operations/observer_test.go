@@ -1,6 +1,9 @@
 package operations
 
 import (
+	"bytes"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,4 +124,19 @@ func TestBlockedObserverStallsOnlyItsOwnJob(t *testing.T) {
 	}
 	close(release)
 	waitState(t, m, a.ID, StateCancelled)
+}
+
+func TestSafelyLogsPanicType(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+	safely(func() { panic("secret detail") })
+	out := buf.String()
+	if !strings.Contains(out, "observer panicked") || !strings.Contains(out, "panic=string") {
+		t.Fatalf("log: %q", out)
+	}
+	if strings.Contains(out, "secret detail") {
+		t.Fatalf("panic value leaked into the log: %q", out)
+	}
 }

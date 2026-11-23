@@ -56,3 +56,14 @@ func TestWithEventsDuplicatePanics(t *testing.T) {
 	h := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 	NewAPI(WithEvents(h), WithEvents(h))
 }
+
+func TestWithEventsRejectsHEAD(t *testing.T) {
+	h := NewAPI(WithEvents(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("handler must not run for HEAD")
+	})))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("HEAD", "/api/events", nil))
+	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET" {
+		t.Fatalf("HEAD: %d allow %q", rec.Code, rec.Header().Get("Allow"))
+	}
+}
