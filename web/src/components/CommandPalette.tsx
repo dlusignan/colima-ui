@@ -21,6 +21,7 @@ import { useGlobalShortcuts } from '@/lib/commands/useGlobalShortcuts'
 import { useJobTracker, type JobTracker } from '@/lib/jobs/useJobTracker'
 import { useProfileActionRunner } from '@/lib/jobs/useProfileActionRunner'
 import { themes, useTheme } from '@/lib/theme'
+import { useCreateProfile } from '@/views/create/createProfileContext'
 
 interface ActionRequest {
   id: number
@@ -72,6 +73,7 @@ export function CommandPalette({ onOpenHelp }: { onOpenHelp: () => void }) {
   const profiles = useProfiles().data?.profiles
   const tracker = useJobTracker(profiles)
   const { select: selectTheme } = useTheme()
+  const createProfile = useCreateProfile()
 
   const [open, setOpen] = useState(false)
   const [pick, setPick] = useState<ProfileAction | null>(null)
@@ -134,6 +136,9 @@ export function CommandPalette({ onOpenHelp }: { onOpenHelp: () => void }) {
         break
       case 'help':
         onOpenHelp()
+        break
+      case 'create-profile':
+        createProfile.open()
         break
     }
   }

@@ -12,6 +12,7 @@ import { shortcuts } from '@/lib/commands/shortcuts'
 import { expectNoA11yViolations } from '@/test/axe'
 import { profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
+import { CreateProfileProvider } from '@/views/create/CreateProfileProvider'
 import { CommandPalette } from './CommandPalette'
 import { ShortcutsDialog } from './ShortcutsDialog'
 
@@ -58,7 +59,14 @@ function setup(profiles: Profile[], at = '/') {
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter initialEntries={[at]}>
         <Routes>
-          <Route path="*" element={<Shell />} />
+          <Route
+            path="*"
+            element={
+              <CreateProfileProvider>
+                <Shell />
+              </CreateProfileProvider>
+            }
+          />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -81,6 +89,18 @@ describe('palette', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(container).toBeTruthy()
+  })
+
+  it('the Create profile command opens the create dialog', async () => {
+    const { user } = setup([a])
+    await screen.findByRole('button', { name: 'row dev' })
+    await user.keyboard('{Meta>}k{/Meta}')
+    await palette()
+    await user.type(screen.getByRole('combobox', { name: 'Search commands' }), 'create prof')
+    await user.keyboard('{Enter}')
+    const dialog = await screen.findByRole('dialog', { name: 'New profile' })
+    expect(within(dialog).getByLabelText('Name')).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
   })
 
   it('Ctrl+K toggles it and works inside an input', async () => {

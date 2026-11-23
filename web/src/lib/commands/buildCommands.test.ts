@@ -16,6 +16,7 @@ describe('buildCommands', () => {
     expect(l).toContain('Theme: System')
     for (const t of themes) expect(l).toContain(`Theme: ${t.label}`)
     expect(l).toContain('Keyboard shortcuts')
+    expect(build().find((c) => c.label === 'Create profile')?.intent).toEqual({ type: 'create-profile' })
     expect(new Set(l).size).toBe(l.length)
   })
 
