@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -137,6 +138,7 @@ func TestCreateErrorMapping(t *testing.T) {
 		{"busy", &operations.BusyError{Profile: "dev", JobID: "3.4"}, 409, "profile_busy"},
 		{"closed", operations.ErrClosed, 503, "shutting_down"},
 		{"id exhausted", operations.ErrIDExhausted, 500, "internal_error"},
+		{"exists check", fmt.Errorf("%w: list profiles: exit 1 at /home/user/.colima", ErrExistsCheckFailed), 502, "colima_failed"},
 		{"colima", errors.New("list profiles: exit 1 at /home/user/.colima"), 502, "colima_failed"},
 	}
 	for _, tc := range cases {

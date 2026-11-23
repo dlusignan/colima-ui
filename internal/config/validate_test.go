@@ -183,3 +183,28 @@ func TestValidateNewHasNoShrinkRule(t *testing.T) {
 		t.Fatalf("%v", errs)
 	}
 }
+
+func TestValidateNewKubernetesVersionNeedsKubernetes(t *testing.T) {
+	on, off := true, false
+	cases := map[string]struct {
+		k    Kubernetes
+		want string
+	}{
+		"version, unset":      {Kubernetes{Version: "v1.31.2+k3s1"}, "kubernetes.version"},
+		"version, disabled":   {Kubernetes{Enabled: &off, Version: "v1.31.2+k3s1"}, "kubernetes.version"},
+		"version, enabled":    {Kubernetes{Enabled: &on, Version: "v1.31.2+k3s1"}, ""},
+		"enabled, no version": {Kubernetes{Enabled: &on}, ""},
+		"nothing":             {Kubernetes{}, ""},
+		"bad version, unset":  {Kubernetes{Version: "--edit"}, "kubernetes.version"},
+	}
+	for name, tc := range cases {
+		errs := ValidateNew(&Profile{Kubernetes: tc.k}, testLimits)
+		if got := fields(errs); got != tc.want {
+			t.Errorf("%s: got %q want %q", name, got, tc.want)
+		}
+	}
+	// Validate itself (the config PUT path) does not gain the rule.
+	if errs := Validate(&Profile{Kubernetes: Kubernetes{Version: "v1.31.2+k3s1"}}, testLimits, nil); len(errs) != 0 {
+		t.Fatalf("Validate: %v", errs)
+	}
+}

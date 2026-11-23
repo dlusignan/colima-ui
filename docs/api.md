@@ -646,9 +646,9 @@ Request body: a JSON object with a required `name` and these optional settings. 
 ```
 
 1. A setting that is left out is not passed to Colima, so Colima's default applies. A body with only `name` is valid.
-2. `name` follows the same rules as every other route (a letter or digit first, then letters, digits, dots, underscores and hyphens, at most 64 characters, no `..`). `default` is allowed. Names that differ only by letter case are the same profile.
+2. `name` follows the same rules as every other route (a letter or digit first, then letters, digits, dots, underscores and hyphens, at most 64 characters, no `..`). `default` is allowed. `colima` and any name starting with `colima-` (in any letter case) are rejected on `name`, because Colima maps them onto the default profile or another profile, so a creation would rewrite an existing profile. Names that merely contain the word (`colimadev`, `my-colima`) are fine. Names that differ only by letter case are the same profile.
 3. `cpus`, `memoryGiB`, `diskGiB` and `rootDiskGiB` use the same ranges as the config route (3.8). `runtime` is `docker`, `containerd` or `incus`; `vmType` is `qemu`, `vz` or `krunkit`; `arch` is `aarch64` or `x86_64`; `mountType` is `sshfs`, `9p` or `virtiofs`. `kubernetesVersion` must look like `v1.31.2+k3s1`.
-4. The route does not check which combinations Colima accepts (for example Kubernetes with the `incus` runtime, or `9p` with the `vz` VM type). Colima refuses those itself and the job then fails with its output.
+4. `kubernetesVersion` needs `kubernetes` to be `true`; otherwise it is rejected on `kubernetesVersion`. The route does not check which other combinations Colima accepts (for example Kubernetes with the `incus` runtime, or `9p` with the `vz` VM type). Colima refuses those itself and the job then fails with its output.
 5. Colima saves the settings to the new profile's YAML file, so later starts reuse them.
 
 Response `202`:

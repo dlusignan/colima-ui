@@ -130,7 +130,8 @@ func TestCreatorEdgeValues(t *testing.T) {
 	ok := []httpapi.NewProfile{
 		{Name: "a"}, {Name: "A1_b.c-d"}, {Name: strings.Repeat("a", 64)},
 		{Name: "dev", CPUs: ip(1)}, {Name: "dev", CPUs: ip(8)}, {Name: "dev", DiskGiB: ip(500)},
-		{Name: "dev", KubernetesVersion: "v1.31.2+k3s1"}, {Name: "dev", KubernetesVersion: "1.31"},
+		{Name: "dev", Kubernetes: true, KubernetesVersion: "v1.31.2+k3s1"}, {Name: "dev", Kubernetes: true, KubernetesVersion: "1.31"},
+		{Name: "dev", Kubernetes: true}, {Name: "colimadev"}, {Name: "my-colima"}, {Name: "colima2"}, {Name: "default"},
 	}
 	for _, p := range ok {
 		if _, err := newCreate().Create(t.Context(), p); err != nil {
@@ -140,8 +141,8 @@ func TestCreatorEdgeValues(t *testing.T) {
 	bad := []httpapi.NewProfile{
 		{Name: "dev", CPUs: ip(0)}, {Name: "dev", CPUs: ip(9)}, {Name: "dev", CPUs: ip(-1)},
 		{Name: "dev", CPUs: ip(int(^uint(0) >> 1))}, {Name: "dev", DiskGiB: ip(501)},
-		{Name: "dev", KubernetesVersion: "v1.31.2; rm -rf /"}, {Name: "dev", KubernetesVersion: "-v1"},
-		{Name: "dev", KubernetesVersion: strings.Repeat("1", 65)}, {Name: "dev", Runtime: "Docker"},
+		{Name: "dev", Kubernetes: true, KubernetesVersion: "v1.31.2; rm -rf /"}, {Name: "dev", Kubernetes: true, KubernetesVersion: "-v1"},
+		{Name: "dev", Kubernetes: true, KubernetesVersion: strings.Repeat("1", 65)}, {Name: "dev", Runtime: "Docker"},
 		{Name: "dev", Runtime: "docker "}, {Name: "dev", Arch: "AARCH64"},
 	}
 	for _, p := range bad {
@@ -238,4 +239,41 @@ func (f fakeFolders) ProfileFolderExists(name string) (bool, error) {
 		}
 	}
 	return false, f.err
+}
+
+func TestCreatorRejectsNamesColimaMapsToOtherProfiles(t *testing.T) {
+	for _, name := range []string{"colima", "Colima", "COLIMA", "cOlImA", "colima-dev", "Colima-Dev", "COLIMA-", "colima-"} {
+		m := &fakeMgr{}
+		c, existsCalls := newCreator(m, false, nil)
+		_, err := c.Create(t.Context(), httpapi.NewProfile{Name: name})
+		var verr *httpapi.ValidationError
+		if !errors.As(err, &verr) || verr.Fields["name"] != reservedNameRule || len(verr.Fields) != 1 {
+			t.Errorf("%q: %v", name, err)
+		}
+		if len(m.reqs) != 0 || *existsCalls != 0 {
+			t.Errorf("%q: launched or checked existence", name)
+		}
+	}
+	for _, name := range []string{"colimadev", "my-colima", "colima_dev", "colima.dev", "default", "xcolima-dev"} {
+		if _, err := newCreate().Create(t.Context(), httpapi.NewProfile{Name: name}); err != nil {
+			t.Errorf("%q: %v", name, err)
+		}
+	}
+}
+
+func TestCreatorKubernetesVersionNeedsKubernetes(t *testing.T) {
+	m := &fakeMgr{}
+	c, _ := newCreator(m, false, nil)
+	_, err := c.Create(t.Context(), httpapi.NewProfile{Name: "dev", KubernetesVersion: "v1.31.2+k3s1"})
+	var verr *httpapi.ValidationError
+	if !errors.As(err, &verr) || verr.Fields["kubernetesVersion"] == "" || len(m.reqs) != 0 {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestCreatorWrapsExistsCheckFailure(t *testing.T) {
+	c, _ := newCreator(&fakeMgr{}, false, errors.New("boom"))
+	if _, err := c.Create(t.Context(), httpapi.NewProfile{Name: "dev"}); !errors.Is(err, httpapi.ErrExistsCheckFailed) {
+		t.Fatalf("%v", err)
+	}
 }

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"sort"
 
@@ -12,6 +13,10 @@ import (
 // createBodyLimit bounds the POST /api/profiles body. The route takes a handful
 // of short values, so it is far below the default limit.
 const createBodyLimit int64 = 64 << 10
+
+// ErrExistsCheckFailed wraps a failure of the existence check (`colima list` or
+// the folder scan), so it is logged apart from a launch failure. It answers 502.
+var ErrExistsCheckFailed = errors.New("httpapi: profile exists check failed")
 
 // ErrProfileExists means the name is already in `colima list` or has a folder
 // under the Colima home, in any letter case.
@@ -105,6 +110,11 @@ func createError(err error) error {
 			"Some values are not allowed.", map[string]any{"fields": fields})
 	case errors.Is(err, ErrProfileExists):
 		return newAPIError(http.StatusConflict, "profile_exists", "A profile with this name already exists.", nil)
+	}
+	if errors.Is(err, ErrExistsCheckFailed) {
+		// Only the error type is logged: the text can hold paths.
+		slog.Error("profile exists check failed", "errorType", errTypeName(err))
+		return errColimaFailed()
 	}
 	// Busy, shutting down and an exhausted ID generator have their own answers;
 	// anything else is Colima (the listing, the folder scan or the launch)

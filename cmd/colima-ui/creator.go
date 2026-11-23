@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 	"github.com/dlusignan/colima-ui/internal/config"
@@ -26,6 +27,20 @@ type profileCreator struct {
 	limits config.Limits
 }
 
+// reservedNameRule is the fixed message for a name Colima maps onto another
+// profile.
+const reservedNameRule = "must not be colima or start with colima-, which Colima maps to another profile"
+
+// reservedName reports whether Colima would map name onto a different profile:
+// "colima" is the default profile and a "colima-" prefix is stripped, so a
+// create on either would run a start against an existing profile and rewrite
+// its settings, under a slot key that differs from that profile's. The check
+// ignores case because the Colima folder is case-insensitive by default.
+func reservedName(name string) bool {
+	l := strings.ToLower(name)
+	return l == "colima" || strings.HasPrefix(l, "colima-")
+}
+
 const nameRule = "must start with a letter or digit and use only letters, digits, dots, underscores and hyphens, at most 64 characters"
 
 // creationFieldNames maps the Config Service's field names to the creation
@@ -46,13 +61,17 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 	switch {
 	case p.Name == "":
 		fields["name"] = "is required"
+	// Both validators on purpose: config's is strictly stronger, colima's is
+	// the adapter's own check and stays as defence in depth.
 	case colima.ValidateProfile(p.Name) != nil || config.ValidateProfileName(p.Name) != nil:
 		fields["name"] = nameRule
+	case reservedName(p.Name):
+		fields["name"] = reservedNameRule
 	}
 	prof := &config.Profile{
 		CPU: p.CPUs, Memory: p.MemoryGiB, Disk: p.DiskGiB, RootDisk: p.RootDiskGiB,
 		Arch: p.Arch, Runtime: p.Runtime, VMType: p.VMType, MountType: p.MountType,
-		Kubernetes: config.Kubernetes{Version: p.KubernetesVersion},
+		Kubernetes: config.Kubernetes{Enabled: &p.Kubernetes, Version: p.KubernetesVersion},
 	}
 	for _, fe := range config.ValidateNew(prof, c.limits) {
 		key := fe.Field
@@ -70,7 +89,7 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 	}
 	taken, err := c.exists(ctx, p.Name)
 	if err != nil {
-		return "", fmt.Errorf("check profile exists: %w", err)
+		return "", fmt.Errorf("%w: %w", httpapi.ErrExistsCheckFailed, err)
 	}
 	if taken {
 		return "", httpapi.ErrProfileExists

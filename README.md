@@ -28,7 +28,7 @@ If the history file cannot be opened (for example a newer version wrote it), the
 
 The enhanced Docker view (issues #78 to #86 and #92) is done. Nothing else from that plan is left.
 
-Also under discussion: creating a new profile (VM) from the interface. It is built on the backend (the `POST /api/profiles` route only; the dialog is issue #99) and is planned for the UI, starting with the basic settings. Colima has no rename command, so renaming is not planned.
+Also under discussion: creating a new profile (VM) from the interface. The backend route `POST /api/profiles` is done; the creation dialog (issue #99) is planned, starting with the basic settings. Colima has no rename command, so renaming is not planned.
 
 This list moves from "planned" to "done" as each issue merges.
 
