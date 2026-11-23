@@ -153,7 +153,23 @@ func (s *Service) resolveProfileDir(name string) (string, error) {
 	if filepath.Dir(realDir) != realBase {
 		return "", fmt.Errorf("%w: escapes base folder", ErrInvalidProfileName)
 	}
-	return realDir, nil
+	// The exclusive hold is keyed by the request name, so the folder must be
+	// found under exactly that spelling: a case-insensitive filesystem or a
+	// symlinked sibling (q -> p) would otherwise reach p's file under another
+	// key and bypass the busy check.
+	if filepath.Base(realDir) != name {
+		return "", ErrProfileNotFound
+	}
+	entries, err := os.ReadDir(realBase)
+	if err != nil {
+		return "", notFoundOrRead(err)
+	}
+	for _, e := range entries {
+		if e.Name() == name {
+			return realDir, nil
+		}
+	}
+	return "", ErrProfileNotFound
 }
 
 func notFoundOrRead(err error) error {

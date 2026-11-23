@@ -248,6 +248,13 @@ func TestAppConfigRoutesRequireTokenAndWork(t *testing.T) {
 	if rec.Code != 409 || !strings.Contains(rec.Body.String(), "profile_busy") || !strings.Contains(rec.Body.String(), "jobId") {
 		t.Fatalf("busy put: %d %s", rec.Code, rec.Body)
 	}
+	// Another spelling of the name must not slip past the busy check.
+	for _, n := range []string{"Fileonly", "FILEONLY"} {
+		rec = do("PUT", "/api/profiles/"+n+"/config", `{"cpu":7}`, "Bearer "+tok)
+		if rec.Code != 404 && rec.Code != 409 {
+			t.Fatalf("spelling %s: %d %s", n, rec.Code, rec.Body)
+		}
+	}
 	if rec := do("GET", "/api/profiles/fileonly/config", "", "Bearer "+tok); !strings.Contains(rec.Body.String(), `"cpu":3`) {
 		t.Fatalf("file changed while busy: %s", rec.Body)
 	}
