@@ -176,3 +176,39 @@ describe('controls', () => {
     expect(screen.queryByText(/start failed \(exit/)).not.toBeInTheDocument()
   }, 10_000)
 })
+
+describe('containers table details', () => {
+  const base = { ...container, createdAt: '2026-01-01T00:00:00Z' }
+  const fixtures = [
+    { ...base, id: 'a', name: 'synthetic-up', status: 'Up 2 hours', ports: [
+      { containerPort: 80, protocol: 'tcp', hostIp: '0.0.0.0', hostPort: 8080 },
+      { containerPort: 80, protocol: 'tcp', hostIp: '::', hostPort: 8080 },
+      { containerPort: 5432, protocol: 'tcp', hostIp: null, hostPort: null },
+    ] },
+    { ...base, id: 'b', name: 'synthetic-done', state: 'exited', status: 'Exited (0) 3 days ago' },
+    { ...base, id: 'c', name: 'synthetic-crash', state: 'exited', status: 'Exited (137) 2 hours ago' },
+  ]
+
+  it('shows status text, ports and created time, and marks a crash in text', async () => {
+    const { containers, container: root } = setup([running])
+    containers.mockResolvedValue({ containers: fixtures })
+    const table = await screen.findByRole('table', { name: 'Containers in dev' })
+    for (const h of ['Status', 'Ports', 'Created']) {
+      expect(within(table).getByRole('columnheader', { name: h })).toHaveAttribute('scope', 'col')
+    }
+    const up = within(table).getByRole('row', { name: /synthetic-up/ })
+    expect(within(up).getByText('Up 2 hours')).toBeInTheDocument()
+    expect(within(up).getByText('8080:80/tcp')).toBeInTheDocument()
+    expect(within(up).getAllByText('8080:80/tcp')).toHaveLength(1)
+    expect(within(up).getByText('5432/tcp')).toBeInTheDocument()
+    const done = within(table).getByRole('row', { name: /synthetic-done/ })
+    expect(within(done).getByText('Exited (0) 3 days ago')).toBeInTheDocument()
+    expect(within(done).getByText('None')).toBeInTheDocument()
+    expect(within(done).queryByText('(crashed)')).not.toBeInTheDocument()
+    const crash = within(table).getByRole('row', { name: /synthetic-crash/ })
+    expect(within(crash).getByText('(crashed)')).toBeInTheDocument()
+    const created = within(up).getByText(/ago$|just now/, { selector: 'span[title]' })
+    expect(created).toHaveAttribute('title', new Date('2026-01-01T00:00:00Z').toLocaleString())
+    await expectNoA11yViolations(root)
+  })
+})

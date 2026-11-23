@@ -36,3 +36,28 @@ export function formatCount(value: number): string {
   if (!Number.isFinite(value)) return '0'
   return wholeNumber.format(Math.round(value))
 }
+
+const RELATIVE_UNITS: readonly [string, number][] = [
+  ['year', 365 * 24 * 3600],
+  ['month', 30 * 24 * 3600],
+  ['day', 24 * 3600],
+  ['hour', 3600],
+  ['minute', 60],
+]
+
+/**
+ * `3 days ago`, `1 hour ago`. Under a minute, and any timestamp in the future (clock skew
+ * between the VM and the browser), reads `just now`, never `in X`. Unparseable input gives `unknown`.
+ */
+export function formatRelativeTime(iso: string, now: number = Date.now()): string {
+  const then = Date.parse(iso)
+  if (Number.isNaN(then)) return 'unknown'
+  const seconds = Math.floor((now - then) / 1000)
+  for (const [unit, size] of RELATIVE_UNITS) {
+    if (seconds >= size) {
+      const n = Math.floor(seconds / size)
+      return `${n} ${unit}${n === 1 ? '' : 's'} ago`
+    }
+  }
+  return 'just now'
+}

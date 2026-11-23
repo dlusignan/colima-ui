@@ -9,7 +9,7 @@ Colima UI runs on your machine as a single binary. It reads Colima's own state (
 ### Done: available in the binary built from `main`
 
 1. **Dashboard.** One row per Colima profile with its status, runtime, CPUs, memory, disk, Colima version, source and warnings. Start, Stop and Restart buttons act on the real VM; Stop and Restart ask for confirmation first.
-2. **Profile page.** Status header with the same actions, a configuration summary, the containers of the VM (name, image, state, CPU and memory) and the recent action log, with links to the other tabs.
+2. **Profile page.** Status header with the same actions, a configuration summary, the containers of the VM (name, image, CPU and memory) and the recent action log, with links to the other tabs. Containers show their status text (for example "Exited (0) 3 days ago", with a text marker when a container crashed), their ports and when they were created.
 3. **Configuration editor.** Change a profile's CPUs, memory and disk with validation in the browser and again on the server. It tells you when a change needs a restart and offers to restart, and it warns before you leave with unsaved changes.
 4. **Capacity view.** What the VM is allocated versus what it really uses, as live charts for CPU, memory and disk over a chosen time range, plus a per-container table. Each chart has a "Show data" table for screen readers.
 5. **Operation log.** The output of every start, stop and restart in a terminal view, live while the job runs and available after it finishes.
@@ -24,11 +24,10 @@ If the history file cannot be opened (for example a newer version wrote it), the
 
 An enhanced Docker view. Today the app shows containers only. The plan, tracked as issues #78 to #86, is:
 
-1. **Richer containers** (#78, #82): status text such as "Exited (0) 3 days ago", published ports and creation time.
-2. **Docker tab** (#79, #83): a new profile tab, starting with an Images section (tags, size, creation time and how many containers use each image).
-3. **Volumes and networks** (#80, #84): what holds your data and which networks exist.
-4. **Engine overview** (#81, #85): Docker version, container and image counts, and a breakdown of Docker's disk usage.
-5. **Container logs** (#86): waiting on a decision about a read-only snapshot versus a live follow mode.
+1. **Docker tab** (#79, #83): a new profile tab, starting with an Images section (tags, size, creation time and how many containers use each image).
+2. **Volumes and networks** (#80, #84): what holds your data and which networks exist.
+3. **Engine overview** (#81, #85): Docker version, container and image counts, and a breakdown of Docker's disk usage.
+4. **Container logs** (#86): waiting on a decision about a read-only snapshot versus a live follow mode.
 
 Also under discussion, with no issues yet: creating a new profile (VM) from the interface, with the settings Colima accepts at creation. Colima has no rename command, so renaming is not planned.
 
