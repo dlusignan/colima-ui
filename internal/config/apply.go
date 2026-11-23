@@ -165,6 +165,13 @@ func (s *Service) applyLocked(profile string, ch Changes, running bool) ([]Chang
 	if err := s.writeAtomic(dir, state, out); err != nil {
 		return nil, err
 	}
+	if s.onWritten != nil {
+		var fields []string
+		for _, c := range Diff(current, next, true) {
+			fields = append(fields, c.Field)
+		}
+		s.onWritten(profile, fields)
+	}
 	changes := Diff(current, next, running)
 	if changes == nil {
 		changes = []Change{}

@@ -68,6 +68,7 @@ type Service struct {
 	gate      Gate
 	vmRunning func(profile string) (bool, error)
 	limits    Limits
+	onWritten func(profile string, fields []string)
 
 	// Test seams for the write path; nil means the real behaviour.
 	renameFn     func(oldpath, newpath string) error
@@ -83,6 +84,15 @@ func WithGate(g Gate) Option { return func(s *Service) { s.gate = g } }
 // WithVMRunning sets the probe that says whether a profile's VM is running.
 func WithVMRunning(fn func(profile string) (bool, error)) Option {
 	return func(s *Service) { s.vmRunning = fn }
+}
+
+// WithOnWritten sets a hook Apply calls right after the file was replaced, with
+// the profile and the names of the fields that changed (cpu, memory, disk, in
+// Diff order, whatever the VM state). It does not fire for a no-op, a failed
+// validation or a failed write. The hook runs inside the exclusive hold, so it
+// must not block or call back into the Service. Nil (the default) means none.
+func WithOnWritten(fn func(profile string, fields []string)) Option {
+	return func(s *Service) { s.onWritten = fn }
 }
 
 // WithLimits overrides the default host caps used to validate edits.

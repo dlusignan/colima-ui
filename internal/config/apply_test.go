@@ -862,3 +862,98 @@ func TestApplyMergeKeyAndCRLFLosses(t *testing.T) {
 		t.Errorf("crlf: %q", c)
 	}
 }
+
+type writtenCall struct {
+	profile string
+	fields  []string
+}
+
+func hookEnv(t *testing.T, content string, vmRunning bool) (*env, *[]writtenCall) {
+	t.Helper()
+	var calls []writtenCall
+	e := newEnv(t, content, running(vmRunning), WithOnWritten(func(p string, f []string) {
+		calls = append(calls, writtenCall{p, f})
+	}))
+	return e, &calls
+}
+
+func TestOnWrittenFiresAfterWriteWithFieldNames(t *testing.T) {
+	e, calls := hookEnv(t, basic, true)
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(4), Disk: ip(100), Memory: fp(2.5)}); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 1 || (*calls)[0].profile != "default" || strings.Join((*calls)[0].fields, ",") != "cpu,memory,disk" {
+		t.Fatalf("calls = %+v", *calls)
+	}
+}
+
+func TestOnWrittenFiresWhenVMStopped(t *testing.T) {
+	e, calls := hookEnv(t, basic, false)
+	changes, err := e.svc.Apply("default", Changes{CPU: ip(4)})
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("changes %v err %v", changes, err)
+	}
+	if len(*calls) != 1 || strings.Join((*calls)[0].fields, ",") != "cpu" {
+		t.Fatalf("calls = %+v", *calls)
+	}
+}
+
+func TestOnWrittenSeesNewFileAndRunsInsideGate(t *testing.T) {
+	var e *env
+	var inside bool
+	var seen string
+	e = newEnv(t, basic, WithOnWritten(func(string, []string) {
+		inside = e.gate.inside
+		b, _ := os.ReadFile(e.file)
+		seen = string(b)
+	}))
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(4)}); err != nil {
+		t.Fatal(err)
+	}
+	if !inside || !strings.HasPrefix(seen, "cpu: 4") {
+		t.Fatalf("inside=%v seen=%q", inside, seen)
+	}
+}
+
+func TestOnWrittenNotFiredWithoutAWrite(t *testing.T) {
+	cases := map[string]func(e *env) error{
+		"no-op": func(e *env) error { _, err := e.svc.Apply("default", Changes{CPU: ip(2)}); return err },
+		"empty": func(e *env) error { _, err := e.svc.Apply("default", Changes{}); return err },
+		"invalid": func(e *env) error {
+			_, err := e.svc.Apply("default", Changes{CPU: ip(99)})
+			return err
+		},
+		"busy": func(e *env) error {
+			e.gate.busy["default"] = true
+			_, err := e.svc.Apply("default", Changes{CPU: ip(3)})
+			return err
+		},
+		"conflict": func(e *env) error {
+			e.svc.beforeRename = func() { _ = os.WriteFile(e.file, []byte("cpu: 8\n"), 0o644) }
+			_, err := e.svc.Apply("default", Changes{CPU: ip(3)})
+			return err
+		},
+		"rename failure": func(e *env) error {
+			e.svc.renameFn = func(string, string) error { return errors.New("x") }
+			_, err := e.svc.Apply("default", Changes{CPU: ip(3)})
+			return err
+		},
+		"missing profile": func(e *env) error { _, err := e.svc.Apply("nope", Changes{CPU: ip(3)}); return err },
+	}
+	for name, fn := range cases {
+		t.Run(name, func(t *testing.T) {
+			e, calls := hookEnv(t, basic, true)
+			_ = fn(e)
+			if len(*calls) != 0 {
+				t.Fatalf("hook fired: %+v", *calls)
+			}
+		})
+	}
+}
+
+func TestOnWrittenNilByDefault(t *testing.T) {
+	e := newEnv(t, basic)
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(4)}); err != nil {
+		t.Fatal(err)
+	}
+}
