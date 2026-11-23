@@ -123,7 +123,7 @@ The Config Service treats the YAML files as the authority. It validates changes,
 
 The Operation Manager serializes work per profile, so two starts or a start and a stop can never run at once on the same VM. Each job has an identifier, a status, captured output, and a context that cancels the child process.
 
-The Metrics Sampler feeds the capacity view. It records what is allocated (from configuration), what the VM is using, and what each container is using, which is what lets the UI show the gap between limit and reality.
+The Metrics Sampler feeds the capacity view. It records what the VM is using and what each container is using. Allocated figures are not stored: the capacity view takes the limits from the profile and plots the recorded usage against them, which is what lets the UI show the gap between limit and reality.
 
 ### Frontend structure (proposed)
 
