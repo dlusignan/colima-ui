@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,10 +25,6 @@ const (
 // logsTimeout bounds the whole request: the inspect (5 seconds) plus the
 // logs read (15 seconds) and the gate.
 var logsTimeout = 25 * time.Second
-
-// logIDPattern is the only id shape the route accepts. A name or a prefix
-// never reaches the Docker URL.
-var logIDPattern = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
 
 type logsJSON struct {
 	Lines     []string `json:"lines"`
@@ -65,12 +60,21 @@ func errInvalidTail() *APIError {
 // parseTail is strict: at most one value, ASCII digits only (no sign, no
 // space, no hex), at least 1. Values above the maximum are clamped.
 func parseTail(rawQuery string) (int, *APIError) {
-	q, err := url.ParseQuery(rawQuery)
-	if err != nil {
-		return 0, errInvalidTail()
+	var vals []string
+	// Pairs are read one by one so that an unrelated malformed parameter
+	// cannot be reported as a bad tail.
+	for _, pair := range strings.Split(rawQuery, "&") {
+		k, v, _ := strings.Cut(pair, "=")
+		if key, err := url.QueryUnescape(k); err != nil || key != "tail" {
+			continue
+		}
+		val, err := url.QueryUnescape(v)
+		if err != nil {
+			return 0, errInvalidTail()
+		}
+		vals = append(vals, val)
 	}
-	vals, ok := q["tail"]
-	if !ok {
+	if len(vals) == 0 {
 		return logsDefaultTail, nil
 	}
 	if len(vals) != 1 || vals[0] == "" {
@@ -97,6 +101,11 @@ func parseTail(rawQuery string) (int, *APIError) {
 }
 
 func (l *logRoutes) get(w http.ResponseWriter, r *http.Request) error {
+	// "GET ..." also matches HEAD, which would run a full Docker read.
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		return errMethodNotAllowed()
+	}
 	name := r.PathValue("name")
 	ctx, cancel := context.WithTimeout(r.Context(), logsTimeout)
 	defer cancel()
@@ -118,7 +127,7 @@ func (l *logRoutes) get(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	id := r.PathValue("id")
-	if !logIDPattern.MatchString(id) {
+	if !dockerc.ValidLogID(id) {
 		return containerNotFound()
 	}
 	tail, perr := parseTail(r.URL.RawQuery)
@@ -144,6 +153,9 @@ func (l *logRoutes) get(w http.ResponseWriter, r *http.Request) error {
 		return newAPIError(http.StatusConflict, "invalid_state",
 			"This container's log driver does not keep readable logs.",
 			map[string]any{"reason": "logs_unavailable"})
+	case err != nil && r.Context().Err() != nil:
+		// The client went away: nothing to log, nobody to answer.
+		return errInternal()
 	case err != nil:
 		return dockerError("read logs", err)
 	}

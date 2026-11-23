@@ -271,6 +271,18 @@ func TestLogsNeedsToken(t *testing.T) {
 	}
 }
 
+func TestLogsRejectsHEAD(t *testing.T) {
+	g := &fakeGate{status: "running"}
+	fc := &fakeDockerClient{}
+	rec := call(t, logsServer(g, &fakeProvider{client: fc}), "HEAD", logsURL, "")
+	if rec.Code != http.StatusMethodNotAllowed || rec.Header().Get("Allow") != "GET" {
+		t.Fatalf("HEAD: %d allow %q", rec.Code, rec.Header().Get("Allow"))
+	}
+	if len(g.names) != 0 || len(fc.logsArgs) != 0 {
+		t.Fatal("HEAD reached the backend")
+	}
+}
+
 func TestLogsOnlyGET(t *testing.T) {
 	for _, m := range []string{"POST", "PUT", "DELETE", "PATCH"} {
 		rec := call(t, logsOK(&fakeDockerClient{}), m, logsURL, "")
