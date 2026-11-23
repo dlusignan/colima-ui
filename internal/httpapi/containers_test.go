@@ -30,6 +30,12 @@ type fakeDockerClient struct {
 	statsErr error
 	gone     map[string]bool
 	calls    map[string]int
+	info     dockerc.Engine
+	infoErr  error
+	infoFn   func(context.Context) (dockerc.Engine, error)
+	disk     dockerc.DiskUsage
+	diskErr  error
+	diskFn   func(context.Context) (dockerc.DiskUsage, error)
 }
 
 func (f *fakeDockerClient) Containers(context.Context) ([]dockerc.Container, error) {
@@ -59,8 +65,18 @@ func (f *fakeDockerClient) Stats(_ context.Context, id string) (dockerc.Reading,
 	}, nil
 }
 
-func (f *fakeDockerClient) DiskUsage(context.Context) (dockerc.DiskUsage, error) {
-	return dockerc.DiskUsage{}, nil
+func (f *fakeDockerClient) DiskUsage(ctx context.Context) (dockerc.DiskUsage, error) {
+	if f.diskFn != nil {
+		return f.diskFn(ctx)
+	}
+	return f.disk, f.diskErr
+}
+
+func (f *fakeDockerClient) Info(ctx context.Context) (dockerc.Engine, error) {
+	if f.infoFn != nil {
+		return f.infoFn(ctx)
+	}
+	return f.info, f.infoErr
 }
 
 func (f *fakeDockerClient) Images(context.Context) ([]dockerc.Image, error) {

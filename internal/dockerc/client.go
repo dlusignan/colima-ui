@@ -79,6 +79,27 @@ type DiskUsage struct {
 	LayersBytes     int64
 }
 
+// ContainerCounts is the engine's own container tally from /info.
+type ContainerCounts struct {
+	Total   int
+	Running int
+	Paused  int
+	Stopped int
+}
+
+// Engine is the small set of engine facts the engine route returns. It has
+// no host name and no path by construction.
+type Engine struct {
+	Version     string
+	APIVersion  string // the engine's highest supported API version
+	OS          string
+	Arch        string
+	CPUs        int
+	MemoryBytes int64
+	Containers  ContainerCounts
+	Images      int
+}
+
 // Client reads from the Docker engine of one profile.
 type Client interface {
 	// Containers lists all containers, running or not.
@@ -87,6 +108,9 @@ type Client interface {
 	// running gives ErrContainerNotFound.
 	Stats(ctx context.Context, id string) (Reading, error)
 	DiskUsage(ctx context.Context) (DiskUsage, error)
+	// Info reads the engine facts from /info and /version. Only the fields
+	// of Engine are decoded.
+	Info(ctx context.Context) (Engine, error)
 	// Images lists all images. The in-use count comes from the container
 	// list, not from Docker's images Containers field, which is -1 on API
 	// v1.41.

@@ -282,6 +282,8 @@ func (d *fakeDocker) DiskUsage(ctx context.Context) (dockerc.DiskUsage, error) {
 	return du, err
 }
 
+func (d *fakeDocker) Info(context.Context) (dockerc.Engine, error) { return dockerc.Engine{}, nil }
+
 func (d *fakeDocker) Images(context.Context) ([]dockerc.Image, error) { return nil, nil }
 
 func (d *fakeDocker) Volumes(context.Context) ([]dockerc.Volume, error) { return nil, nil }
