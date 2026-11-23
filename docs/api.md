@@ -231,7 +231,7 @@ Errors: `404` `job_not_found`.
 
 Token: yes. Request body: none.
 
-Response `200`: the job object from 3.5, with `state` `cancelled`. The process is stopped before the response is sent, or the job is already shown as cancelled, whichever the manager reports first. Cancel does not return `202`.
+Response `200`: the job object from 3.5, with `state` `cancelled`. The response is sent after the manager has recorded the cancellation, so a following `GET /api/jobs/{id}` shows `cancelled`.
 
 Errors:
 
@@ -255,7 +255,7 @@ Response `200`:
 
 These are the editable settings. The values are the ones the Config Service read from the profile's YAML file. Other keys in the file are not returned and are preserved on write.
 
-Errors: `404` `profile_not_found`, `502` `colima_failed` is not used here (the file is read directly).
+Errors: `404` `profile_not_found`. The file is read directly, so `502` does not apply.
 
 ### 3.8 `PUT /api/profiles/{name}/config`
 
