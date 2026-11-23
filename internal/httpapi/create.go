@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -42,6 +44,63 @@ type NewProfile struct {
 	MountType         string
 	Kubernetes        bool
 	KubernetesVersion string
+
+	// Advanced settings, all optional.
+	Hostname         string
+	DNS              []string
+	DNSHosts         []DNSHost
+	SSHAgent         bool
+	VZRosetta        bool
+	PortForwarder    string
+	MountInotify     bool
+	NetworkAddress   bool
+	NetworkMode      string
+	NetworkInterface string
+	CPUType          string
+}
+
+// DNSHost is one dnsHosts entry. It decodes only exactly cased "name" and
+// "address" keys, each once, as strings; null, an unknown key or a repeated
+// key is a malformed body.
+type DNSHost struct {
+	Name    string
+	Address string
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (h *DNSHost) UnmarshalJSON(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return errors.New("not an object")
+	}
+	var out DNSHost
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		key, ok := t.(string)
+		if err != nil || !ok || seen[key] {
+			return errors.New("bad key")
+		}
+		seen[key] = true
+		var dst *string
+		switch key {
+		case "name":
+			dst = &out.Name
+		case "address":
+			dst = &out.Address
+		default:
+			return errors.New("unknown key")
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil || json.Unmarshal(raw, dst) != nil || string(bytes.TrimSpace(raw)) == "null" {
+			return errors.New("bad value")
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return errors.New("not an object")
+	}
+	*h = out
+	return nil
 }
 
 // ProfileCreator validates a creation request, refuses a profile that exists
@@ -77,6 +136,10 @@ func (c *createRoutes) post(w http.ResponseWriter, r *http.Request) error {
 		"rootDiskGiB": &p.RootDiskGiB, "runtime": &p.Runtime, "vmType": &p.VMType,
 		"arch": &p.Arch, "mountType": &p.MountType, "kubernetes": &p.Kubernetes,
 		"kubernetesVersion": &p.KubernetesVersion,
+		"hostname":          &p.Hostname, "dns": &p.DNS, "dnsHosts": &p.DNSHosts, "sshAgent": &p.SSHAgent,
+		"vzRosetta": &p.VZRosetta, "portForwarder": &p.PortForwarder, "mountInotify": &p.MountInotify,
+		"networkAddress": &p.NetworkAddress, "networkMode": &p.NetworkMode,
+		"networkInterface": &p.NetworkInterface, "cpuType": &p.CPUType,
 	})
 	if err != nil {
 		return err

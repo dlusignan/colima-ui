@@ -2,6 +2,7 @@ package colima
 
 import (
 	"math"
+	"net/netip"
 	"regexp"
 	"strconv"
 )
@@ -47,6 +48,49 @@ var k8sVersionRE = regexp.MustCompile(`^v?[0-9]+\.[0-9]+(\.[0-9]+)?(-[0-9A-Za-z.
 
 const maxK8sVersionLen = 64
 
+// Patterns and bounds for the advanced settings. They mirror internal/config
+// (a test pins the two together). Each pattern starts with a letter or digit,
+// so a value is never read as a flag, and none admits whitespace, commas,
+// equals signs or control characters.
+var (
+	hostnameRE  = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$`)
+	interfaceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,14}$`)
+	cpuTypeRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+)
+
+const (
+	maxDNS      = 8
+	maxDNSHosts = 16
+	maxHostName = 253
+)
+
+// PortForwarder, NetworkMode are the allow-listed values of their flags.
+type (
+	PortForwarder string
+	NetworkMode   string
+)
+
+const (
+	PortForwarderSSH  PortForwarder = "ssh"
+	PortForwarderGRPC PortForwarder = "grpc"
+	PortForwarderNone PortForwarder = "none"
+
+	NetworkModeShared  NetworkMode = "shared"
+	NetworkModeBridged NetworkMode = "bridged"
+)
+
+var (
+	validPortForwarders = []PortForwarder{PortForwarderSSH, PortForwarderGRPC, PortForwarderNone}
+	validNetworkModes   = []NetworkMode{NetworkModeShared, NetworkModeBridged}
+)
+
+// DNSHost is one --dns-host entry. Colima takes it as name=address, so args
+// builds that single element from these two validated parts.
+type DNSHost struct {
+	Name    string
+	Address string
+}
+
 // Limits are the host caps for resource options, injected so the adapter does
 // not depend on the Config Service and tests stay deterministic. The zero
 // value permits no resource option at all.
@@ -76,6 +120,20 @@ type StartOptions struct {
 	MountType         MountType
 	Kubernetes        bool   // --kubernetes (omitted when false)
 	KubernetesVersion string // --kubernetes-version
+
+	// Advanced settings. Each maps to one fixed flag; an empty value, a nil
+	// slice or false omits it. Arrays become repeated flags.
+	Hostname         string        // --hostname
+	DNS              []string      // --dns, repeated, at most 8
+	DNSHosts         []DNSHost     // --dns-host name=address, repeated, at most 16
+	SSHAgent         bool          // --ssh-agent
+	VZRosetta        bool          // --vz-rosetta, only for vm type vz on arch aarch64
+	PortForwarder    PortForwarder // --port-forwarder
+	MountInotify     bool          // --mount-inotify
+	NetworkAddress   bool          // --network-address
+	NetworkMode      NetworkMode   // --network-mode
+	NetworkInterface string        // --network-interface, only with network mode bridged
+	CPUType          string        // --cpu-type
 }
 
 func bad(field, reason string) error { return &InvalidOptionError{Field: field, Reason: reason} }
@@ -113,7 +171,82 @@ func (o StartOptions) Validate(lim Limits) error {
 	if v := o.KubernetesVersion; v != "" && (len(v) > maxK8sVersionLen || !k8sVersionRE.MatchString(v)) {
 		return bad("kubernetes-version", "unrecognised version format")
 	}
+	return o.validateAdvanced()
+}
+
+func (o StartOptions) validateAdvanced() error {
+	if o.Hostname != "" && !hostnameRE.MatchString(o.Hostname) {
+		return bad("hostname", "not a DNS label")
+	}
+	if len(o.DNS) > maxDNS {
+		return bad("dns", "too many addresses")
+	}
+	for _, d := range o.DNS {
+		if _, ok := canonicalAddr(d); !ok {
+			return bad("dns", "not an IP address")
+		}
+	}
+	if len(o.DNSHosts) > maxDNSHosts {
+		return bad("dns-host", "too many entries")
+	}
+	for _, h := range o.DNSHosts {
+		if !validHostName(h.Name) {
+			return bad("dns-host", "not a host name")
+		}
+		if _, ok := canonicalAddr(h.Address); !ok {
+			return bad("dns-host", "not an IP address")
+		}
+	}
+	if !oneOf(o.PortForwarder, validPortForwarders) {
+		return bad("port-forwarder", "not a supported value")
+	}
+	if !oneOf(o.NetworkMode, validNetworkModes) {
+		return bad("network-mode", "not a supported value")
+	}
+	if o.NetworkInterface != "" {
+		if !interfaceRE.MatchString(o.NetworkInterface) {
+			return bad("network-interface", "not an interface name")
+		}
+		if o.NetworkMode != NetworkModeBridged {
+			return bad("network-interface", "needs network mode bridged")
+		}
+	}
+	if o.CPUType != "" && !cpuTypeRE.MatchString(o.CPUType) {
+		return bad("cpu-type", "not a CPU model name")
+	}
+	// An empty vm type or arch is Colima's default, vz and aarch64 per
+	// `colima start --help`.
+	if o.VZRosetta && ((o.VMType != "" && o.VMType != VMTypeVZ) || (o.Arch != "" && o.Arch != ArchAarch64)) {
+		return bad("vz-rosetta", "needs vm type vz and arch aarch64")
+	}
 	return nil
+}
+
+// canonicalAddr parses one IPv4 or IPv6 address without a zone and returns its
+// canonical text. args emits that text, never the caller's.
+func canonicalAddr(s string) (string, bool) {
+	a, err := netip.ParseAddr(s)
+	if err != nil || a.Zone() != "" {
+		return "", false
+	}
+	return a.String(), true
+}
+
+// validHostName accepts dot-separated labels, at most 253 characters in all.
+func validHostName(s string) bool {
+	if s == "" || len(s) > maxHostName {
+		return false
+	}
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == '.' {
+			if !hostnameRE.MatchString(s[start:i]) {
+				return false
+			}
+			start = i + 1
+		}
+	}
+	return true
 }
 
 // oneOf accepts the empty value (flag omitted) or a member of allowed.
@@ -162,6 +295,43 @@ func (o StartOptions) args() []string {
 	}
 	if o.KubernetesVersion != "" {
 		a = append(a, "--kubernetes-version", o.KubernetesVersion)
+	}
+	if o.Hostname != "" {
+		a = append(a, "--hostname", o.Hostname)
+	}
+	for _, d := range o.DNS {
+		if c, ok := canonicalAddr(d); ok {
+			a = append(a, "--dns", c)
+		}
+	}
+	for _, h := range o.DNSHosts {
+		if c, ok := canonicalAddr(h.Address); ok && validHostName(h.Name) {
+			a = append(a, "--dns-host", h.Name+"="+c)
+		}
+	}
+	if o.SSHAgent {
+		a = append(a, "--ssh-agent")
+	}
+	if o.VZRosetta {
+		a = append(a, "--vz-rosetta")
+	}
+	if o.PortForwarder != "" {
+		a = append(a, "--port-forwarder", string(o.PortForwarder))
+	}
+	if o.MountInotify {
+		a = append(a, "--mount-inotify")
+	}
+	if o.NetworkAddress {
+		a = append(a, "--network-address")
+	}
+	if o.NetworkMode != "" {
+		a = append(a, "--network-mode", string(o.NetworkMode))
+	}
+	if o.NetworkInterface != "" {
+		a = append(a, "--network-interface", o.NetworkInterface)
+	}
+	if o.CPUType != "" {
+		a = append(a, "--cpu-type", o.CPUType)
 	}
 	return a
 }

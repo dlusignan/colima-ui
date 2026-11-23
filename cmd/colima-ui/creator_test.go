@@ -277,3 +277,113 @@ func TestCreatorWrapsExistsCheckFailure(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestCreatorSubmitsAdvancedOptions(t *testing.T) {
+	m := &fakeMgr{}
+	c, _ := newCreator(m, false, nil)
+	_, err := c.Create(t.Context(), httpapi.NewProfile{
+		Name: "dev", VMType: "vz", Arch: "aarch64", Hostname: "vm-1", DNS: []string{"1.1.1.1", "2001:db8::1"},
+		DNSHosts: []httpapi.DNSHost{{Name: "example.com", Address: "192.0.2.10"}}, SSHAgent: true, VZRosetta: true,
+		PortForwarder: "grpc", MountInotify: true, NetworkAddress: true, NetworkMode: "bridged",
+		NetworkInterface: "en0", CPUType: "max",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := colima.StartOptions{
+		VMType: "vz", Arch: "aarch64", Hostname: "vm-1", DNS: []string{"1.1.1.1", "2001:db8::1"},
+		DNSHosts: []colima.DNSHost{{Name: "example.com", Address: "192.0.2.10"}}, SSHAgent: true, VZRosetta: true,
+		PortForwarder: colima.PortForwarderGRPC, MountInotify: true, NetworkAddress: true,
+		NetworkMode: colima.NetworkModeBridged, NetworkInterface: "en0", CPUType: "max",
+	}
+	if o := m.reqs[0].Options; !reflect.DeepEqual(o, want) {
+		t.Fatalf("options %+v", o)
+	}
+	if err := m.reqs[0].Options.Validate(colimaLimits(testLimits)); err != nil {
+		t.Fatalf("backstop: %v", err)
+	}
+}
+
+func TestCreatorAdvancedValidationNamesFieldsAndLaunchesNothing(t *testing.T) {
+	long := strings.Repeat("a", 64)
+	nine := make([]string, 9)
+	for i := range nine {
+		nine[i] = "1.1.1.1"
+	}
+	cases := map[string]struct {
+		p     httpapi.NewProfile
+		field string
+	}{
+		"hostname flag":         {httpapi.NewProfile{Hostname: "--edit"}, "hostname"},
+		"hostname long":         {httpapi.NewProfile{Hostname: long}, "hostname"},
+		"hostname newline":      {httpapi.NewProfile{Hostname: "a\n--edit"}, "hostname"},
+		"hostname semicolon":    {httpapi.NewProfile{Hostname: "a;b"}, "hostname"},
+		"dns flag":              {httpapi.NewProfile{DNS: []string{"--dns"}}, "dns[0]"},
+		"dns second bad":        {httpapi.NewProfile{DNS: []string{"1.1.1.1", "8.8.8.8; id"}}, "dns[1]"},
+		"dns equals":            {httpapi.NewProfile{DNS: []string{"a=1.1.1.1"}}, "dns[0]"},
+		"dns nine":              {httpapi.NewProfile{DNS: nine}, "dns"},
+		"dns host name flag":    {httpapi.NewProfile{DNSHosts: []httpapi.DNSHost{{Name: "-x", Address: "1.1.1.1"}}}, "dnsHosts[0].name"},
+		"dns host name equals":  {httpapi.NewProfile{DNSHosts: []httpapi.DNSHost{{Name: "a=b", Address: "1.1.1.1"}}}, "dnsHosts[0].name"},
+		"dns host name newline": {httpapi.NewProfile{DNSHosts: []httpapi.DNSHost{{Name: "a\nb", Address: "1.1.1.1"}}}, "dnsHosts[0].name"},
+		"dns host addr":         {httpapi.NewProfile{DNSHosts: []httpapi.DNSHost{{Name: "a.test", Address: "--x"}}}, "dnsHosts[0].address"},
+		"dns host addr name":    {httpapi.NewProfile{DNSHosts: []httpapi.DNSHost{{Name: "a.test", Address: "b.test"}}}, "dnsHosts[0].address"},
+		"port forwarder":        {httpapi.NewProfile{PortForwarder: "ssh --edit"}, "portForwarder"},
+		"network mode":          {httpapi.NewProfile{NetworkMode: "--x"}, "networkMode"},
+		"interface flag":        {httpapi.NewProfile{NetworkMode: "bridged", NetworkInterface: "--force"}, "networkInterface"},
+		"interface no bridge":   {httpapi.NewProfile{NetworkInterface: "en0"}, "networkInterface"},
+		"cpu type flag":         {httpapi.NewProfile{CPUType: "-cpu"}, "cpuType"},
+		"cpu type list":         {httpapi.NewProfile{CPUType: "host,+x2apic"}, "cpuType"},
+		"rosetta qemu":          {httpapi.NewProfile{VMType: "qemu", VZRosetta: true}, "vzRosetta"},
+		"rosetta x86":           {httpapi.NewProfile{Arch: "x86_64", VZRosetta: true}, "vzRosetta"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := &fakeMgr{}
+			c, existsCalls := newCreator(m, false, nil)
+			tc.p.Name = "dev"
+			_, err := c.Create(t.Context(), tc.p)
+			var verr *httpapi.ValidationError
+			if !errors.As(err, &verr) || verr.Fields[tc.field] == "" {
+				t.Fatalf("err %v", err)
+			}
+			if len(verr.Fields) != 1 {
+				t.Errorf("fields %v", verr.Fields)
+			}
+			if len(m.reqs) != 0 || *existsCalls != 0 {
+				t.Fatal("launched or checked existence")
+			}
+			for _, msg := range verr.Fields {
+				for _, bad := range []string{"--edit", "--force", "--x", "-cpu", "8.8.8.8", "a;b", "a=b"} {
+					if strings.Contains(msg, bad) {
+						t.Errorf("echoes %q: %s", bad, msg)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCreatorAdvancedGoodEdgeValues(t *testing.T) {
+	for _, p := range []httpapi.NewProfile{
+		{Name: "dev", VZRosetta: true},
+		{Name: "dev", VMType: "vz", Arch: "aarch64", VZRosetta: true},
+		{Name: "dev", VMType: "qemu", CPUType: "max"},
+		{Name: "dev", NetworkMode: "shared"},
+		{Name: "dev", PortForwarder: "none"},
+		{Name: "dev", SSHAgent: true, MountInotify: true, NetworkAddress: true},
+		{Name: "dev", DNS: []string{}, DNSHosts: []httpapi.DNSHost{}},
+	} {
+		if _, err := newCreate().Create(t.Context(), p); err != nil {
+			t.Errorf("%+v: %v", p, err)
+		}
+	}
+}
+
+// Every field must still be reported at once, basic and advanced together.
+func TestCreatorReportsBasicAndAdvancedTogether(t *testing.T) {
+	_, err := newCreate().Create(t.Context(), httpapi.NewProfile{Name: "", Runtime: "podman", Hostname: "-x", NetworkMode: "nat"})
+	var verr *httpapi.ValidationError
+	if !errors.As(err, &verr) || len(verr.Fields) != 4 {
+		t.Fatalf("%v", err)
+	}
+}

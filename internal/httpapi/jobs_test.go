@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -150,7 +151,7 @@ func TestActionAccepted(t *testing.T) {
 			if rec.Body.String() != `{"jobId":"j_abc123"}`+"\n" {
 				t.Fatalf("body %q", rec.Body.String())
 			}
-			if len(m.submitReq) != 1 || m.submitReq[0] != (operations.Request{Action: c.action, Profile: "dev"}) {
+			if len(m.submitReq) != 1 || !reflect.DeepEqual(m.submitReq[0], operations.Request{Action: c.action, Profile: "dev"}) {
 				t.Fatalf("submit %+v", m.submitReq)
 			}
 		})

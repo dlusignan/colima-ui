@@ -167,19 +167,19 @@ func TestValidateNewReportsEveryBadField(t *testing.T) {
 	p := &Profile{CPU: &cpu, Memory: &mem, Disk: &disk, RootDisk: &root,
 		Arch: "arm", Runtime: "podman", VMType: "xen", MountType: "nfs",
 		Kubernetes: Kubernetes{Version: "--edit"}}
-	got := fields(ValidateNew(p, testLimits))
+	got := fields(ValidateNew(p, NewAdvanced{}, testLimits))
 	want := "cpu,memory,disk,rootDisk,arch,runtime,vmType,mountType,kubernetes.version"
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
-	if errs := ValidateNew(&Profile{}, testLimits); len(errs) != 0 {
+	if errs := ValidateNew(&Profile{}, NewAdvanced{}, testLimits); len(errs) != 0 {
 		t.Fatalf("empty profile: %v", errs)
 	}
 }
 
 func TestValidateNewHasNoShrinkRule(t *testing.T) {
 	d := 10
-	if errs := ValidateNew(&Profile{Disk: &d}, testLimits); len(errs) != 0 {
+	if errs := ValidateNew(&Profile{Disk: &d}, NewAdvanced{}, testLimits); len(errs) != 0 {
 		t.Fatalf("%v", errs)
 	}
 }
@@ -198,7 +198,7 @@ func TestValidateNewKubernetesVersionNeedsKubernetes(t *testing.T) {
 		"bad version, unset":  {Kubernetes{Version: "--edit"}, "kubernetes.version"},
 	}
 	for name, tc := range cases {
-		errs := ValidateNew(&Profile{Kubernetes: tc.k}, testLimits)
+		errs := ValidateNew(&Profile{Kubernetes: tc.k}, NewAdvanced{}, testLimits)
 		if got := fields(errs); got != tc.want {
 			t.Errorf("%s: got %q want %q", name, got, tc.want)
 		}
