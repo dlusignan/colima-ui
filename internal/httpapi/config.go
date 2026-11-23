@@ -1,7 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -110,24 +113,89 @@ func (c *configRoutes) get(w http.ResponseWriter, r *http.Request) error {
 
 func (c *configRoutes) put(w http.ResponseWriter, r *http.Request) error {
 	name := r.PathValue("name")
-	var body configUpdate
-	if err := decodeBody(w, r, &body); err != nil {
+	body, err := decodeConfigUpdate(w, r)
+	if err != nil {
 		return err
 	}
+	// Read before writing so that, if the re-read after a successful write
+	// fails, the response can still be built (the write already happened). An
+	// error here is ignored: Apply reports the real one.
+	before, _ := c.svc.Read(name)
 	changes, err := c.svc.Apply(name, config.Changes{CPU: body.CPU, Memory: body.MemoryGiB, Disk: body.DiskGiB})
 	if err != nil {
 		return c.mapError(name, "apply", err)
 	}
-	p, err := c.svc.Read(name)
-	if err != nil {
-		return c.mapError(name, "read after apply", err)
+	saved := toConfigJSON(name, before)
+	if body.CPU != nil {
+		saved.CPU = *body.CPU
+	}
+	if body.MemoryGiB != nil {
+		saved.MemoryGiB = *body.MemoryGiB
+	}
+	if body.DiskGiB != nil {
+		saved.DiskGiB = *body.DiskGiB
+	}
+	if p, rerr := c.svc.Read(name); rerr == nil {
+		saved = toConfigJSON(name, p)
+	} else {
+		slog.Warn("config re-read after write failed", "errorType", errTypeName(rerr))
 	}
 	restart := make([]string, 0, len(changes))
 	for _, ch := range changes {
 		restart = append(restart, wireField(ch.Field))
 	}
-	writeJSON(w, http.StatusOK, configSaved{Config: toConfigJSON(name, p), RestartRequired: restart})
+	writeJSON(w, http.StatusOK, configSaved{Config: saved, RestartRequired: restart})
 	return nil
+}
+
+// configKeys are the only accepted body keys, matched exactly.
+var configKeys = map[string]bool{"cpu": true, "memoryGiB": true, "diskGiB": true}
+
+// decodeConfigUpdate is a stricter decodeBody for the PUT body. encoding/json
+// matches keys case-insensitively, lets a repeated key win and takes null as
+// an empty struct, so the top-level object is walked by hand: only exact keys,
+// each at most once, and the body must be an object.
+func decodeConfigUpdate(w http.ResponseWriter, r *http.Request) (configUpdate, error) {
+	bad := errBadRequest("Request body is not valid.")
+	var out configUpdate
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, defaultBodyLimit))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return out, bad
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		key, ok := t.(string)
+		if err != nil || !ok || !configKeys[key] || seen[key] {
+			return out, bad
+		}
+		seen[key] = true
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return out, bad
+		}
+		var target any
+		switch key {
+		case "cpu":
+			target = &out.CPU
+		case "memoryGiB":
+			target = &out.MemoryGiB
+		default:
+			target = &out.DiskGiB
+		}
+		sub := json.NewDecoder(bytes.NewReader(raw))
+		sub.DisallowUnknownFields()
+		if err := sub.Decode(target); err != nil {
+			return out, bad
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return out, bad
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return out, bad
+	}
+	return out, nil
 }
 
 // mapError turns a Config Service error into the contract's answer. Anything
@@ -142,6 +210,11 @@ func (c *configRoutes) mapError(name, op string, err error) error {
 		return profileNotFound(name)
 	case errors.Is(err, config.ErrProfileBusy):
 		id, _ := c.busy.Busy(name)
+		if id == "" {
+			// A concurrent config write holds the slot; no job exists.
+			return newAPIError(http.StatusConflict, "profile_busy",
+				"The profile is being changed, try again.", map[string]any{})
+		}
 		return busyError(name, id)
 	case errors.As(err, &verr):
 		fields := make(map[string]any, len(verr.Fields))

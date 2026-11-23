@@ -183,7 +183,7 @@ func TestConfigPutNoRestartEncodesEmptyArray(t *testing.T) {
 }
 
 func TestConfigPutEmptyObjectIsNoOp(t *testing.T) {
-	for _, body := range []string{`{}`, `{"cpu":null}`, `null`} {
+	for _, body := range []string{`{}`, `{"cpu":null}`} {
 		f := &fakeConfig{profile: &config.Profile{CPU: ci(3)}}
 		rec := cfgReq(t, cfgAPI(f, fakeBusy{}), "PUT", "/api/profiles/default/config", body)
 		if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"restartRequired":[]`) || !strings.Contains(rec.Body.String(), `"cpu":3`) {
@@ -214,6 +214,12 @@ func TestConfigPutBadBodyNeverReachesService(t *testing.T) {
 		"not json":          `cpu=2`,
 		"oversized body":    big,
 		"duplicate unknown": `{"cpu":2,"cpu2":1}`,
+		"upper case key":    `{"CPU":4}`,
+		"mixed case key":    `{"MemoryGiB":4}`,
+		"repeated key":      `{"cpu":2,"cpu":3}`,
+		"null body":         `null`,
+		"string body":       `"x"`,
+		"nested object":     `{"cpu":{"a":1}}`,
 	}
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
@@ -247,8 +253,8 @@ func TestConfigPutValidation422(t *testing.T) {
 	if _, bad := fields["memory"]; bad {
 		t.Fatal("unmapped config name leaked")
 	}
-	if f.readN != 0 {
-		t.Fatal("re-read after a failed apply")
+	if f.readN != 1 { // only the read before Apply, none after the failure
+		t.Fatalf("reads = %d", f.readN)
 	}
 }
 
@@ -265,7 +271,7 @@ func TestConfigPutBusy(t *testing.T) {
 	// A write hold has no job: the id is simply omitted.
 	rec = cfgReq(t, cfgAPI(&fakeConfig{applyErr: err}, fakeBusy{}), "PUT", "/api/profiles/default/config", `{"cpu":3}`)
 	d = decodeMap(t, rec)["error"].(map[string]any)["details"].(map[string]any)
-	if rec.Code != 409 || len(d) != 0 {
+	if rec.Code != 409 || len(d) != 0 || strings.Contains(rec.Body.String(), "job") {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	// Wrapped busy errors map the same way.
@@ -311,16 +317,20 @@ func TestConfigPutUnexpectedErrorsAre500WithoutText(t *testing.T) {
 	}
 }
 
-func TestConfigPutReadAfterApplyFailureIs500(t *testing.T) {
-	f := &fakeConfig{readErr: config.ErrProfileNotFound}
-	rec := cfgReq(t, cfgAPI(f, fakeBusy{}), "PUT", "/api/profiles/default/config", `{"cpu":3}`)
-	// The file vanished between write and re-read: still a mapped answer, never a panic.
-	if rec.Code != 404 {
-		t.Fatalf("%d %s", rec.Code, rec.Body)
-	}
-	f = &fakeConfig{readErr: &config.ParseError{Message: "x"}}
-	if rec := cfgReq(t, cfgAPI(f, fakeBusy{}), "PUT", "/api/profiles/default/config", `{"cpu":3}`); rec.Code != 500 {
-		t.Fatalf("%d", rec.Code)
+func TestConfigPutReReadFailureStillAnswers200(t *testing.T) {
+	// The first read succeeds, the re-read after the write fails: the write
+	// happened, so the answer merges the request over the earlier values.
+	for _, e := range []error{config.ErrProfileNotFound, &config.ParseError{Message: "x"}} {
+		f := &fakeConfig{
+			profile:  &config.Profile{CPU: ci(2), Memory: cf(4), Disk: ci(60)},
+			readErrs: []error{nil, e},
+			changes:  []config.Change{{Field: "cpu", Class: config.ClassRestart}},
+		}
+		rec := cfgReq(t, cfgAPI(f, fakeBusy{}), "PUT", "/api/profiles/default/config", `{"cpu":3}`)
+		want := `{"config":{"name":"default","cpu":3,"memoryGiB":4,"diskGiB":60},"restartRequired":["cpu"]}`
+		if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != want {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
 	}
 }
 
