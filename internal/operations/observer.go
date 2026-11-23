@@ -1,5 +1,10 @@
 package operations
 
+import (
+	"fmt"
+	"log/slog"
+)
+
 // JobLine is one output line as seen by an Observer.
 type JobLine struct {
 	JobID   string
@@ -26,7 +31,11 @@ type Observer interface {
 }
 
 func safely(f func()) {
-	defer func() { _ = recover() }()
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("operations: observer panicked", "panic", fmt.Sprintf("%T", p))
+		}
+	}()
 	f()
 }
 

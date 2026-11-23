@@ -16,7 +16,11 @@ The project is under construction. The backend and the frontend shell exist, but
 6. Reading and editing a profile's resources: `GET` and `PUT /api/profiles/{name}/config`. A write is validated, applied atomically to the profile file and refused while a job runs on that profile.
 7. The embedded React app, with a working operation log view. The dashboard, profile, capacity and config views are placeholders.
 
-Not wired into the binary yet: the event stream (SSE), the metrics sampler and metrics route, the history database, and the action log route. They are designed and specified (see [`C4_Architecture.md`](C4_Architecture.md) and [`docs/api.md`](docs/api.md)), but nothing is recorded or served for them today. In particular no SQLite file is created yet.
+8. The event stream: `GET /api/events` (Server Sent Events) carries `job.output` and `job.finished` for every job, and a `metric` event for each sample.
+9. The metrics sampler, which reads VM and per-container usage every 5 seconds and refreshes when a job finishes, and the history route `GET /api/profiles/{name}/metrics`.
+10. The action log: every finished job and every applied config change is recorded, and `GET /api/profiles/{name}/actions` lists the recent rows.
+
+Every backend component in the design is wired. If the history file cannot be opened (for example a newer version wrote it), the binary refuses to start and says so, because the file holds history only and can be deleted to start fresh.
 
 ## Requirements
 
@@ -59,7 +63,7 @@ Colima UI controls a VM and the Docker socket, which is close to controlling you
 
 ## Where history lives
 
-Current state is never stored. Only history is, in a SQLite file: metric samples (every 5 seconds, kept raw for 24 hours, then as 1 minute averages for 30 days) and an action log. The design puts it at `<user config dir>/colima-ui/history.db`, overridable with `COLIMA_UI_DATA_DIR`. As noted in the status section, the binary does not create or use that file yet.
+Current state is never stored. Only history is, in a SQLite file: metric samples (every 5 seconds, kept raw for 24 hours, then as 1 minute averages for 30 days) and an action log. The file is `<user config dir>/colima-ui/history.db`, overridable with `COLIMA_UI_DATA_DIR` (an absolute path to a folder used only for this). The binary creates the folder with mode 0700 and the file with mode 0600 on start.
 
 ## Development
 

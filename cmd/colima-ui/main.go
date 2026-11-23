@@ -55,13 +55,19 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	a, err := newApp()
+	a, err := buildApp()
 	if err != nil {
 		return err
 	}
 	s := httpapi.NewServer(token, a.handler(), web.UI())
 	ln, err := s.Listen(port)
 	if err != nil {
+		// The components are running already (the history store is open):
+		// stop them so nothing is left half written.
+		a.closeStreams()
+		sctx, scancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer scancel()
+		_ = a.shutdown(sctx)
 		return err
 	}
 	log.Printf("listening on http://%s", ln.Addr())
@@ -78,14 +84,43 @@ func run(args []string, getenv func(string) string) error {
 
 	select {
 	case err := <-errCh:
+		// The server died on its own: still stop the components, so the history
+		// file is flushed and no colima process is orphaned.
+		a.closeStreams()
+		sctx, scancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer scancel()
+		_ = a.shutdown(sctx)
 		return err
 	case <-ctx.Done():
 	}
+	// Restore default signal handling, so a second signal during a slow
+	// shutdown force-quits instead of being swallowed.
+	stop()
 	log.Print("shutting down")
-	// The HTTP server stops first so no new request reaches the components,
-	// then the components stop. Each gets its own budget, so a slow in-flight
-	// request cannot leave the manager with an expired context (which would
-	// orphan a colima process). Both run even if the first fails.
+	if err := stopAll(a, s); err != nil {
+		return err
+	}
+	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// buildApp is newApp; tests replace it.
+var buildApp = newApp
+
+// httpStopper is the part of *httpapi.Server that stopAll uses.
+type httpStopper interface{ Shutdown(context.Context) error }
+
+// stopAll stops everything after a signal. The event streams end first:
+// http.Server.Shutdown waits for active requests and does not cancel them, so
+// an open stream would hold it for the whole timeout. Then the HTTP server
+// stops, so no new request reaches the components, then the components stop.
+// Each gets its own budget, so a slow in-flight request cannot leave the
+// manager with an expired context (which would orphan a colima process). Both
+// run even if the first fails.
+func stopAll(a *app, s httpStopper) error {
+	a.closeStreams()
 	hctx, hcancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer hcancel()
 	shutErr := s.Shutdown(hctx)
@@ -94,9 +129,6 @@ func run(args []string, getenv func(string) string) error {
 	appErr := a.shutdown(actx)
 	if shutErr != nil {
 		return shutErr
-	}
-	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
-		return err
 	}
 	return appErr
 }
