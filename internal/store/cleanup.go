@@ -7,9 +7,10 @@ import (
 	"time"
 )
 
-const (
-	foldSlice   = time.Hour // raw time folded per transaction
-	deleteChunk = 5000      // 1 minute rows deleted per transaction
+// Batch sizes. Variables only so tests can shrink them.
+var (
+	foldSlice   = time.Hour   // raw time folded per transaction
+	deleteChunk = int64(5000) // 1 minute rows deleted per transaction
 )
 
 // Cleanup applies retention. It is synchronous and uses the injected clock.

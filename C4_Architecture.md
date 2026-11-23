@@ -171,6 +171,18 @@ CREATE TABLE metric_sample (
 );
 CREATE INDEX metric_sample_lookup ON metric_sample (profile, scope, taken_at);
 
+-- Rollup of raw samples older than 24 hours, one row per minute.
+CREATE TABLE metric_sample_1m (
+    profile       TEXT    NOT NULL,
+    scope         TEXT    NOT NULL,
+    bucket_start  INTEGER NOT NULL,   -- unix seconds, multiple of 60
+    cpu_percent   REAL,               -- average over the bucket
+    memory_bytes  INTEGER,
+    disk_bytes    INTEGER,
+    samples       INTEGER NOT NULL,   -- raw samples folded into the bucket
+    PRIMARY KEY (profile, scope, bucket_start)
+) WITHOUT ROWID;
+
 CREATE TABLE action_log (
     id          INTEGER PRIMARY KEY,
     profile     TEXT    NOT NULL,
@@ -179,9 +191,19 @@ CREATE TABLE action_log (
     outcome     TEXT    NOT NULL,     -- 'success', 'failed', 'cancelled'
     detail      TEXT
 );
+CREATE INDEX action_log_recent ON action_log (profile, started_at DESC, id DESC);
 ```
 
-Retention is time based. Old samples are downsampled or deleted by a periodic cleanup so the file stays small.
+The schema is created by embedded SQL migrations (`internal/store/migrations`). The version lives in `PRAGMA user_version`, and each migration runs in its own `BEGIN IMMEDIATE` transaction together with its version bump. Opening a database already at the current version writes nothing, and a database written by a newer program is refused (there are no down migrations; the file holds history only and can be deleted). The file is `<UserConfigDir>/colima-ui/history.db` (override with `COLIMA_UI_DATA_DIR`), the folder is mode 0700 and the file is created 0600. The database uses WAL, `busy_timeout` 5000, `synchronous` NORMAL, foreign keys on and incremental auto vacuum, with one writer connection and a pool of 4 readers.
+
+Retention follows the decision in section 9 and is applied by a periodic cleanup (first run shortly after start, then hourly):
+
+1. Raw samples older than now minus 24 hours (rounded down to a whole minute) are folded into `metric_sample_1m` with `ON CONFLICT DO NOTHING` and deleted, one hour of raw time per transaction with a pause between slices, so a rerun is a no-op and the writer is never held for long.
+2. `metric_sample_1m` rows older than 30 days are deleted in chunks of 5,000.
+3. `action_log` keeps the newest 1,000 rows per profile. The decision does not cover the action log, so this cap is an addition that stops the table growing without bound. The `action_log_recent` index serves the "recent actions" query.
+4. Free pages are returned with an incremental vacuum and the WAL is checkpointed.
+
+Recent history is also held in memory: one ring of 17,280 slots (24 hours at 5 seconds) per (profile, scope), allocated lazily, dropped after 10 idle minutes and capped at 256 scopes. It is write-through and rehydrated from `metric_sample` when the store opens, so a query that starts within the last 24 hours is answered without touching the disk. Older ranges read the 1 minute table plus any unfolded raw rows from one snapshot and are averaged down to at most `maxPoints` (2,000 at most) by one shared function. The 1 minute tier stores averages, so short spikes older than 24 hours are not visible in charts.
 
 ## 8. Deployment
 
