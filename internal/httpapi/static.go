@@ -44,7 +44,7 @@ func newStaticHandler(ui fs.FS) http.Handler {
 		if path.Ext(path.Base(name)) != "" ||
 			name == "api" || strings.HasPrefix(name, "api/") ||
 			!strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/html") {
-			http.NotFound(w, r)
+			writeError(w, http.StatusNotFound, "not_found")
 			return
 		}
 		serveIndex(w, r, ui)

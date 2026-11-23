@@ -55,7 +55,11 @@ func run(args []string, getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	s := httpapi.NewServer(token, httpapi.NewPlaceholderAPI(), web.UI())
+	a, err := newApp()
+	if err != nil {
+		return err
+	}
+	s := httpapi.NewServer(token, a.handler(), web.UI())
 	ln, err := s.Listen(port)
 	if err != nil {
 		return err
@@ -78,13 +82,21 @@ func run(args []string, getenv func(string) string) error {
 	case <-ctx.Done():
 	}
 	log.Print("shutting down")
-	sctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
-	if err := s.Shutdown(sctx); err != nil {
-		return err
+	// The HTTP server stops first so no new request reaches the components,
+	// then the components stop. Each gets its own budget, so a slow in-flight
+	// request cannot leave the manager with an expired context (which would
+	// orphan a colima process). Both run even if the first fails.
+	hctx, hcancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer hcancel()
+	shutErr := s.Shutdown(hctx)
+	actx, acancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer acancel()
+	appErr := a.shutdown(actx)
+	if shutErr != nil {
+		return shutErr
 	}
 	if err := <-errCh; !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-	return nil
+	return appErr
 }
