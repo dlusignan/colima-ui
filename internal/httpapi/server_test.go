@@ -13,7 +13,7 @@ import (
 
 func startServer(t *testing.T) (*Server, net.Listener, chan error) {
 	t.Helper()
-	s := NewServer()
+	s := NewServer("t", NewPlaceholderAPI())
 	ln, err := s.Listen(0)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -86,7 +86,7 @@ func TestListenerIsLoopback(t *testing.T) {
 }
 
 func TestListenRejectsBadPort(t *testing.T) {
-	s := NewServer()
+	s := NewServer("t", NewPlaceholderAPI())
 	for _, p := range []int{-1, 65536} {
 		if ln, err := s.Listen(p); err == nil {
 			ln.Close()
