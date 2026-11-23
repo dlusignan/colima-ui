@@ -223,7 +223,7 @@ Fields:
 
 How the panel avoids losing or repeating lines: open the stream first, call this route, render `output`, then render streamed `job.output` events whose `seq` is greater than the last `seq` already shown.
 
-Finished jobs after a backend restart: jobs are kept in memory, so while the backend process lives this route returns finished jobs with their full captured output. After a restart the in-memory jobs are gone. What this route returns for a job that finished before a restart is not decided yet and is pending issue #40 (whether output is kept in memory only, stored in SQLite, or written to a file per job). Until #40 lands, a client must treat `404` `job_not_found` as a possible answer for an old job id. This section will be updated when #40 decides.
+Finished jobs after a backend restart: jobs are kept in memory only, so while the backend process lives this route returns finished jobs with their full captured output. After a restart the in-memory jobs are gone and this route returns `404` `job_not_found` for them. The action log (section 3.11) still holds a summary row for each finished job, without its output.
 
 Errors: `404` `job_not_found`.
 
@@ -398,7 +398,7 @@ Response `200`, newest first:
 - `action` is a string such as `start`, `stop`, `restart` or `config_change`. Clients must tolerate new values.
 - `outcome` is `success`, `failed` or `cancelled`.
 - `detail` is a short string or `null`.
-- Entries carry no job id today. Whether they should, so that a finished job can be reopened, belongs to issue #40.
+- Entries carry no job id. Finished job output is not kept across a restart (see the C4 decisions table), so there is nothing to reopen.
 - An empty log returns `{"entries":[]}`.
 
 Errors: `400` `invalid_range` (`limit` below 1 or not an integer), `404` `profile_not_found`.
@@ -491,5 +491,5 @@ The `profile` field appears on every event so one connection can serve all views
 
 ## 7. Open points
 
-- Finished job output after a backend restart: pending issue #40. Section 3.5 describes the in-memory behaviour only.
+- Finished job output after a backend restart is not kept. Section 3.5 describes the in-memory behaviour.
 - Routes 3.10 and 3.11 are defined here and implemented by issues #38 and #39. No earlier issue built them.

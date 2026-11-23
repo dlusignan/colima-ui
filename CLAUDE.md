@@ -27,7 +27,7 @@ Name Go packages explicitly (`./cmd/... ./internal/...`), never `./...` or `gofm
 
 On start the backend generates a fresh token and prints `http://127.0.0.1:<port>/#token=<token>` to stdout (via `fmt`, never the logger). Every `/api` call must send it as `Authorization: Bearer <token>` (no query-string fallback); `/healthz` needs no token. All requests must carry a loopback `Host` (`127.0.0.1:<port>` or `localhost:<port>`) and any `Origin` must be the server's own. `GET /api/ping` is a placeholder to delete once real routes land.
 
-`C4_Architecture.md` is the design source of truth. Keep it updated when decisions change, and check its "Open Questions" section (supported Colima versions, Incus/Kubernetes scope, history retention, multi-profile at launch, Linux support) before assuming an answer.
+`C4_Architecture.md` is the design source of truth. Keep it updated when decisions change, and check its "Decisions" table (supported Colima versions, runtimes, history retention, profiles, platform, finished job output) and its "Open Questions" section before assuming an answer.
 
 ## Frontend commands
 

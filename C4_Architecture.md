@@ -1,6 +1,6 @@
 # Colima UI: C4 Architecture Documentation
 
-Status: Draft 0.2, 22 November 2026 (adds the frontend styling and UI library decisions)
+Status: Draft 0.3, 23 November 2026 (adds decisions on Colima versions, runtimes, metric history, profiles, platform and finished job output)
 Scope: Levels 1 to 3 of the C4 model (Context, Containers, Components). Level 4 (code) is intentionally left out until the first implementation exists.
 
 ## 1. Purpose
@@ -202,7 +202,13 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Operation log | xterm.js | Renders streamed command output, colors included, like a real terminal. |
 | Charts | uPlot, Recharts as fallback | uPlot is small and fast for live time series. Recharts is easier to theme if needed. |
 | Navigation | Command palette (cmdk) and shortcuts | Keyboard first interaction suits the audience and speeds up frequent actions. |
+| Colima versions | Built and tested against Colima 0.10.x. The adapter detects the version with `colima version`, parses tolerantly, and keeps working on other versions | A version outside 0.10.x shows a warning in the UI and an unrecognised output shape returns a clear error. The tool never refuses to start because of the version. |
+| Runtimes in the first release | Docker only. Profiles that use containerd, Incus or Kubernetes are listed and managed (start, stop, configuration) but show no container data | The Docker Client uses the Docker Engine API. Other runtimes are a later addition. |
+| Metric history | Sample every 5 seconds. Keep raw samples for 24 hours, then 1 minute averages for 30 days, then delete. Not user configurable in the first release | Keeps the SQLite file small while showing recent detail and a month of trend. |
+| Profiles | All profiles are listed and managed at launch, and every profile route carries the profile name | The dashboard is a table of profiles by design, so several profiles cost nothing extra. |
+| Platform | macOS only in the first release | Socket and configuration folder discovery assume macOS. Linux is a later addition. |
+| Finished job output | Kept in memory only. After a backend restart a finished job shows its action log summary and no output | Matches the API contract, which already treats output after a restart as unavailable. |
 
 ## 10. Open Questions
 
-Which Colima versions must be supported, and how will the adapter detect the installed version? Should the UI support the Incus and Kubernetes options in the first release or only Docker and containerd? How long should metric history be kept by default? Is multi profile support a launch requirement or a later addition? Will the tool ever need to run on Linux as well as macOS, which affects how the VM and socket paths are discovered? Which themes ship in the first release, and should the chosen theme follow the operating system setting by default?
+Which additional themes ship in the first release? The theme system already follows the operating system setting by default and ships Catppuccin Mocha and a light theme. The other palettes are tracked in the themes issue.
