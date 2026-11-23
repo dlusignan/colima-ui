@@ -13,13 +13,18 @@ const (
 	ActionStart   Action = "start"
 	ActionStop    Action = "stop"
 	ActionRestart Action = "restart"
+	// ActionCreate starts a profile that does not exist yet, with the options
+	// in Request.Options. The route that submits it checks existence.
+	ActionCreate Action = "create"
 )
 
 // Request is a job request. Start, stop and restart take no other input: a
-// start reuses the values stored in the profile YAML.
+// start reuses the values stored in the profile YAML. Only ActionCreate reads
+// Options.
 type Request struct {
 	Action  Action
 	Profile string
+	Options colima.StartOptions
 }
 
 // Launcher starts the process for a request. The context bounds the process:
