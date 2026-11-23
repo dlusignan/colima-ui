@@ -5,7 +5,8 @@ import (
 	"path/filepath"
 )
 
-// DataDirEnv overrides the folder holding the history database.
+// DataDirEnv overrides the folder holding the history database. Open tightens
+// that folder to mode 0700, so it must name a folder used only for this.
 const DataDirEnv = "COLIMA_UI_DATA_DIR"
 
 // FileName is the database file name inside the data folder.

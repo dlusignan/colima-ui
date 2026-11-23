@@ -22,8 +22,10 @@ const MemoryPath = ":memory:"
 // Options configures Open. Only Path is required.
 type Options struct {
 	// Path is the database file (see DefaultPath), or MemoryPath. Its parent
-	// folder is owned by the store: it is created 0700 and tightened to 0700,
-	// and the file is created 0600 before SQLite sees it.
+	// folder is owned by the store: it is created 0700 and tightened to 0700
+	// (even if it already exists), and the file and its -wal and -shm files are
+	// created or tightened to 0600 before SQLite uses them. Never point it at a
+	// shared folder such as the home folder or /tmp.
 	Path string
 	// Clock returns the current time. Default time.Now.
 	Clock func() time.Time
@@ -188,6 +190,12 @@ func (s *Store) openPools() error {
 	}
 	if err := f.Close(); err != nil {
 		return err
+	}
+	// Leftover sidecars from an earlier run keep their old mode otherwise.
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.Chmod(s.opts.Path+suffix, 0o600); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("store: secure database file: %w", fsErr(err))
+		}
 	}
 
 	base := (&url.URL{Path: s.opts.Path}).EscapedPath()

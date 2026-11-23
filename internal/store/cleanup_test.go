@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 )
@@ -92,21 +93,97 @@ func TestCleanupFoldsAndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestCleanupFoldNeverOverwritesExistingBucket(t *testing.T) {
+func TestLateRawSampleIsMergedIntoFoldedBucket(t *testing.T) {
 	clk := newClock(t0)
 	s := openTemp(t, clk, nil)
 	base := t0.Add(-48 * time.Hour)
-	mustAppend(t, s, smp("p", "vm", base, 10, 1))
+	mustAppend(t, s, Sample{Profile: "p", Scope: "vm", TakenAt: base, CPUPercent: f64(10), MemoryBytes: i64(100)})
 	cleanup(t, s)
-	// A late raw sample for the already folded minute (clock skew).
-	mustAppend(t, s, smp("p", "vm", base.Add(20*time.Second), 90, 1))
+	// A late raw sample for the already folded minute (clock skew): cpu only.
+	mustAppend(t, s, Sample{Profile: "p", Scope: "vm", TakenAt: base.Add(30 * time.Second), CPUPercent: f64(90)})
 	cleanup(t, s)
+	cleanup(t, s) // and a rerun changes nothing
 	rows := minuteRows(t, s)
-	if len(rows) != 1 || *rows[0].cpu != 10 || rows[0].samples != 1 {
-		t.Fatalf("existing bucket was modified: %+v", rows)
+	if len(rows) != 1 || *rows[0].cpu != 50 || *rows[0].mem != 100 || rows[0].samples != 2 {
+		t.Fatalf("merged bucket = %+v", rows)
+	}
+	var cs, ms, ds int
+	_ = s.rdb.QueryRow("SELECT cpu_samples, mem_samples, disk_samples FROM metric_sample_1m").Scan(&cs, &ms, &ds)
+	if cs != 2 || ms != 1 || ds != 0 {
+		t.Fatalf("per-field counts = %d %d %d", cs, ms, ds)
+	}
+	if rows[0].disk != nil {
+		t.Fatal("disk must stay NULL")
 	}
 	if n := countRows(t, s, "metric_sample"); n != 0 {
-		t.Fatalf("late raw row not removed: %d", n)
+		t.Fatalf("raw rows left = %d", n)
+	}
+}
+
+func TestFoldKeepsNullAwareAveragesExact(t *testing.T) {
+	clk := newClock(t0)
+	s := openTemp(t, clk, nil)
+	base := t0.Add(-48 * time.Hour)
+	var in []Sample
+	for i := 0; i < 12; i++ { // minute A: one cpu=100, eleven NULL
+		sm := Sample{Profile: "p", Scope: "vm", TakenAt: base.Add(time.Duration(i) * 5 * time.Second)}
+		if i == 0 {
+			sm.CPUPercent = f64(100)
+		}
+		in = append(in, sm)
+	}
+	for i := 0; i < 12; i++ { // minute B: twelve cpu=0
+		in = append(in, Sample{Profile: "p", Scope: "vm", TakenAt: base.Add(time.Minute + time.Duration(i)*5*time.Second), CPUPercent: f64(0)})
+	}
+	mustAppend(t, s, in...)
+	q := MetricQuery{Profile: "p", Scope: "vm", From: base, To: base.Add(2 * time.Minute), MaxPoints: 1}
+	before := query(t, s, q)
+	cleanup(t, s)
+	after := query(t, s, q)
+	want := 100.0 / 13
+	if len(before) != 1 || len(after) != 1 || math.Abs(*before[0].CPUPercent-want) > 1e-9 || math.Abs(*after[0].CPUPercent-want) > 1e-9 {
+		t.Fatalf("before=%v after=%v want %v", *before[0].CPUPercent, *after[0].CPUPercent, want)
+	}
+}
+
+func TestDiskQueryNeverReturnsPointBeforeFrom(t *testing.T) {
+	clk := newClock(t0)
+	s := openTemp(t, clk, nil)
+	base := t0.Add(-48 * time.Hour)
+	mustAppend(t, s, smp("p", "vm", base.Add(10*time.Second), 1, 1), smp("p", "vm", base.Add(70*time.Second), 2, 2))
+	cleanup(t, s)
+	from := base.Add(30 * time.Second)
+	got := query(t, s, MetricQuery{Profile: "p", Scope: "vm", From: from, To: t0, MaxPoints: 10})
+	for _, p := range got {
+		if p.TakenAt.Before(from) {
+			t.Fatalf("point %v before From %v", p.TakenAt, from)
+		}
+	}
+	if len(got) != 1 || *got[0].CPUPercent != 2 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestCleanupSkipsMinuteExpiryAfterForwardClockJump(t *testing.T) {
+	clk := newClock(t0)
+	s := openTemp(t, clk, nil)
+	mustAppend(t, s, smp("p", "vm", t0.Add(-time.Hour), 1, 1))
+	edge := t0.Unix()
+	if _, err := s.wdb.Exec("INSERT INTO metric_sample_1m (profile, scope, bucket_start, samples, cpu_samples, mem_samples, disk_samples) VALUES ('p','vm',?,1,0,0,0)", edge-3600); err != nil {
+		t.Fatal(err)
+	}
+	clk.Advance(400 * 24 * time.Hour) // clock leaps far past all stored data
+	cleanup(t, s)
+	if n := countRows(t, s, "metric_sample_1m"); n < 1 {
+		t.Fatal("1 minute rows were wiped after a forward clock jump")
+	}
+	// Once newer samples exist, normal expiry resumes.
+	mustAppend(t, s, smp("p", "vm", clk.Now(), 1, 1))
+	cleanup(t, s)
+	var old int
+	_ = s.rdb.QueryRow("SELECT COUNT(*) FROM metric_sample_1m WHERE bucket_start = ?", edge-3600).Scan(&old)
+	if old != 0 {
+		t.Fatal("old row not expired once the clock looks sane")
 	}
 }
 
@@ -143,7 +220,7 @@ func TestRetentionBoundaryAt30Days(t *testing.T) {
 	s := openTemp(t, clk, nil)
 	edge := t0.Add(-MinuteRetention).Unix() // minute aligned: t0 is
 	for _, start := range []int64{edge - 120, edge - 60, edge, edge + 60} {
-		if _, err := s.wdb.Exec("INSERT INTO metric_sample_1m (profile, scope, bucket_start, samples) VALUES ('p','vm',?,12)", start); err != nil {
+		if _, err := s.wdb.Exec("INSERT INTO metric_sample_1m (profile, scope, bucket_start, samples, cpu_samples, mem_samples, disk_samples) VALUES ('p','vm',?,12,0,0,0)", start); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -158,25 +235,52 @@ func TestCleanupBatching(t *testing.T) {
 	oldSlice, oldChunk := foldSlice, deleteChunk
 	t.Cleanup(func() { foldSlice, deleteChunk = oldSlice, oldChunk })
 
+	// Oldest raw row is 17s into a minute, two samples per minute (:17 and :47)
+	// for three hours, so the fold spans several slices.
+	base := t0.Add(-60 * time.Hour)
 	build := func() *Store {
 		clk := newClock(t0)
 		s := openTemp(t, clk, nil)
-		base := t0.Add(-60 * time.Hour)
 		var in []Sample
-		for i := 0; i < 3*60; i++ { // three hours, one sample a minute
-			in = append(in, smp("p", "vm", base.Add(time.Duration(i)*time.Minute), float64(i), 1))
+		for i := 0; i < 3*60; i++ {
+			at := base.Add(time.Duration(i)*time.Minute + 17*time.Second)
+			in = append(in, smp("p", "vm", at, float64(i), 10), smp("p", "vm", at.Add(30*time.Second), float64(i+2), 30))
 		}
 		mustAppend(t, s, in...)
 		return s
 	}
+	verify := func(s *Store) {
+		rows := minuteRows(t, s)
+		if len(rows) != 180 {
+			t.Fatalf("%d minute rows, want 180", len(rows))
+		}
+		for i, r := range rows {
+			if r.start != base.Unix()+int64(i)*60 || r.samples != 2 || *r.cpu != float64(i+1) || *r.mem != 20 {
+				t.Fatalf("row %d = %+v cpu=%v", i, r, *r.cpu)
+			}
+		}
+		if countRows(t, s, "metric_sample") != 0 {
+			t.Fatal("raw rows left")
+		}
+	}
+
+	var slices int
+	onFoldSlice = func(start, end int64) {
+		slices++
+		if start%60 != 0 || end%60 != 0 || end-start > int64(foldSlice/time.Second) {
+			t.Errorf("slice [%d,%d) is not minute aligned or too long", start, end)
+		}
+	}
+	t.Cleanup(func() { onFoldSlice = nil })
 
 	foldSlice = time.Hour
 	s := build()
 	before := s.sqlCalls.Load()
 	cleanup(t, s)
 	small := s.sqlCalls.Load() - before
-	if got := len(minuteRows(t, s)); got != 180 {
-		t.Fatalf("1h slices: %d minute rows", got)
+	verify(s)
+	if slices < 3 {
+		t.Fatalf("slices = %d, want at least 3", slices)
 	}
 
 	foldSlice = 10 * time.Hour
@@ -184,9 +288,7 @@ func TestCleanupBatching(t *testing.T) {
 	before = s2.sqlCalls.Load()
 	cleanup(t, s2)
 	big := s2.sqlCalls.Load() - before
-	if got := len(minuteRows(t, s2)); got != 180 {
-		t.Fatalf("10h slice: %d minute rows", got)
-	}
+	verify(s2)
 	if small <= big {
 		t.Fatalf("expected more transactions with 1h slices (%d) than one 10h slice (%d)", small, big)
 	}
@@ -197,7 +299,7 @@ func TestCleanupBatching(t *testing.T) {
 	s3 := openTemp(t, clk, nil)
 	edge := t0.Add(-MinuteRetention).Unix()
 	for i := int64(1); i <= 25; i++ {
-		if _, err := s3.wdb.Exec("INSERT INTO metric_sample_1m (profile, scope, bucket_start, samples) VALUES ('p','vm',?,1)", edge-60*i); err != nil {
+		if _, err := s3.wdb.Exec("INSERT INTO metric_sample_1m (profile, scope, bucket_start, samples, cpu_samples, mem_samples, disk_samples) VALUES ('p','vm',?,1,0,0,0)", edge-60*i); err != nil {
 			t.Fatal(err)
 		}
 	}

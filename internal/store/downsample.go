@@ -5,14 +5,15 @@ import (
 	"time"
 )
 
-// wpoint is a point with a weight: the number of raw samples it stands for
-// (1 for a raw row, the folded count for a 1 minute row). t is unix seconds.
+// wpoint is a point with per-field weights. t is unix seconds.
 type wpoint struct {
 	t    int64
 	cpu  *float64
 	mem  *int64
 	disk *int64
-	w    int64
+	// Per-field weights: how many raw samples the field's average stands for
+	// (1 for a present raw field, the folded per-field count for a 1 minute row).
+	cw, mw, dw int64
 }
 
 // downsample returns at most maxPoints points covering [from, to] (unix
@@ -67,21 +68,17 @@ type bucketAcc struct {
 }
 
 func (a *bucketAcc) add(p wpoint) {
-	w := p.w
-	if w < 1 {
-		w = 1
+	if p.cpu != nil && p.cw > 0 {
+		a.cpuSum += *p.cpu * float64(p.cw)
+		a.cpuW += p.cw
 	}
-	if p.cpu != nil {
-		a.cpuSum += *p.cpu * float64(w)
-		a.cpuW += w
+	if p.mem != nil && p.mw > 0 {
+		a.memSum += float64(*p.mem) * float64(p.mw)
+		a.memW += p.mw
 	}
-	if p.mem != nil {
-		a.memSum += float64(*p.mem) * float64(w)
-		a.memW += w
-	}
-	if p.disk != nil {
-		a.diskSum += float64(*p.disk) * float64(w)
-		a.diskW += w
+	if p.disk != nil && p.dw > 0 {
+		a.diskSum += float64(*p.disk) * float64(p.dw)
+		a.diskW += p.dw
 	}
 }
 

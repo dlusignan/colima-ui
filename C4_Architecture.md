@@ -180,6 +180,9 @@ CREATE TABLE metric_sample_1m (
     memory_bytes  INTEGER,
     disk_bytes    INTEGER,
     samples       INTEGER NOT NULL,   -- raw samples folded into the bucket
+    cpu_samples   INTEGER NOT NULL,   -- how many of them had a cpu value
+    mem_samples   INTEGER NOT NULL,   -- ... a memory value
+    disk_samples  INTEGER NOT NULL,   -- ... a disk value
     PRIMARY KEY (profile, scope, bucket_start)
 ) WITHOUT ROWID;
 
@@ -198,7 +201,7 @@ The schema is created by embedded SQL migrations (`internal/store/migrations`). 
 
 Retention follows the decision in section 9 and is applied by a periodic cleanup (first run shortly after start, then hourly):
 
-1. Raw samples older than now minus 24 hours (rounded down to a whole minute) are folded into `metric_sample_1m` with `ON CONFLICT DO NOTHING` and deleted, one hour of raw time per transaction with a pause between slices, so a rerun is a no-op and the writer is never held for long.
+1. Raw samples older than now minus 24 hours (rounded down to a whole minute) are folded into `metric_sample_1m` with `ON CONFLICT DO NOTHING` and deleted, one hour of raw time per transaction with a pause between slices, so a rerun is a no-op and the writer is never held for long. A late raw sample for an already folded minute is merged into that bucket (weighted by the per-field counts) instead of being dropped.
 2. `metric_sample_1m` rows older than 30 days are deleted in chunks of 5,000.
 3. `action_log` keeps the newest 1,000 rows per profile. The decision does not cover the action log, so this cap is an addition that stops the table growing without bound. The `action_log_recent` index serves the "recent actions" query.
 4. Free pages are returned with an incremental vacuum and the WAL is checkpointed.

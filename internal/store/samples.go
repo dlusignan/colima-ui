@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"sort"
 	"time"
 )
@@ -28,9 +29,13 @@ func (s *Store) AppendSamples(ctx context.Context, samples []Sample) error {
 	if len(samples) == 0 {
 		return nil
 	}
+	limit := s.clock().Add(MaxFutureSkew)
 	for _, sm := range samples {
 		if err := validateSample(sm); err != nil {
 			return err
+		}
+		if sm.TakenAt.After(limit) {
+			return fmt.Errorf("%w: taken_at is in the future", ErrInvalidSample)
 		}
 	}
 
@@ -289,9 +294,9 @@ func (s *Store) queryDisk(ctx context.Context, k scopeKey, from, to int64) ([]wp
 	var pts []wpoint
 	err := s.readTx(ctx, func(c *sql.Conn) error {
 		rows, err := c.QueryContext(ctx,
-			"SELECT bucket_start, cpu_percent, memory_bytes, disk_bytes, samples FROM metric_sample_1m "+
+			"SELECT bucket_start, cpu_percent, memory_bytes, disk_bytes, cpu_samples, mem_samples, disk_samples FROM metric_sample_1m "+
 				"WHERE profile = ? AND scope = ? AND bucket_start >= ? AND bucket_start <= ? ORDER BY bucket_start",
-			k.profile, k.scope, floor60(from), to)
+			k.profile, k.scope, floor60(from+59), to) // buckets starting before From would yield an earlier TakenAt
 		if err != nil {
 			return err
 		}
@@ -302,7 +307,7 @@ func (s *Store) queryDisk(ctx context.Context, k scopeKey, from, to int64) ([]wp
 				mem  sql.NullInt64
 				disk sql.NullInt64
 			)
-			if err := rows.Scan(&p.t, &cpu, &mem, &disk, &p.w); err != nil {
+			if err := rows.Scan(&p.t, &cpu, &mem, &disk, &p.cw, &p.mw, &p.dw); err != nil {
 				rows.Close()
 				return err
 			}

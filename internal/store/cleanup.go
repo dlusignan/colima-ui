@@ -17,8 +17,8 @@ var (
 //
 //  1. Raw samples older than now-24h (rounded down to a whole minute) are folded
 //     into 1 minute averages and deleted, one hour of raw time per transaction.
-//     The fold uses ON CONFLICT DO NOTHING and the cutoff is minute aligned, so a
-//     rerun finds nothing to do.
+//     Slices and the cutoff are minute aligned, so a rerun finds nothing to do,
+//     and a late raw sample for a folded minute is merged into its bucket.
 //  2. 1 minute rows older than 30 days are deleted in chunks.
 //  3. The action log keeps the newest rows per profile.
 //  4. Free pages are returned (incremental vacuum) and the WAL is checkpointed.
@@ -43,7 +43,7 @@ func (s *Store) cleanup(ctx context.Context) error {
 	if err := s.foldRaw(ctx, floor60(nowU-int64(RawRetention/time.Second))); err != nil {
 		return err
 	}
-	if err := s.deleteOldMinutes(ctx, nowU-int64(MinuteRetention/time.Second)); err != nil {
+	if err := s.expireMinutes(ctx, nowU); err != nil {
 		return err
 	}
 	if err := s.trimActions(ctx); err != nil {
@@ -85,6 +85,38 @@ func (s *Store) oldestRaw(ctx context.Context, from, cutoff int64) (int64, bool,
 	return t.Int64, t.Valid, nil
 }
 
+// foldSQL folds raw rows in [?1, ?2) into 1 minute buckets. A bucket that
+// already exists (a late raw sample for a folded minute) is merged: each field
+// becomes the weighted average over both parts, using the per-field counts, and
+// the counts add up. Averages of integer fields are rounded half away from zero.
+const foldSQL = `
+INSERT INTO metric_sample_1m
+    (profile, scope, bucket_start, cpu_percent, memory_bytes, disk_bytes, samples, cpu_samples, mem_samples, disk_samples)
+SELECT profile, scope, taken_at / 60 * 60,
+       AVG(cpu_percent),
+       CAST(ROUND(AVG(memory_bytes)) AS INTEGER),
+       CAST(ROUND(AVG(disk_bytes)) AS INTEGER),
+       COUNT(*), COUNT(cpu_percent), COUNT(memory_bytes), COUNT(disk_bytes)
+FROM metric_sample WHERE taken_at >= ?1 AND taken_at < ?2
+GROUP BY profile, scope, taken_at / 60
+ON CONFLICT DO UPDATE SET
+    cpu_percent = CASE WHEN cpu_samples + excluded.cpu_samples = 0 THEN NULL ELSE
+        (COALESCE(cpu_percent, 0) * cpu_samples + COALESCE(excluded.cpu_percent, 0) * excluded.cpu_samples)
+        / (cpu_samples + excluded.cpu_samples) END,
+    memory_bytes = CASE WHEN mem_samples + excluded.mem_samples = 0 THEN NULL ELSE
+        CAST(ROUND((COALESCE(memory_bytes, 0) * 1.0 * mem_samples + COALESCE(excluded.memory_bytes, 0) * 1.0 * excluded.mem_samples)
+        / (mem_samples + excluded.mem_samples)) AS INTEGER) END,
+    disk_bytes = CASE WHEN disk_samples + excluded.disk_samples = 0 THEN NULL ELSE
+        CAST(ROUND((COALESCE(disk_bytes, 0) * 1.0 * disk_samples + COALESCE(excluded.disk_bytes, 0) * 1.0 * excluded.disk_samples)
+        / (disk_samples + excluded.disk_samples)) AS INTEGER) END,
+    samples = samples + excluded.samples,
+    cpu_samples = cpu_samples + excluded.cpu_samples,
+    mem_samples = mem_samples + excluded.mem_samples,
+    disk_samples = disk_samples + excluded.disk_samples`
+
+// onFoldSlice, when set by a test, observes each fold slice [start, end).
+var onFoldSlice func(start, end int64)
+
 func (s *Store) foldRaw(ctx context.Context, cutoff int64) error {
 	t, ok, err := s.oldestRaw(ctx, -1<<62, cutoff)
 	if err != nil || !ok {
@@ -93,15 +125,12 @@ func (s *Store) foldRaw(ctx context.Context, cutoff int64) error {
 	start := floor60(t)
 	for start < cutoff {
 		end := min(start+int64(foldSlice/time.Second), cutoff)
+		if onFoldSlice != nil {
+			onFoldSlice(start, end)
+		}
 		var n int64
 		err := s.writeTx(ctx, func(c *sql.Conn) error {
-			if _, err := c.ExecContext(ctx,
-				"INSERT INTO metric_sample_1m (profile, scope, bucket_start, cpu_percent, memory_bytes, disk_bytes, samples) "+
-					"SELECT profile, scope, taken_at / 60 * 60, AVG(cpu_percent), "+
-					"CAST(ROUND(AVG(memory_bytes)) AS INTEGER), CAST(ROUND(AVG(disk_bytes)) AS INTEGER), COUNT(*) "+
-					"FROM metric_sample WHERE taken_at >= ? AND taken_at < ? "+
-					"GROUP BY profile, scope, taken_at / 60 "+
-					"ON CONFLICT DO NOTHING", start, end); err != nil {
+			if _, err := c.ExecContext(ctx, foldSQL, start, end); err != nil {
 				return err
 			}
 			res, err := c.ExecContext(ctx, "DELETE FROM metric_sample WHERE taken_at >= ? AND taken_at < ?", start, end)
@@ -133,6 +162,33 @@ func (s *Store) foldRaw(ctx context.Context, cutoff int64) error {
 		}
 	}
 	return nil
+}
+
+// expireMinutes deletes 1 minute rows older than 30 days, unless the clock
+// looks wrong: if now is more than MinuteRetention past the newest stored row,
+// a forward clock jump would wipe every row, so the step is skipped until newer
+// samples arrive (samples stamped with a sane clock make the newest row recent).
+func (s *Store) expireMinutes(ctx context.Context, nowU int64) error {
+	before := nowU - int64(MinuteRetention/time.Second)
+	s.sqlCalls.Add(1)
+	var one int
+	err := s.rdb.QueryRowContext(ctx, "SELECT 1 FROM metric_sample_1m WHERE bucket_start < ? LIMIT 1", before).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil // nothing to expire
+	}
+	if err != nil {
+		return err
+	}
+	var newest sql.NullInt64
+	if err := s.rdb.QueryRowContext(ctx,
+		"SELECT MAX(COALESCE((SELECT MAX(bucket_start) FROM metric_sample_1m), 0), COALESCE((SELECT MAX(taken_at) FROM metric_sample), 0))").
+		Scan(&newest); err != nil {
+		return err
+	}
+	if newest.Valid && newest.Int64 < before {
+		return nil
+	}
+	return s.deleteOldMinutes(ctx, before)
 }
 
 func (s *Store) deleteOldMinutes(ctx context.Context, before int64) error {

@@ -79,6 +79,28 @@ func TestPermissionsTightenedOnExisting(t *testing.T) {
 	}
 }
 
+func TestSidecarFilesTightened(t *testing.T) {
+	path := dbPath(t)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if err := os.WriteFile(path+suffix, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path+suffix, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := openAt(t, path, newClock(t0), nil)
+	mustAppend(t, s, smp("p", "vm", t0, 1, 1))
+	for _, suffix := range []string{"-wal", "-shm"} {
+		if m := mode(t, path+suffix); m&0o077 != 0 {
+			t.Errorf("%s mode = %o", suffix, m)
+		}
+	}
+}
+
 func TestPathWithSpecialCharacters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "Application Support", "a?b#c%d", "history.db")
 	s := openAt(t, path, newClock(t0), nil)

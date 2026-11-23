@@ -34,6 +34,11 @@ const (
 	// (docs/api.md section 3.9).
 	MaxPointsLimit = 2000
 
+	// MaxFutureSkew is how far ahead of the store clock a sample's TakenAt may
+	// be. A sample further ahead is rejected: it would sit at the head of its
+	// ring and force every later push to rebuild the ring.
+	MaxFutureSkew = 10 * time.Second
+
 	// MaxRecentActions is the largest limit RecentActions honours.
 	MaxRecentActions = 100
 )

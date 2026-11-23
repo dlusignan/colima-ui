@@ -20,6 +20,9 @@ CREATE TABLE metric_sample_1m (
     memory_bytes  INTEGER,
     disk_bytes    INTEGER,
     samples       INTEGER NOT NULL,   -- raw samples folded into the bucket
+    cpu_samples   INTEGER NOT NULL,   -- how many of them had a cpu value
+    mem_samples   INTEGER NOT NULL,   -- ... a memory value
+    disk_samples  INTEGER NOT NULL,   -- ... a disk value
     PRIMARY KEY (profile, scope, bucket_start)
 ) WITHOUT ROWID;
 

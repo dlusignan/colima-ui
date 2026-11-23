@@ -42,7 +42,7 @@ func TestMigrationsFreshCreatesC4Schema(t *testing.T) {
 	}
 	want := map[string][]string{
 		"metric_sample":    {"id", "profile", "taken_at", "scope", "cpu_percent", "memory_bytes", "disk_bytes"},
-		"metric_sample_1m": {"profile", "scope", "bucket_start", "cpu_percent", "memory_bytes", "disk_bytes", "samples"},
+		"metric_sample_1m": {"profile", "scope", "bucket_start", "cpu_percent", "memory_bytes", "disk_bytes", "samples", "cpu_samples", "mem_samples", "disk_samples"},
 		"action_log":       {"id", "profile", "started_at", "action", "outcome", "detail"},
 	}
 	for table, w := range want {

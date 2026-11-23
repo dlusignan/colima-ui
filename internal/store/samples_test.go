@@ -134,3 +134,18 @@ func TestOldRangeReadsMinuteTableAndRaw(t *testing.T) {
 		t.Fatalf("raw point = %+v", got[1])
 	}
 }
+
+func TestFutureSampleRejected(t *testing.T) {
+	clk := newClock(t0)
+	s := openTemp(t, clk, nil)
+	err := s.AppendSamples(context.Background(), []Sample{
+		smp("p", "vm", t0, 1, 1), smp("p", "vm", t0.Add(time.Hour), 1, 1)})
+	if !errors.Is(err, ErrInvalidSample) {
+		t.Fatalf("err = %v", err)
+	}
+	if n := countRows(t, s, "metric_sample"); n != 0 {
+		t.Fatalf("rows = %d, batch must be rejected whole", n)
+	}
+	// Small skew is tolerated.
+	mustAppend(t, s, smp("p", "vm", t0.Add(MaxFutureSkew), 1, 1))
+}

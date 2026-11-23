@@ -7,7 +7,17 @@ import (
 )
 
 func wp(t int64, cpu *float64, mem, disk *int64, w int64) wpoint {
-	return wpoint{t: t, cpu: cpu, mem: mem, disk: disk, w: w}
+	p := wpoint{t: t, cpu: cpu, mem: mem, disk: disk}
+	if cpu != nil {
+		p.cw = w
+	}
+	if mem != nil {
+		p.mw = w
+	}
+	if disk != nil {
+		p.dw = w
+	}
+	return p
 }
 
 func TestDownsampleUnderLimitIsUnchanged(t *testing.T) {

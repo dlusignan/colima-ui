@@ -37,18 +37,18 @@ func entryOf(s Sample) entry {
 }
 
 func (e entry) wpoint() wpoint {
-	p := wpoint{t: e.t, w: 1}
+	p := wpoint{t: e.t}
 	if e.has&hasCPU != 0 {
 		v := e.cpu
-		p.cpu = &v
+		p.cpu, p.cw = &v, 1
 	}
 	if e.has&hasMem != 0 {
 		v := e.mem
-		p.mem = &v
+		p.mem, p.mw = &v, 1
 	}
 	if e.has&hasDisk != 0 {
 		v := e.disk
-		p.disk = &v
+		p.disk, p.dw = &v, 1
 	}
 	return p
 }
