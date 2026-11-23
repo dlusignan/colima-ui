@@ -126,4 +126,3 @@ func applyMigration(ctx context.Context, conn *sql.Conn, m migration) (err error
 	committed = true
 	return nil
 }
-
