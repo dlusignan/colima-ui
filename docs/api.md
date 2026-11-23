@@ -471,6 +471,72 @@ Errors:
 - `409` `invalid_state`: the VM is stopped (`details.status` is `stopped`).
 - `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering.
 
+### 3.13 `GET /api/profiles/{name}/volumes`
+
+Token: yes. Request body: none. Used by the Docker tab to list the volumes on the VM.
+
+Response `200`:
+
+```json
+{
+  "volumes": [
+    {
+      "name": "pgdata",
+      "driver": "local",
+      "createdAt": "2026-04-11T18:02:55Z",
+      "sizeBytes": 73400320,
+      "containers": 1
+    }
+  ]
+}
+```
+
+- `sizeBytes` and `containers` come from the engine's disk usage report. Both are `null` when the engine has no usage figure for the volume (older engines, or a value Docker reports as unknown). A volume of size zero or with no containers returns `0`, not `null`.
+- `containers` is the number of containers, running or not, that mount the volume.
+- `createdAt` is the creation time as RFC 3339 in UTC, or an empty string if the engine's value cannot be parsed.
+- The response never contains the volume's mountpoint or any other host path.
+- The list is sorted by `name`.
+- A running VM with no volumes returns `{"volumes":[]}`. So does a running profile whose runtime is not Docker.
+- The engine measures volume sizes while it answers, so this route is slower on VMs with large volumes. It has a 15 second budget.
+
+This route only reads. There is no volume create, remove or prune.
+
+Errors:
+
+- `404` `profile_not_found`.
+- `409` `invalid_state`: the VM is stopped (`details.status` is `stopped`).
+- `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering.
+
+### 3.14 `GET /api/profiles/{name}/networks`
+
+Token: yes. Request body: none. Used by the Docker tab to list the networks on the VM.
+
+Response `200`:
+
+```json
+{
+  "networks": [
+    {
+      "id": "9d1c0a47be12",
+      "name": "bridge",
+      "driver": "bridge",
+      "scope": "local",
+      "internal": false,
+      "containers": 3
+    }
+  ]
+}
+```
+
+- `id` is the first 12 characters of the network ID.
+- `containers` is the number of containers attached to the network, and it includes stopped containers. The engine's network list has no attached containers, so the count is taken from the container list (each container's network ID). The count is a snapshot: a container started while the request runs can be missed.
+- The list is sorted by `name`, then by `id`.
+- A running VM always has the built-in networks, so the list is empty only for a running profile whose runtime is not Docker, which returns `{"networks":[]}`.
+
+This route only reads. There is no network create, remove or prune.
+
+Errors are the same as for 3.13.
+
 ## 4. Routes that do not exist
 
 By design the API has no route for arbitrary commands, container control, profile creation or deletion, YAML editing, or profile logs. A separate "current usage" route is also not defined, see 3.9.

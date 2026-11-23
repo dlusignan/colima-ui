@@ -11,7 +11,11 @@ import type {
   ContainerPort,
   ContainerList,
   DockerImage,
+  DockerNetwork,
+  DockerVolume,
   ImageList,
+  NetworkList,
+  VolumeList,
   ConfigUpdate,
   ConfigUpdateResult,
   Health,
@@ -155,6 +159,31 @@ export const dockerImageShape = {
 export const imageListShape = {
   images: { arrayOf: dockerImageShape },
 } as const satisfies Record<keyof ImageList, Kind>
+
+export const dockerVolumeShape = {
+  name: 'string',
+  driver: 'string',
+  createdAt: 'string',
+  sizeBytes: 'number|null',
+  containers: 'number|null',
+} as const satisfies Record<keyof DockerVolume, Kind>
+
+export const volumeListShape = {
+  volumes: { arrayOf: dockerVolumeShape },
+} as const satisfies Record<keyof VolumeList, Kind>
+
+export const dockerNetworkShape = {
+  id: 'string',
+  name: 'string',
+  driver: 'string',
+  scope: 'string',
+  internal: 'boolean',
+  containers: 'number',
+} as const satisfies Record<keyof DockerNetwork, Kind>
+
+export const networkListShape = {
+  networks: { arrayOf: dockerNetworkShape },
+} as const satisfies Record<keyof NetworkList, Kind>
 
 export const actionEntryShape = {
   startedAt: 'string',

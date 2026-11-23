@@ -22,6 +22,10 @@ type fakeDockerClient struct {
 	list     []dockerc.Container
 	images   []dockerc.Image
 	imageErr error
+	volumes  []dockerc.Volume
+	volErr   error
+	networks []dockerc.Network
+	netErr   error
 	listErr  error
 	statsErr error
 	gone     map[string]bool
@@ -61,6 +65,14 @@ func (f *fakeDockerClient) DiskUsage(context.Context) (dockerc.DiskUsage, error)
 
 func (f *fakeDockerClient) Images(context.Context) ([]dockerc.Image, error) {
 	return f.images, f.imageErr
+}
+
+func (f *fakeDockerClient) Volumes(context.Context) ([]dockerc.Volume, error) {
+	return f.volumes, f.volErr
+}
+
+func (f *fakeDockerClient) Networks(context.Context) ([]dockerc.Network, error) {
+	return f.networks, f.netErr
 }
 
 type fakeProvider struct {

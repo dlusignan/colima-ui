@@ -3,6 +3,7 @@ package dockerc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"reflect"
@@ -173,6 +174,102 @@ func TestImagesErrors(t *testing.T) {
 	}
 }
 
+func TestVolumesFromSystemDF(t *testing.T) {
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1.41/system/df" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"Volumes":[
+		 {"Name":"pgdata","Driver":"local","Mountpoint":"/home/user/secret/pgdata","CreatedAt":"2026-04-11T20:02:55+02:00","UsageData":{"Size":73400320,"RefCount":1}},
+		 {"Name":"empty","Driver":"local","Mountpoint":"/home/user/secret/empty","CreatedAt":"2026-04-11T18:02:55Z","UsageData":{"Size":0,"RefCount":0}},
+		 {"Name":"unknown","Driver":"local","CreatedAt":"garbage","UsageData":{"Size":-1,"RefCount":-1}},
+		 {"Name":"nousage","Driver":"nfs","CreatedAt":"2026-04-11T18:02:55Z"}]}`))
+	}))
+	vols, err := newHTTPClient(sock).Volumes(context.Background())
+	if err != nil || len(vols) != 4 {
+		t.Fatalf("%v %+v", err, vols)
+	}
+	pg, empty, unk, nou := vols[0], vols[1], vols[2], vols[3]
+	if pg.Name != "pgdata" || *pg.SizeBytes != 73400320 || *pg.Containers != 1 ||
+		!pg.Created.Equal(time.Date(2026, 4, 11, 18, 2, 55, 0, time.UTC)) || pg.Created.Location() != time.UTC {
+		t.Fatalf("pgdata %+v", pg)
+	}
+	if empty.SizeBytes == nil || *empty.SizeBytes != 0 || empty.Containers == nil || *empty.Containers != 0 {
+		t.Fatalf("zero must stay zero: %+v", empty)
+	}
+	if unk.SizeBytes != nil || unk.Containers != nil || !unk.Created.IsZero() {
+		t.Fatalf("unknown: %+v", unk)
+	}
+	if nou.SizeBytes != nil || nou.Containers != nil || nou.Driver != "nfs" {
+		t.Fatalf("no usage: %+v", nou)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", vols), "/home/user") {
+		t.Fatalf("mountpoint leaked: %+v", vols)
+	}
+}
+
+func TestNetworksCountFromContainerNetworkID(t *testing.T) {
+	var paths []string
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/v1.41/networks":
+			w.Write([]byte(`[
+			 {"Id":"9d1c0a47be12aaaaaaaa","Name":"bridge","Driver":"bridge","Scope":"local","Internal":false},
+			 {"Id":"1111111111112222","Name":"backend","Driver":"bridge","Scope":"local","Internal":true},
+			 {"Id":"short","Name":"none","Driver":"null","Scope":"local"}]`))
+		case "/v1.41/containers/json":
+			w.Write([]byte(`[
+			 {"NetworkSettings":{"Networks":{"bridge":{"NetworkID":"9d1c0a47be12aaaaaaaa"}}}},
+			 {"NetworkSettings":{"Networks":{"bridge":{"NetworkID":"9d1c0a47be12aaaaaaaa"},"backend":{"NetworkID":"1111111111112222"}}}},
+			 {"NetworkSettings":null},
+			 {}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	nets, err := newHTTPClient(sock).Networks(context.Background())
+	if err != nil || len(nets) != 3 {
+		t.Fatalf("%v %+v", err, nets)
+	}
+	if nets[0].ID != "9d1c0a47be12" || nets[0].Containers != 2 || nets[0].Internal || nets[0].Scope != "local" {
+		t.Fatalf("bridge %+v", nets[0])
+	}
+	if nets[1].ID != "111111111111" || nets[1].Containers != 1 || !nets[1].Internal {
+		t.Fatalf("backend %+v", nets[1])
+	}
+	if nets[2].ID != "short" || nets[2].Containers != 0 {
+		t.Fatalf("none %+v", nets[2])
+	}
+	if len(paths) != 2 || paths[1] != "/v1.41/containers/json?all=1" {
+		t.Fatalf("paths %v", paths)
+	}
+}
+
+func TestVolumesNetworksErrors(t *testing.T) {
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"x"}`, http.StatusNotFound)
+	}))
+	c := newHTTPClient(sock)
+	if _, err := c.Volumes(context.Background()); !errors.Is(err, ErrDockerUnavailable) {
+		t.Fatalf("volumes 404: %v", err)
+	}
+	if _, err := c.Networks(context.Background()); !errors.Is(err, ErrDockerUnavailable) {
+		t.Fatalf("networks 404: %v", err)
+	}
+	sock = startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/networks") {
+			w.Write([]byte(`[]`))
+			return
+		}
+		http.Error(w, "x", http.StatusInternalServerError)
+	}))
+	if _, err := newHTTPClient(sock).Networks(context.Background()); !errors.Is(err, ErrDockerUnavailable) {
+		t.Fatalf("containers 500: %v", err)
+	}
+}
+
 func TestSocketMissingAndDialFailure(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.sock")
 	c := newHTTPClient(missing)
@@ -181,6 +278,8 @@ func TestSocketMissingAndDialFailure(t *testing.T) {
 		"stats":      func() error { _, e := c.Stats(context.Background(), "abc"); return e },
 		"df":         func() error { _, e := c.DiskUsage(context.Background()); return e },
 		"images":     func() error { _, e := c.Images(context.Background()); return e },
+		"volumes":    func() error { _, e := c.Volumes(context.Background()); return e },
+		"networks":   func() error { _, e := c.Networks(context.Background()); return e },
 	} {
 		err := call()
 		if !errors.Is(err, ErrDockerUnavailable) {
@@ -296,6 +395,8 @@ type fakeClient struct {
 func (f *fakeClient) Containers(context.Context) ([]Container, error) { return nil, nil }
 func (f *fakeClient) DiskUsage(context.Context) (DiskUsage, error)    { return DiskUsage{}, nil }
 func (f *fakeClient) Images(context.Context) ([]Image, error)         { return nil, nil }
+func (f *fakeClient) Volumes(context.Context) ([]Volume, error)       { return nil, nil }
+func (f *fakeClient) Networks(context.Context) ([]Network, error)     { return nil, nil }
 func (f *fakeClient) Stats(ctx context.Context, id string) (Reading, error) {
 	f.calls.Add(1)
 	f.mu.Lock()

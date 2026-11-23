@@ -295,6 +295,93 @@ func (c *httpClient) Images(ctx context.Context) ([]Image, error) {
 	return out, nil
 }
 
+// Volumes lists volumes from /system/df. Mountpoint is deliberately not
+// decoded. SizeBytes and Containers are nil when UsageData is absent or the
+// value is negative (Docker's -1 for unknown); zero stays zero.
+func (c *httpClient) Volumes(ctx context.Context) ([]Volume, error) {
+	var raw struct {
+		Volumes []struct {
+			Name      string `json:"Name"`
+			Driver    string `json:"Driver"`
+			CreatedAt string `json:"CreatedAt"`
+			UsageData *struct {
+				Size     int64 `json:"Size"`
+				RefCount int64 `json:"RefCount"`
+			} `json:"UsageData"`
+		} `json:"Volumes"`
+	}
+	if err := c.get(ctx, c.diskUsageTimeout, "/system/df", nil, &raw); err != nil {
+		return nil, remapNotFound(err)
+	}
+	out := make([]Volume, 0, len(raw.Volumes))
+	for _, r := range raw.Volumes {
+		v := Volume{Name: r.Name, Driver: r.Driver}
+		if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
+			v.Created = t.UTC()
+		}
+		if u := r.UsageData; u != nil {
+			if u.Size >= 0 {
+				size := u.Size
+				v.SizeBytes = &size
+			}
+			if u.RefCount >= 0 {
+				n := int(u.RefCount)
+				v.Containers = &n
+			}
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// Networks lists networks and counts the containers attached to each. It
+// makes two calls: /networks and /containers/json?all=1, because the network
+// list has no Containers map and inspecting each network would be N+1.
+// Stopped containers count. The two calls are not atomic.
+func (c *httpClient) Networks(ctx context.Context) ([]Network, error) {
+	var rawNets []struct {
+		ID       string `json:"Id"`
+		Name     string `json:"Name"`
+		Driver   string `json:"Driver"`
+		Scope    string `json:"Scope"`
+		Internal bool   `json:"Internal"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/networks", nil, &rawNets); err != nil {
+		return nil, remapNotFound(err)
+	}
+	var rawContainers []struct {
+		NetworkSettings *struct {
+			Networks map[string]struct {
+				NetworkID string `json:"NetworkID"`
+			} `json:"Networks"`
+		} `json:"NetworkSettings"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/containers/json", url.Values{"all": {"1"}}, &rawContainers); err != nil {
+		return nil, remapNotFound(err)
+	}
+	uses := make(map[string]int)
+	for _, ct := range rawContainers {
+		if ct.NetworkSettings == nil {
+			continue
+		}
+		seen := make(map[string]bool, len(ct.NetworkSettings.Networks))
+		for _, n := range ct.NetworkSettings.Networks {
+			if n.NetworkID != "" && !seen[n.NetworkID] {
+				seen[n.NetworkID] = true
+				uses[n.NetworkID]++
+			}
+		}
+	}
+	out := make([]Network, 0, len(rawNets))
+	for _, r := range rawNets {
+		out = append(out, Network{
+			ID: shortID(r.ID), Name: r.Name, Driver: r.Driver, Scope: r.Scope,
+			Internal: r.Internal, Containers: uses[r.ID],
+		})
+	}
+	return out, nil
+}
+
 // remapNotFound turns the 404 and 409 that get maps to ErrContainerNotFound
 // into ErrDockerUnavailable, because list calls have no container to miss.
 func remapNotFound(err error) error {
