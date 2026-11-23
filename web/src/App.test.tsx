@@ -83,12 +83,18 @@ describe('routes', () => {
     ['/profiles/dev', 'Detail'],
     ['/profiles/dev/capacity', 'Capacity'],
     ['/profiles/dev/config', 'Configuration'],
-    ['/profiles/dev/log', 'Operation log'],
   ])('renders %s', (path, title) => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(fetchMock.mock.calls.every(([url]) => url === '/api/events')).toBe(true)
+  })
+
+  it('renders the operation log tab, loaded lazily', async () => {
+    renderApp('/profiles/dev/log')
+    expect(screen.getByRole('link', { name: 'Operation log' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('profile routes show the profile name and tabs', () => {
