@@ -46,7 +46,7 @@ The backend is the security perimeter, since controlling the VM and Docker socke
 | `<force-push-policy>` | `--force-with-lease` on feature branches only, never on `main` |
 | `<commit-convention>` | Undecided |
 | `<traceability-scheme>`, `<second-tracker>` | None |
-| Labels | Control-plane labels created in the repo via `.claude/skills/gh-issue-labels/scripts/bootstrap-labels.sh sonnet opus` (`agent-model:*`, `agent-effort:*`, `agent-claimed`, `do-not-dispatch`, `do-not-rebase`, `ready-to-dispatch`). Upstream descriptions exceeded GitHub's 100-char limit, so two were shortened in the vendored script. Type, priority, and triage labels (`needs-spec-input`, `blocked`, etc.) are not created yet. |
+| Labels | Control-plane labels created in the repo via `.claude/skills/gh-issue-labels/scripts/bootstrap-labels.sh sonnet opus` (`agent-model:*`, `agent-effort:*`, `agent-claimed`, `do-not-dispatch`, `do-not-rebase`, `ready-to-dispatch`). Upstream descriptions exceeded GitHub's 100-char limit, so two were shortened in the vendored script. Also created by hand: `priority:P0`-`P3`, `security`, `lane:plumbing`, `lane:leaf`, `needs-spec-input`, `blocked`, `groomed`. Type labels are GitHub's defaults (`bug`, `enhancement`). No `subsystem:*` labels yet. |
 
 The PR watcher lanes (`pr-comments`, `pr-checks`, `pr-cleanup`, `pr-dispatcher`) assume CI and PR review; they have nothing to do until those exist. `/gh-issue`, `/gh-issue-groom` and `/gh-issue-recon` work now.
 
