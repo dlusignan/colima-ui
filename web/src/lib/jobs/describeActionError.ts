@@ -1,5 +1,5 @@
 import { ApiError } from '@/lib/api/client'
-import type { JobAction } from '@/lib/api/types'
+import type { ProfileAction } from '@/lib/api/types'
 
 export interface ActionErrorDescription {
   message: string
@@ -15,7 +15,7 @@ export interface ActionErrorDescription {
  */
 export function describeActionError(
   error: unknown,
-  action: JobAction,
+  action: ProfileAction,
   profile: string,
 ): ActionErrorDescription {
   if (!(error instanceof ApiError)) {

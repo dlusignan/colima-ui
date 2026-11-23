@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
 import { queryKeys } from '@/lib/api/keys'
-import type { JobAction } from '@/lib/api/types'
+import type { ProfileAction } from '@/lib/api/types'
 import { describeActionError } from './describeActionError'
 import type { JobTracker } from './useJobTracker'
 import { useProfileAction } from './useProfileAction'
@@ -19,7 +19,7 @@ export function useProfileActionRunner(
   const mutation = useProfileAction(profile)
   return {
     pending: mutation.isPending,
-    run: (action: JobAction) =>
+    run: (action: ProfileAction) =>
       mutation.mutate(
         { action },
         {

@@ -150,6 +150,21 @@ describe('actions', () => {
     expect(screen.getByRole('link', { name: 'Log prod' })).toHaveAttribute('href', '/profiles/prod/log?job=j_9')
   })
 
+  it('shows the progress label of a create job and holds its failed outcome', async () => {
+    vi.spyOn(api, 'startProfile').mockRejectedValue(
+      new ApiError(409, 'profile_busy', 'x', { jobId: 'j_c' }),
+    )
+    vi.spyOn(api, 'getJob')
+      .mockResolvedValueOnce(jobFixture({ id: 'j_c', profile: 'prod', action: 'create' }))
+      .mockResolvedValue(
+        jobFixture({ id: 'j_c', profile: 'prod', action: 'create', state: 'failed', exitCode: 1 }),
+      )
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Start prod' }))
+    expect(await screen.findByText('creating')).toBeInTheDocument()
+    expect(await screen.findByText(/create failed \(exit 1\)/, {}, { timeout: 4000 })).toBeInTheDocument()
+  }, 10_000)
+
   it('refetches the list when a job finishes and holds a failed outcome', async () => {
     vi.spyOn(api, 'startProfile').mockResolvedValue({ jobId: 'j_2' })
     const get = vi

@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/command'
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
 import { useProfiles } from '@/lib/api/useProfiles'
-import type { JobAction } from '@/lib/api/types'
+import type { ProfileAction } from '@/lib/api/types'
 import { buildCommands, isUnavailable, type CommandIntent, type PaletteCommand } from '@/lib/commands/buildCommands'
 import type { ShortcutId } from '@/lib/commands/shortcuts'
 import { useGlobalShortcuts } from '@/lib/commands/useGlobalShortcuts'
@@ -24,11 +24,11 @@ import { themes, useTheme } from '@/lib/theme'
 
 interface ActionRequest {
   id: number
-  action: JobAction
+  action: ProfileAction
 }
 
-const VERB: Record<JobAction, string> = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' }
-const LABEL: Record<JobAction, string> = { start: 'Start', stop: 'Stop', restart: 'Restart' }
+const VERB: Record<ProfileAction, string> = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' }
+const LABEL: Record<ProfileAction, string> = { start: 'Start', stop: 'Stop', restart: 'Restart' }
 
 /**
  * Runs the latest request for one profile. It stays mounted after the request:
@@ -74,7 +74,7 @@ export function CommandPalette({ onOpenHelp }: { onOpenHelp: () => void }) {
   const { select: selectTheme } = useTheme()
 
   const [open, setOpen] = useState(false)
-  const [pick, setPick] = useState<JobAction | null>(null)
+  const [pick, setPick] = useState<ProfileAction | null>(null)
   const [confirm, setConfirm] = useState<{ profile: string; action: 'stop' | 'restart' } | null>(null)
   const [requests, setRequests] = useState<Record<string, ActionRequest>>({})
   const [failures, setFailures] = useState<Failure[]>([])
@@ -94,13 +94,13 @@ export function CommandPalette({ onOpenHelp }: { onOpenHelp: () => void }) {
     setPick(null)
   }
 
-  const dispatch = (profile: string, action: JobAction) => {
+  const dispatch = (profile: string, action: ProfileAction) => {
     setRequests((r) => ({ ...r, [profile]: { id: counter.current++, action } }))
     setAnnouncement(`${VERB[action]} ${profile}.`)
   }
 
   /** Start runs at once; Stop and Restart ask first, like the dashboard buttons. */
-  const requestAction = (name: string, action: JobAction) => {
+  const requestAction = (name: string, action: ProfileAction) => {
     const profile = profiles?.find((p) => p.name === name)
     if (!profile) return
     const off = actionsDisabled(profile.status, busy.has(name) || profile.activeJobId != null || isUnavailable(profile))

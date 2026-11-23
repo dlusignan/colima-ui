@@ -54,9 +54,9 @@ export interface ProfileCreated {
 }
 
 /** What a profile's buttons can start. */
-export type JobAction = 'start' | 'stop' | 'restart'
-/** What a job can be doing: a JobAction, or creating the profile (POST /api/profiles, 3.17). */
-export type AnyJobAction = JobAction | 'create'
+export type ProfileAction = 'start' | 'stop' | 'restart'
+/** What a job can be doing: a profile action, or creating the profile (POST /api/profiles, 3.17). */
+export type JobAction = ProfileAction | 'create'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {
@@ -67,7 +67,7 @@ export interface JobOutputLine {
 export interface Job {
   id: string
   profile: string
-  action: AnyJobAction
+  action: JobAction
   state: JobState
   startedAt: string
   finishedAt: string | null

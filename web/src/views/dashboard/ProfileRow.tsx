@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { StatusDot } from '@/components/StatusDot'
 import { formatBytes } from '@/lib/format'
-import type { JobAction, Profile } from '@/lib/api/types'
+import type { JobAction, Profile, ProfileAction } from '@/lib/api/types'
 import type { TrackedJob } from '@/lib/jobs/useJobTracker'
 import { logPath } from '@/views/log/logPath'
 import { ProfileActions } from '@/components/ProfileActions'
@@ -11,6 +11,7 @@ const PROGRESS: Record<JobAction, string> = {
   start: 'starting',
   stop: 'stopping',
   restart: 'restarting',
+  create: 'creating',
 }
 
 const WARNING_LABEL: Record<string, string> = {
@@ -34,7 +35,7 @@ interface ProfileRowProps {
   job: TrackedJob | undefined
   pending: boolean
   unavailable: boolean
-  onAction: (action: JobAction) => void
+  onAction: (action: ProfileAction) => void
   onDismiss: () => void
 }
 

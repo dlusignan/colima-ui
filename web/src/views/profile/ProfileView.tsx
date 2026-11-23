@@ -18,6 +18,7 @@ const PROGRESS: Record<JobAction, string> = {
   start: 'starting',
   stop: 'stopping',
   restart: 'restarting',
+  create: 'creating',
 }
 
 function listErrorText(error: unknown): string {
