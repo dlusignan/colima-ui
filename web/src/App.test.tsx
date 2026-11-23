@@ -80,7 +80,7 @@ describe('routes', () => {
 
   it.each([
     ['/', 'Dashboard'],
-    ['/profiles/dev', 'Detail'],
+    ['/profiles/dev', 'dev'],
   ])('renders %s', (path, title) => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
