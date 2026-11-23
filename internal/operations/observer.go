@@ -1,6 +1,5 @@
 package operations
 
-
 // JobLine is one output line as seen by an Observer.
 type JobLine struct {
 	JobID   string
@@ -42,4 +41,3 @@ func (m *Manager) notifyFinished(s JobSummary) {
 		safely(func() { o.JobFinished(s) })
 	}
 }
-

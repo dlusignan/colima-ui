@@ -292,3 +292,7 @@ func (o *recObserver) finishedCount() int {
 	defer o.mu.Unlock()
 	return len(o.finished)
 }
+
+func colimaExit(code int, tail []string) colima.Exit {
+	return colima.Exit{ExitCode: code, Tail: tail}
+}

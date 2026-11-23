@@ -1,6 +1,5 @@
 package operations
 
-
 // DefaultSubscriberBuffer is the per-subscriber live channel capacity.
 const DefaultSubscriberBuffer = 256
 
@@ -76,4 +75,3 @@ func (m *Manager) Subscribe(jobID string, afterSeq int) (*Subscription, error) {
 	j.subs[s] = struct{}{}
 	return s, nil
 }
-
