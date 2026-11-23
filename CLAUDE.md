@@ -4,7 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Colima UI is a local web interface on top of Colima (VM profiles: start/stop/restart/config, plus visibility into VM capacity vs. actual usage per container). **No code exists yet.** The repo contains only `C4_Architecture.md` (Draft 0.1, C4 levels 1–3; level 4 intentionally deferred until an implementation exists). There are no build, lint, or test commands yet; add them here once the Go module and React app are scaffolded. It is not a git repository yet.
+Colima UI is a local web interface on top of Colima (VM profiles: start/stop/restart/config, plus visibility into VM capacity vs. actual usage per container). The repo is hosted at github.com/dlusignan/colima-ui. The Go backend scaffold exists (module `github.com/dlusignan/colima-ui`, entry point `cmd/colima-ui`, one package per C4 backend component under `internal/`). Only `internal/httpapi` has code so far (loopback server and `GET /healthz`); the other packages hold just a package comment. `C4_Architecture.md` is Draft 0.1 (C4 levels 1–3; level 4 intentionally deferred).
+
+## Commands
+
+```sh
+go build ./...                                   # build everything
+go vet ./...                                     # static checks
+gofmt -l .                                       # must print nothing
+go test ./...                                    # all tests (add -race before pushing)
+go test ./internal/httpapi -run TestHealthz -v   # a single test
+go run ./cmd/colima-ui                           # run on 127.0.0.1:8787
+go run ./cmd/colima-ui -port 9000                # or set COLIMA_UI_PORT
+```
 
 `C4_Architecture.md` is the design source of truth. Keep it updated when decisions change, and check its "Open Questions" section (supported Colima versions, Incus/Kubernetes scope, history retention, multi-profile at launch, Linux support) before assuming an answer.
 
