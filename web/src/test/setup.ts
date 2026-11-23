@@ -20,6 +20,15 @@ export function fireMediaChange(matches: boolean) {
   })
 }
 
+// jsdom lacks these; cmdk (command palette) calls both.
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= ResizeObserverStub
+Element.prototype.scrollIntoView ??= function scrollIntoView() {}
+
 beforeEach(() => {
   current = { matches: true, listeners: new Set() }
   const state = current
