@@ -270,6 +270,58 @@ func TestVolumesNetworksErrors(t *testing.T) {
 	}
 }
 
+func TestInfoDecodesOnlyEngineFields(t *testing.T) {
+	var paths []string
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1.41/info":
+			w.Write([]byte(`{"ServerVersion":"27.3.1","OSType":"linux","OperatingSystem":"Synthetic Linux",
+			 "Architecture":"aarch64","NCPU":4,"MemTotal":8350000000,"Containers":5,
+			 "ContainersRunning":3,"ContainersPaused":1,"ContainersStopped":1,"Images":12,
+			 "Name":"synthetic-host","DockerRootDir":"/synthetic/docker"}`))
+		case "/v1.41/version":
+			w.Write([]byte(`{"ApiVersion":"1.47","Version":"27.3.1"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	e, err := newHTTPClient(sock).Info(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Engine{
+		Version: "27.3.1", APIVersion: "1.47", OS: "linux", Arch: "aarch64",
+		CPUs: 4, MemoryBytes: 8350000000,
+		Containers: ContainerCounts{Total: 5, Running: 3, Paused: 1, Stopped: 1},
+		Images:     12,
+	}
+	if e != want {
+		t.Fatalf("got %+v", e)
+	}
+	if strings.Contains(fmt.Sprintf("%+v", e), "synthetic") {
+		t.Fatalf("leak: %+v", e)
+	}
+	if len(paths) != 2 {
+		t.Fatalf("paths %v", paths)
+	}
+}
+
+func TestInfoErrors(t *testing.T) {
+	for _, failing := range []string{"/v1.41/info", "/v1.41/version"} {
+		sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == failing {
+				http.Error(w, `{"message":"x"}`, http.StatusNotFound)
+				return
+			}
+			w.Write([]byte(`{}`))
+		}))
+		if _, err := newHTTPClient(sock).Info(context.Background()); !errors.Is(err, ErrDockerUnavailable) {
+			t.Fatalf("%s 404: %v", failing, err)
+		}
+	}
+}
+
 func TestSocketMissingAndDialFailure(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.sock")
 	c := newHTTPClient(missing)
@@ -280,6 +332,7 @@ func TestSocketMissingAndDialFailure(t *testing.T) {
 		"images":     func() error { _, e := c.Images(context.Background()); return e },
 		"volumes":    func() error { _, e := c.Volumes(context.Background()); return e },
 		"networks":   func() error { _, e := c.Networks(context.Background()); return e },
+		"info":       func() error { _, e := c.Info(context.Background()); return e },
 	} {
 		err := call()
 		if !errors.Is(err, ErrDockerUnavailable) {
@@ -394,6 +447,7 @@ type fakeClient struct {
 
 func (f *fakeClient) Containers(context.Context) ([]Container, error) { return nil, nil }
 func (f *fakeClient) DiskUsage(context.Context) (DiskUsage, error)    { return DiskUsage{}, nil }
+func (f *fakeClient) Info(context.Context) (Engine, error)            { return Engine{}, nil }
 func (f *fakeClient) Images(context.Context) ([]Image, error)         { return nil, nil }
 func (f *fakeClient) Volumes(context.Context) ([]Volume, error)       { return nil, nil }
 func (f *fakeClient) Networks(context.Context) ([]Network, error)     { return nil, nil }

@@ -76,7 +76,7 @@ Error codes in use:
 | `405` | `method_not_allowed` | Known path, wrong method (`Allow` header set) | `{}` |
 | `409` | `profile_busy` | A job is running on that profile | `{"jobId":"<running job>"}` |
 | `409` | `job_not_running` | Cancel on a job that already finished | `{"jobId":"...","state":"succeeded"}` |
-| `409` | `invalid_state` | Start on a running profile, stop on a stopped one, container list on a stopped VM | `{"status":"running"}` |
+| `409` | `invalid_state` | Start on a running profile, stop on a stopped one, container list on a stopped VM, engine route on a running profile that does not use Docker | `{"status":"running"}` |
 | `422` | `validation_failed` | Configuration values rejected | `{"fields":{"cpu":"must be between 1 and 16"}}` |
 | `500` | `internal_error` | Unexpected server error; the text never carries internal detail | `{}` |
 | `502` | `colima_failed` | Colima could not be run or returned an error | `{}` |
@@ -536,6 +536,48 @@ Response `200`:
 This route only reads. There is no network create, remove or prune.
 
 Errors are the same as for 3.13.
+
+### 3.15 `GET /api/profiles/{name}/engine`
+
+Token: yes. Request body: none. Used by the Docker tab to show the engine facts and disk usage of the VM.
+
+Response `200`:
+
+```json
+{
+  "version": "27.3.1",
+  "apiVersion": "1.47",
+  "os": "linux",
+  "arch": "aarch64",
+  "cpus": 4,
+  "memoryBytes": 8350000000,
+  "containers": { "total": 5, "running": 3, "paused": 0, "stopped": 2 },
+  "images": 12,
+  "diskUsage": {
+    "imagesBytes": 1200000000,
+    "containersBytes": 4000000,
+    "volumesBytes": 73400320,
+    "buildCacheBytes": 0,
+    "layersBytes": 900000000
+  }
+}
+```
+
+- `version` is the engine's version. `os` is the engine's OS type (`linux`), `arch` its architecture and `cpus` and `memoryBytes` what the engine sees inside the VM.
+- `apiVersion` is the highest API version the engine supports, read from the engine's version call. It is not the API version this backend speaks to the engine, which is older and fixed.
+- `containers` and `images` are the engine's own counts. They are a snapshot taken when the engine answers, so they can differ slightly from the list routes, which are separate calls.
+- `diskUsage` is the engine's disk accounting in bytes, the same figures the sampler records for the capacity charts. `layersBytes` counts shared layers once, so it is not the sum of the image sizes.
+- The response is a fixed subset. It never contains the engine's host name, its data directory, registry settings or any other host path.
+- The engine facts and the disk usage are read in parallel under one 15 second budget. If either read fails, the route answers `502`.
+
+This route only reads. There is no prune or cleanup.
+
+Errors:
+
+- `404` `profile_not_found`.
+- `409` `invalid_state`: the VM is stopped (`details.status` is `stopped`).
+- `409` `invalid_state`: the VM is running but the profile does not use the Docker runtime, so there is no engine to describe. `details` is `{"runtime":"not_docker"}`. This differs from the list routes, which return an empty list.
+- `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering.
 
 ## 4. Routes that do not exist
 

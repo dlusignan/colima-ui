@@ -123,6 +123,7 @@ const mapped: Record<string, Mapping> = {
   '3.11#0': { shape: s.actionListShape },
   '3.13#0': { shape: s.volumeListShape },
   '3.14#0': { shape: s.networkListShape },
+  '3.15#0': { shape: s.engineInfoShape },
   '5.3#0': { shape: s.jobOutputEventShape },
   '5.3#1': { shape: s.jobFinishedEventShape },
   '5.3#2': { shape: s.metricEventShape },

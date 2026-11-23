@@ -254,6 +254,47 @@ func (c *httpClient) DiskUsage(ctx context.Context) (DiskUsage, error) {
 	return du, nil
 }
 
+// Info reads the engine facts. It decodes only the fields of Engine from
+// /info, so the host name and the data root never leave this function. The
+// engine's API version comes from a second, sequential call to /version,
+// because /info has no such field and the client pins an older API.
+func (c *httpClient) Info(ctx context.Context) (Engine, error) {
+	var raw struct {
+		ServerVersion     string `json:"ServerVersion"`
+		OSType            string `json:"OSType"`
+		Architecture      string `json:"Architecture"`
+		NCPU              int    `json:"NCPU"`
+		MemTotal          int64  `json:"MemTotal"`
+		Containers        int    `json:"Containers"`
+		ContainersRunning int    `json:"ContainersRunning"`
+		ContainersPaused  int    `json:"ContainersPaused"`
+		ContainersStopped int    `json:"ContainersStopped"`
+		Images            int    `json:"Images"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/info", nil, &raw); err != nil {
+		return Engine{}, remapNotFound(err)
+	}
+	var ver struct {
+		APIVersion string `json:"ApiVersion"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/version", nil, &ver); err != nil {
+		return Engine{}, remapNotFound(err)
+	}
+	return Engine{
+		Version:     raw.ServerVersion,
+		APIVersion:  ver.APIVersion,
+		OS:          raw.OSType,
+		Arch:        raw.Architecture,
+		CPUs:        raw.NCPU,
+		MemoryBytes: raw.MemTotal,
+		Containers: ContainerCounts{
+			Total: raw.Containers, Running: raw.ContainersRunning,
+			Paused: raw.ContainersPaused, Stopped: raw.ContainersStopped,
+		},
+		Images: raw.Images,
+	}, nil
+}
+
 // Images lists images and counts the containers that use each one. It makes
 // two calls: /images/json and /containers/json?all=1. The Containers field of
 // /images/json is -1 on API v1.41, so the count is taken from each
