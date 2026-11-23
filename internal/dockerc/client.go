@@ -31,6 +31,26 @@ type Image struct {
 	Containers int       // containers, running or not, whose ImageID is this image
 }
 
+// Volume is one entry of the volume list. It has no mountpoint field on
+// purpose, so a host path cannot leak into a response.
+type Volume struct {
+	Name       string
+	Driver     string
+	Created    time.Time // UTC; zero when Docker's value could not be parsed
+	SizeBytes  *int64    // nil when Docker has no usage figure (absent or negative)
+	Containers *int      // containers, running or not, that mount it; nil when unknown
+}
+
+// Network is one entry of the network list.
+type Network struct {
+	ID         string // 12-char short form
+	Name       string
+	Driver     string
+	Scope      string
+	Internal   bool
+	Containers int // containers, running or not, attached to it
+}
+
 // Port is one port entry of a container. An empty HostIP and a zero HostPort
 // mean the port is exposed but not published.
 type Port struct {
@@ -71,6 +91,12 @@ type Client interface {
 	// list, not from Docker's images Containers field, which is -1 on API
 	// v1.41.
 	Images(ctx context.Context) ([]Image, error)
+	// Volumes lists all volumes from /system/df, the only call that carries
+	// sizes and reference counts.
+	Volumes(ctx context.Context) ([]Volume, error)
+	// Networks lists all networks. The attached count comes from the
+	// container list, because the network list has no Containers map.
+	Networks(ctx context.Context) ([]Network, error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,

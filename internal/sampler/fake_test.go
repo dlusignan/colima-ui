@@ -284,6 +284,10 @@ func (d *fakeDocker) DiskUsage(ctx context.Context) (dockerc.DiskUsage, error) {
 
 func (d *fakeDocker) Images(context.Context) ([]dockerc.Image, error) { return nil, nil }
 
+func (d *fakeDocker) Volumes(context.Context) ([]dockerc.Volume, error) { return nil, nil }
+
+func (d *fakeDocker) Networks(context.Context) ([]dockerc.Network, error) { return nil, nil }
+
 func (d *fakeDocker) set(f func(d *fakeDocker)) { d.mu.Lock(); f(d); d.mu.Unlock() }
 func (d *fakeDocker) diskCallCount() int        { d.mu.Lock(); defer d.mu.Unlock(); return d.diskCalls }
 
