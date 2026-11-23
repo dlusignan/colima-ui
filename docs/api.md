@@ -368,7 +368,7 @@ Response `200`:
 - `id` is the value used as `scope` in the metrics route and in `metric` events.
 - `state` is the Docker state string (`running`, `exited`, `paused`, and so on).
 - `cpuPercent` and `memoryBytes` are current usage read live from the Docker Client when the request is handled. For a container that is not running both are `0`.
-- A running VM with no containers returns `{"containers":[]}`.
+- A running VM with no containers returns `{"containers":[]}`. So does a running profile whose runtime is not Docker.
 
 This route only reads. There is no container control.
 

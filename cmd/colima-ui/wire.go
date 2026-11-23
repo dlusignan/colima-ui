@@ -9,6 +9,7 @@ import (
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 	"github.com/dlusignan/colima-ui/internal/config"
+	"github.com/dlusignan/colima-ui/internal/dockerc"
 	"github.com/dlusignan/colima-ui/internal/httpapi"
 	"github.com/dlusignan/colima-ui/internal/operations"
 	"github.com/dlusignan/colima-ui/internal/profiles"
@@ -42,6 +43,7 @@ type app struct {
 	// #23 metrics
 
 	// #38 containers
+	containers dockerc.Provider
 
 	// #39 actions
 
@@ -101,6 +103,7 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir func() 
 	// #23 metrics
 
 	// #38 containers
+	a.containers = dockerc.NewProvider(dockerc.NewColimaResolver(runner))
 
 	// #39 actions
 
@@ -127,6 +130,7 @@ func (a *app) handler() http.Handler {
 	// #23 metrics
 
 	// #38 containers
+	opts = append(opts, httpapi.WithContainers(a.gate, a.containers))
 
 	// #39 actions
 
