@@ -19,8 +19,9 @@ type logOnce struct {
 func newLogOnce(l *slog.Logger) *logOnce { return &logOnce{log: l, bad: map[logKey]bool{}} }
 
 // set reports the current state of one condition. bad moving from false to
-// true warns, and from true to false logs the recovery.
-func (l *logOnce) set(k logKey, bad bool, msg string, err error) {
+// true warns, and from true to false logs the recovery. It returns true when
+// a new problem started.
+func (l *logOnce) set(k logKey, bad bool, msg string, err error) bool {
 	l.mu.Lock()
 	was := l.bad[k]
 	if bad {
@@ -39,6 +40,7 @@ func (l *logOnce) set(k logKey, bad bool, msg string, err error) {
 	case !bad && was:
 		l.log.Info("recovered: "+msg, "profile", k.profile, "source", k.what)
 	}
+	return bad && !was
 }
 
 // forget drops the state of a profile without logging.

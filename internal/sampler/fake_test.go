@@ -157,12 +157,20 @@ type fakeLister struct {
 	targets []Target
 	err     error
 	calls   int
+	hang    bool // Targets waits for ctx to end
 }
 
-func (l *fakeLister) Targets(context.Context) ([]Target, error) {
+func (l *fakeLister) Targets(ctx context.Context) ([]Target, error) {
+	l.mu.Lock()
+	l.calls++
+	hang := l.hang
+	l.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.calls++
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -228,9 +236,16 @@ type fakeDocker struct {
 	diskErr    error
 	diskBlock  chan struct{} // when non-nil DiskUsage waits for it or ctx
 	diskCalls  int
+	listHook   func() // optional, called by Containers before it answers
 }
 
 func (d *fakeDocker) Containers(context.Context) ([]dockerc.Container, error) {
+	d.mu.Lock()
+	hook := d.listHook
+	d.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.listErr != nil {
@@ -299,16 +314,27 @@ type fakeProvider struct {
 	by    map[string]dockerc.Client
 	err   error
 	calls map[string]int
+	block chan struct{} // when non-nil For waits for it or ctx
 }
 
 func newFakeProvider() *fakeProvider {
 	return &fakeProvider{by: map[string]dockerc.Client{}, calls: map[string]int{}}
 }
 
-func (p *fakeProvider) For(_ context.Context, profile string) (dockerc.Client, error) {
+func (p *fakeProvider) For(ctx context.Context, profile string) (dockerc.Client, error) {
+	p.mu.Lock()
+	p.calls[profile]++
+	block := p.block
+	p.mu.Unlock()
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.calls[profile]++
 	if p.err != nil {
 		return nil, p.err
 	}

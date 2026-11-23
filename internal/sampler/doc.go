@@ -18,6 +18,9 @@
 //     value older than three minutes becomes NULL.
 //  3. A container row carries cpu and memory only. A container is recorded
 //     from its second sighting, because the first reading has no CPU baseline.
+//     For the same reason VM cpu is NULL (and no metric event is published)
+//     until a baseline exists: on the first tick of a profile and after the
+//     engine was unavailable.
 //
 // Unknown is never recorded as zero. A stopped profile, or a running profile
 // whose runtime is not docker, is skipped without rows, events or per tick

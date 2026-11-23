@@ -27,6 +27,9 @@ type Options struct {
 	ListEvery int           // ticks between profile list refreshes, default 6
 	Clock     Clock         // default RealClock
 	Logger    *slog.Logger  // default slog.Default()
+	// ListTimeout bounds one profile list call, which runs on the loop
+	// goroutine. Default 10 s.
+	ListTimeout time.Duration
 }
 
 // Sampler is the Metrics Sampler.
@@ -38,10 +41,12 @@ type Sampler struct {
 	clock     Clock
 	interval  time.Duration
 	listEvery int
+	listTO    time.Duration
 	logs      *logOnce
 	log       *slog.Logger
 
 	startOnce sync.Once
+	closeOnce sync.Once
 	cancel    context.CancelFunc
 	cancelMu  sync.Mutex
 	wg        sync.WaitGroup
@@ -58,7 +63,13 @@ type Sampler struct {
 	tickHook func(n int) // tests: called after each tick has launched its workers
 }
 
-type profState struct{ busy atomic.Bool }
+// profState is kept for the life of the sampler, so per-profile single flight
+// survives a stop and start of the profile. gen is bumped by Forget: a worker
+// that began under an older generation drops its result.
+type profState struct {
+	busy atomic.Bool
+	gen  atomic.Uint64
+}
 
 // New builds a Sampler. Sources that have a Close method are closed by Stop.
 func New(lister Lister, sources []Source, sink Sink, pub Publisher, opts Options) *Sampler {
@@ -68,6 +79,9 @@ func New(lister Lister, sources []Source, sink Sink, pub Publisher, opts Options
 	if opts.ListEvery <= 0 {
 		opts.ListEvery = defaultListEvery
 	}
+	if opts.ListTimeout <= 0 {
+		opts.ListTimeout = 10 * time.Second
+	}
 	if opts.Clock == nil {
 		opts.Clock = RealClock{}
 	}
@@ -76,7 +90,7 @@ func New(lister Lister, sources []Source, sink Sink, pub Publisher, opts Options
 	}
 	return &Sampler{
 		lister: lister, sources: sources, sink: sink, pub: pub,
-		clock: opts.Clock, interval: opts.Interval, listEvery: opts.ListEvery,
+		clock: opts.Clock, interval: opts.Interval, listEvery: opts.ListEvery, listTO: opts.ListTimeout,
 		logs: newLogOnce(opts.Logger), log: opts.Logger,
 		refresh: make(chan struct{}, 1),
 		known:   map[string]string{}, profs: map[string]*profState{},
@@ -96,9 +110,12 @@ func (s *Sampler) Start(ctx context.Context) {
 	})
 }
 
-// Stop cancels the loop and every worker, waits for them, then closes the
-// sources that can be closed. It is safe to call more than once and before
-// Start. An in-flight tick is dropped without writing.
+// Stop cancels the loop and every worker, waits for them, and closes the
+// sources that can be closed. Background reads of the sources are cancelled
+// before the wait, so Stop does not sit out a slow engine call. It is safe to
+// call more than once and before Start. An in-flight tick is dropped without
+// writing. The loop also closes the sources by itself when its context is
+// cancelled, so a cancelled parent context does not leak their goroutines.
 func (s *Sampler) Stop() {
 	// Burn the Once so a later Start is a no-op.
 	s.startOnce.Do(func() {})
@@ -108,12 +125,19 @@ func (s *Sampler) Stop() {
 	if cancel != nil {
 		cancel()
 	}
+	s.closeSources()
 	s.wg.Wait()
-	for _, src := range s.sources {
-		if c, ok := src.(interface{ Close() }); ok {
-			c.Close()
+}
+
+// closeSources closes every source that has a Close method, once.
+func (s *Sampler) closeSources() {
+	s.closeOnce.Do(func() {
+		for _, src := range s.sources {
+			if c, ok := src.(interface{ Close() }); ok {
+				c.Close()
+			}
 		}
-	}
+	})
 }
 
 // Refresh asks for a profile list refresh soon, for example after a job
@@ -127,6 +151,7 @@ func (s *Sampler) Refresh() {
 
 func (s *Sampler) run(ctx context.Context) {
 	defer s.wg.Done()
+	defer s.closeSources()
 	tk := s.clock.NewTicker(s.interval)
 	defer tk.Stop()
 	n := 0
@@ -179,7 +204,9 @@ func (s *Sampler) onRefresh(ctx context.Context) {
 }
 
 func (s *Sampler) syncTargets(ctx context.Context) {
-	targets, err := s.lister.Targets(ctx)
+	lctx, cancel := context.WithTimeout(ctx, s.listTO)
+	targets, err := s.lister.Targets(lctx)
+	cancel()
 	k := logKey{"", "list"}
 	if err != nil {
 		if ctx.Err() == nil {
@@ -232,7 +259,9 @@ func (s *Sampler) forgetProfile(name string) {
 		src.Forget(name)
 	}
 	s.logs.forget(name)
-	delete(s.profs, name)
+	if ps := s.profs[name]; ps != nil {
+		ps.gen.Add(1) // an in-flight worker must not write after this
+	}
 }
 
 func (s *Sampler) launch(ctx context.Context, t Target, at time.Time) {
@@ -247,11 +276,12 @@ func (s *Sampler) launch(ctx context.Context, t Target, at time.Time) {
 	}
 	s.wg.Add(1)
 	s.active.Add(1)
+	gen := ps.gen.Load()
 	go func() {
 		defer s.wg.Done()
 		defer s.active.Add(-1)
 		defer ps.busy.Store(false)
-		s.sample(ctx, t, at)
+		s.sample(ctx, t, at, ps, gen)
 	}()
 }
 
@@ -262,7 +292,7 @@ type sourceResult struct {
 
 // sample runs every source for one profile concurrently, merges what came
 // back, writes one batch and publishes.
-func (s *Sampler) sample(ctx context.Context, t Target, at time.Time) {
+func (s *Sampler) sample(ctx context.Context, t Target, at time.Time, ps *profState, gen uint64) {
 	results := make([]sourceResult, len(s.sources))
 	var wg sync.WaitGroup
 	for i, src := range s.sources {
@@ -276,8 +306,8 @@ func (s *Sampler) sample(ctx context.Context, t Target, at time.Time) {
 		}()
 	}
 	wg.Wait()
-	if ctx.Err() != nil {
-		return
+	if ctx.Err() != nil || ps.gen.Load() != gen {
+		return // cancelled, or the profile was forgotten while we ran
 	}
 
 	var m Partial
@@ -314,7 +344,7 @@ func (s *Sampler) sample(ctx context.Context, t Target, at time.Time) {
 		return
 	}
 	err := s.sink.AppendSamples(ctx, rows)
-	if ctx.Err() != nil {
+	if ctx.Err() != nil || ps.gen.Load() != gen {
 		return
 	}
 	s.logs.set(logKey{t.Name, "store"}, err != nil, "writing history failed", err)
@@ -326,20 +356,23 @@ func (s *Sampler) sample(ctx context.Context, t Target, at time.Time) {
 }
 
 // noteSource tracks the outage state of one source. A profile that turned out
-// to be stopped or not docker is not an outage, it only asks for a re-list.
+// to be stopped or not docker is not an outage, it only asks for a re-list,
+// and the list then drops the profile, so that is self limiting. A docker
+// outage asks for a re-list only when it starts, so a long outage does not
+// spawn colima on every tick.
 func (s *Sampler) noteSource(profile, source string, err error) {
 	k := logKey{profile, source}
 	switch {
 	case err == nil:
 		s.logs.set(k, false, source+" source", nil)
 	case errors.Is(err, context.Canceled):
-		// shutting down
+		// Guard only: sample returns before this when the sampler is stopping.
 	case errors.Is(err, dockerc.ErrVMNotRunning), errors.Is(err, dockerc.ErrRuntimeNotDocker):
 		s.relist.Store(true)
 	default:
-		if errors.Is(err, dockerc.ErrDockerUnavailable) {
+		started := s.logs.set(k, true, source+" source failed", err)
+		if started && errors.Is(err, dockerc.ErrDockerUnavailable) {
 			s.relist.Store(true)
 		}
-		s.logs.set(k, true, source+" source failed", err)
 	}
 }

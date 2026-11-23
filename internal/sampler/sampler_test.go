@@ -36,8 +36,11 @@ func TestFirstTickWritesVMRowOnlyThenContainers(t *testing.T) {
 	if len(rows) != 1 || rows[0].Scope != "vm" {
 		t.Fatalf("first tick rows = %+v, want one vm row", rows)
 	}
-	if rows[0].CPUPercent == nil || *rows[0].CPUPercent != 0 {
-		t.Fatalf("first vm cpu = %v, want 0", rows[0].CPUPercent)
+	if rows[0].CPUPercent != nil {
+		t.Fatalf("first vm cpu = %v, want NULL (no baseline)", *rows[0].CPUPercent)
+	}
+	if len(h.pub.metrics()) != 0 {
+		t.Fatal("no metric event without a cpu figure")
 	}
 	if rows[0].MemoryBytes == nil || *rows[0].MemoryBytes != 20 {
 		t.Fatalf("first vm memory = %v, want 20", rows[0].MemoryBytes)
@@ -200,8 +203,8 @@ func TestRestartResetsBaseline(t *testing.T) {
 		t.Fatalf("c1 rows after restart tick = %d, want still 1 (new baseline)", len(rows))
 	}
 	last := h.sink.scope("synthetic-a", "vm")
-	if *last[len(last)-1].CPUPercent != 0 {
-		t.Fatalf("restart vm cpu must be 0, got %v", *last[len(last)-1].CPUPercent)
+	if last[len(last)-1].CPUPercent != nil {
+		t.Fatalf("restart vm cpu must be NULL, got %v", *last[len(last)-1].CPUPercent)
 	}
 	d2.advance(25, 9)
 	h.tick()
