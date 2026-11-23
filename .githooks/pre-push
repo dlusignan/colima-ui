@@ -1,0 +1,26 @@
+#!/bin/sh
+# Pre-push gate: runs `make check` from the root of the worktree being pushed.
+# Skips the gate when the push only deletes branches/tags.
+# No bypass is offered; agents must never use --no-verify.
+
+only_deletes=1
+have_refs=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+	have_refs=1
+	case "$local_sha" in
+	*[!0]*) only_deletes=0 ;;
+	esac
+done
+
+if [ "$have_refs" = 1 ] && [ "$only_deletes" = 1 ]; then
+	echo "pre-push: delete-only push, skipping make check"
+	exit 0
+fi
+
+root="$(git rev-parse --show-toplevel)" || exit 1
+cd "$root" || exit 1
+echo "pre-push: running make check"
+if ! make check; then
+	echo "pre-push: make check failed, push blocked" >&2
+	exit 1
+fi
