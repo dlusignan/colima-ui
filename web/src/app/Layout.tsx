@@ -7,6 +7,7 @@ import { ThemeSwitcher } from '@/components/ThemeSwitcher'
 import { EventStreamProvider } from '@/lib/events/EventStreamProvider'
 import { Toaster } from '@/lib/toast/Toaster'
 import { ToastProvider } from '@/lib/toast/ToastProvider'
+import { CreateProfileProvider } from '@/views/create/CreateProfileProvider'
 import { AuthGate } from './AuthGate'
 import { ErrorBoundary } from './ErrorBoundary'
 
@@ -39,10 +40,12 @@ export function Layout() {
         <main className="mx-auto max-w-5xl p-6">
           <AuthGate>
             <EventStreamProvider>
-              <CommandPalette onOpenHelp={() => setHelpOpen(true)} />
-              <ErrorBoundary key={pathname}>
-                <Outlet />
-              </ErrorBoundary>
+              <CreateProfileProvider>
+                <CommandPalette onOpenHelp={() => setHelpOpen(true)} />
+                <ErrorBoundary key={pathname}>
+                  <Outlet />
+                </ErrorBoundary>
+              </CreateProfileProvider>
             </EventStreamProvider>
           </AuthGate>
         </main>

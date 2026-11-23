@@ -21,7 +21,8 @@ Colima UI runs on your machine as a single binary. It reads Colima's own state (
 11. **Volumes and Networks in the Docker tab.** A Volumes section (name, driver, size, when created and how many containers mount each, with unused volumes marked and a dash where the engine has no figure) and a Networks section (name, driver, scope, whether it is internal and how many containers are attached, stopped ones included). Each section loads, fails and retries on its own.
 12. **Engine overview in the Docker tab.** An Overview card at the top with the Docker and API versions, OS and architecture, container counts, image count and the engine's CPUs and memory, plus a disk usage breakdown (images, containers, volumes and build cache) as a stacked bar with a text legend. A profile that does not use Docker shows a short note instead. It refreshes every 30 seconds.
 13. **Container logs.** A Logs button on each container row opens a read-only snapshot of its recent output (the last 200 lines, or 100, 500 or 1000), with a Refresh button and a Copy button. Stopped containers work too. Lines show as plain text with Docker's timestamps, and the dialog says when some output is not shown. There is no live follow mode.
-14. **Toast notifications.** Short messages appear in the top left corner of the window: success and info toasts disappear after 5 seconds, error toasts stay until you close them. They pause while you hover over them, focus them or switch to another tab, show at most three at once (the rest wait their turn), and `F6` moves keyboard focus into them. Nothing in the app shows a toast yet; the existing inline messages move over in a follow-up.
+14. **New profile dialog.** A New profile button on the dashboard and a Create profile command in the palette open a dialog with the basic settings: name, CPUs, memory, disk, root disk, runtime, VM type, architecture, mount type and Kubernetes with an optional version. A field left empty uses Colima's default. The browser and the server both validate, and the server's messages show next to the field. The first start downloads a VM image and can take several minutes, so on success the app opens that job's operation log.
+15. **Toast notifications.** Short messages appear in the top left corner of the window: success and info toasts disappear after 5 seconds, error toasts stay until you close them. They pause while you hover over them, focus them or switch to another tab, show at most three at once (the rest wait their turn), and `F6` moves keyboard focus into them. Nothing in the app shows a toast yet; the existing inline messages move over in a follow-up.
 
 If the history file cannot be opened (for example a newer version wrote it), the binary refuses to start and says so, because the file holds history only and can be deleted to start fresh.
 
@@ -29,7 +30,7 @@ If the history file cannot be opened (for example a newer version wrote it), the
 
 The enhanced Docker view (issues #78 to #86 and #92) is done. Nothing else from that plan is left.
 
-Also under discussion: creating a new profile (VM) from the interface. The backend route `POST /api/profiles` is done; the creation dialog (issue #99) is planned, starting with the basic settings. Colima has no rename command, so renaming is not planned.
+Colima has no rename command, so renaming is not planned. Advanced creation settings (mounts and environment variables) are not built yet.
 
 This list moves from "planned" to "done" as each issue merges.
 

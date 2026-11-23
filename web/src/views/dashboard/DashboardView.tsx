@@ -5,6 +5,7 @@ import { useProfiles } from '@/lib/api/useProfiles'
 import { useJobTracker } from '@/lib/jobs/useJobTracker'
 import { ProfileTable, ProfileTableSkeleton } from './ProfileTable'
 import { WarningBanners } from '@/components/WarningBanners'
+import { useCreateProfile } from '@/views/create/createProfileContext'
 
 interface Failure {
   id: number
@@ -27,6 +28,7 @@ export function DashboardView() {
   const [failures, setFailures] = useState<Failure[]>([])
   const [announcement, setAnnouncement] = useState('')
   const nextId = useRef(0)
+  const createProfile = useCreateProfile()
 
   const onError = (message: string) =>
     setFailures((f) => [...f, { id: nextId.current++, message }])
@@ -87,7 +89,12 @@ export function DashboardView() {
 
   return (
     <section className="flex flex-col gap-3">
-      <h2 className="text-xl font-semibold">Dashboard</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold">Dashboard</h2>
+        <Button size="sm" onClick={createProfile.open}>
+          New profile
+        </Button>
+      </div>
       {failures.length > 0 && (
         <div role="alert" className="flex flex-col gap-1">
           {failures.map((f) => (
