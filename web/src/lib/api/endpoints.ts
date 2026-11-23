@@ -9,9 +9,11 @@ import type {
   JobRef,
   Metrics,
   MetricsParams,
+  NetworkList,
   Profile,
   ProfileConfig,
   ProfileList,
+  VolumeList,
 } from './types'
 
 const enc = encodeURIComponent
@@ -58,6 +60,10 @@ export const api = {
     request<ContainerList>('GET', `/api/profiles/${enc(name)}/containers`, { signal }),
   getImages: (name: string, signal?: AbortSignal) =>
     request<ImageList>('GET', `/api/profiles/${enc(name)}/images`, { signal }),
+  getVolumes: (name: string, signal?: AbortSignal) =>
+    request<VolumeList>('GET', `/api/profiles/${enc(name)}/volumes`, { signal }),
+  getNetworks: (name: string, signal?: AbortSignal) =>
+    request<NetworkList>('GET', `/api/profiles/${enc(name)}/networks`, { signal }),
   getActions: (name: string, limit?: number, signal?: AbortSignal) =>
     request<ActionList>('GET', withQuery(`/api/profiles/${enc(name)}/actions`, { limit }), {
       signal,
