@@ -181,6 +181,9 @@ func (j *jobRoutes) get(w http.ResponseWriter, r *http.Request) error {
 // exit returns whatever the job ended as, which is a 409 job_not_running, the
 // same answer a cancel a millisecond later would get.
 func (j *jobRoutes) cancel(w http.ResponseWriter, r *http.Request) error {
+	if err := emptyBody(w, r); err != nil {
+		return err
+	}
 	id := r.PathValue("id")
 	if !validJobID(id) {
 		return jobNotFound("")

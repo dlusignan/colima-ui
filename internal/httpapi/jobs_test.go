@@ -588,3 +588,19 @@ func TestShutdownBehaviour(t *testing.T) {
 	rec := call(t, jobsServer(mgr, &fakeGate{status: "stopped"}), "POST", "/api/profiles/dev/start", "")
 	wantErr(t, rec, 503, "shutting_down")
 }
+
+func TestCancelRejectsBody(t *testing.T) {
+	m := &fakeMgr{cancel: func(context.Context, string) (operations.JobSummary, error) { return cancelled(), nil }}
+	h := jobsServer(m, &fakeGate{})
+	for _, b := range []string{`{"force":true}`, `x`} {
+		wantErr(t, call(t, h, "POST", "/api/jobs/j_1/cancel", b), 400, "bad_request")
+	}
+	if len(m.calls) != 0 {
+		t.Fatalf("manager reached: %v", m.calls)
+	}
+	for _, b := range []string{"", "{}"} {
+		if rec := call(t, h, "POST", "/api/jobs/j_1/cancel", b); rec.Code != 200 {
+			t.Fatalf("%q: %d", b, rec.Code)
+		}
+	}
+}
