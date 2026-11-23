@@ -87,7 +87,9 @@ describe('routes', () => {
     renderApp(path)
     expect(screen.getByRole('heading', { name: title })).toBeInTheDocument()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    expect(fetchMock.mock.calls.every(([url]) => url === '/api/events')).toBe(true)
+    expect(
+      fetchMock.mock.calls.every(([url]) => url === '/api/events' || url === '/api/profiles'),
+    ).toBe(true)
   })
 
   it('renders the operation log tab, loaded lazily', async () => {
