@@ -435,6 +435,42 @@ Response `200`, newest first:
 
 Errors: `400` `invalid_range` (`limit` below 1 or not an integer), `404` `profile_not_found`.
 
+### 3.12 `GET /api/profiles/{name}/images`
+
+Token: yes. Request body: none. Used by the Docker tab to list the images on the VM.
+
+Response `200`:
+
+```json
+{
+  "images": [
+    {
+      "id": "3f9a1c0b7d2e",
+      "tags": ["nginx:1.27"],
+      "sizeBytes": 192000000,
+      "createdAt": "2026-05-02T09:41:07Z",
+      "containers": 2
+    }
+  ]
+}
+```
+
+- `id` is the first 12 characters of the image ID, without the `sha256:` prefix.
+- `tags` is `[]` for an untagged image. It is never null.
+- `sizeBytes` is the image size with shared layers counted in every image that uses them, so the sum over all images can exceed the disk use in the engine overview.
+- `createdAt` is the creation time as RFC 3339 in UTC.
+- `containers` is the number of containers, running or not, that use the image. It is counted from each container's image ID, so a container created from a tag that has since moved still counts against the old image. The count is a snapshot: a container started while the request runs can be missed.
+- The list is sorted by first tag (untagged images last), then by `id`.
+- A running VM with no images returns `{"images":[]}`. So does a running profile whose runtime is not Docker.
+
+This route only reads. There is no image delete, pull or prune.
+
+Errors:
+
+- `404` `profile_not_found`.
+- `409` `invalid_state`: the VM is stopped (`details.status` is `stopped`).
+- `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering.
+
 ## 4. Routes that do not exist
 
 By design the API has no route for arbitrary commands, container control, profile creation or deletion, YAML editing, or profile logs. A separate "current usage" route is also not defined, see 3.9.

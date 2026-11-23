@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -153,6 +154,11 @@ func shortID(id string) string {
 	return id
 }
 
+// imageShortID drops the "sha256:" prefix, then takes 12 characters.
+func imageShortID(id string) string {
+	return shortID(strings.TrimPrefix(id, "sha256:"))
+}
+
 func trimSlash(s string) string {
 	if len(s) > 0 && s[0] == '/' {
 		return s[1:]
@@ -246,4 +252,54 @@ func (c *httpClient) DiskUsage(ctx context.Context) (DiskUsage, error) {
 		du.BuildCacheBytes += pos(b.Size)
 	}
 	return du, nil
+}
+
+// Images lists images and counts the containers that use each one. It makes
+// two calls: /images/json and /containers/json?all=1. The Containers field of
+// /images/json is -1 on API v1.41, so the count is taken from each
+// container's ImageID instead. The two calls are not atomic, so the count is
+// a snapshot.
+func (c *httpClient) Images(ctx context.Context) ([]Image, error) {
+	var rawImages []struct {
+		ID       string   `json:"Id"`
+		RepoTags []string `json:"RepoTags"`
+		Size     int64    `json:"Size"`
+		Created  int64    `json:"Created"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/images/json", nil, &rawImages); err != nil {
+		return nil, remapNotFound(err)
+	}
+	var rawContainers []struct {
+		ImageID string `json:"ImageID"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/containers/json", url.Values{"all": {"1"}}, &rawContainers); err != nil {
+		return nil, remapNotFound(err)
+	}
+	uses := make(map[string]int, len(rawContainers))
+	for _, ct := range rawContainers {
+		uses[ct.ImageID]++
+	}
+	out := make([]Image, 0, len(rawImages))
+	for _, r := range rawImages {
+		img := Image{
+			ID: imageShortID(r.ID), Tags: []string{}, SizeBytes: r.Size,
+			Created: time.Unix(r.Created, 0).UTC(), Containers: uses[r.ID],
+		}
+		for _, tag := range r.RepoTags {
+			if tag != "" && tag != "<none>:<none>" {
+				img.Tags = append(img.Tags, tag)
+			}
+		}
+		out = append(out, img)
+	}
+	return out, nil
+}
+
+// remapNotFound turns the 404 and 409 that get maps to ErrContainerNotFound
+// into ErrDockerUnavailable, because list calls have no container to miss.
+func remapNotFound(err error) error {
+	if errors.Is(err, ErrContainerNotFound) {
+		return fmt.Errorf("%w: unexpected status 404", ErrDockerUnavailable)
+	}
+	return err
 }

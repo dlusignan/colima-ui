@@ -10,6 +10,8 @@ import type {
   Container,
   ContainerPort,
   ContainerList,
+  DockerImage,
+  ImageList,
   ConfigUpdate,
   ConfigUpdateResult,
   Health,
@@ -141,6 +143,18 @@ export const containerShape = {
 export const containerListShape = {
   containers: { arrayOf: containerShape },
 } as const satisfies Record<keyof ContainerList, Kind>
+
+export const dockerImageShape = {
+  id: 'string',
+  tags: 'string[]',
+  sizeBytes: 'number',
+  createdAt: 'string',
+  containers: 'number',
+} as const satisfies Record<keyof DockerImage, Kind>
+
+export const imageListShape = {
+  images: { arrayOf: dockerImageShape },
+} as const satisfies Record<keyof ImageList, Kind>
 
 export const actionEntryShape = {
   startedAt: 'string',

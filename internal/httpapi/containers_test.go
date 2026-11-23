@@ -20,6 +20,8 @@ import (
 type fakeDockerClient struct {
 	mu       sync.Mutex
 	list     []dockerc.Container
+	images   []dockerc.Image
+	imageErr error
 	listErr  error
 	statsErr error
 	gone     map[string]bool
@@ -55,6 +57,10 @@ func (f *fakeDockerClient) Stats(_ context.Context, id string) (dockerc.Reading,
 
 func (f *fakeDockerClient) DiskUsage(context.Context) (dockerc.DiskUsage, error) {
 	return dockerc.DiskUsage{}, nil
+}
+
+func (f *fakeDockerClient) Images(context.Context) ([]dockerc.Image, error) {
+	return f.images, f.imageErr
 }
 
 type fakeProvider struct {

@@ -45,6 +45,7 @@ This list moves from "planned" to "done" as each issue merges.
 7. The event stream: `GET /api/events` (Server Sent Events) carries `job.output` and `job.finished` for every job, and a `metric` event for each sample.
 8. The history route `GET /api/profiles/{name}/metrics`, fed by the sampler.
 9. The action log route `GET /api/profiles/{name}/actions`.
+10. The Docker images of a profile, with tags, size and how many containers use each: `GET /api/profiles/{name}/images`.
 
 The full contract is in [`docs/api.md`](docs/api.md).
 

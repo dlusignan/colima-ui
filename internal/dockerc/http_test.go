@@ -114,6 +114,65 @@ func TestDiskUsage(t *testing.T) {
 	}
 }
 
+func TestImagesCountsFromContainerImageID(t *testing.T) {
+	var paths []string
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/v1.41/images/json":
+			// Containers is -1 on v1.41; the count must not come from it.
+			w.Write([]byte(`[
+			 {"Id":"sha256:aaaaaaaaaaaa1111","RepoTags":["nginx:1.27"],"Size":100,"Created":1700000000,"Containers":-1},
+			 {"Id":"sha256:bbbbbbbbbbbb2222","RepoTags":["<none>:<none>"],"Size":5,"Created":1700000001,"Containers":-1},
+			 {"Id":"sha256:cccccccccccc3333","RepoTags":null,"Size":6,"Created":1700000002,"Containers":-1}]`))
+		case "/v1.41/containers/json":
+			w.Write([]byte(`[{"ImageID":"sha256:aaaaaaaaaaaa1111"},{"ImageID":"sha256:aaaaaaaaaaaa1111"},{"ImageID":"sha256:cccccccccccc3333"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	imgs, err := newHTTPClient(sock).Images(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(imgs) != 3 {
+		t.Fatalf("got %+v", imgs)
+	}
+	a, b, c := imgs[0], imgs[1], imgs[2]
+	if a.ID != "aaaaaaaaaaaa" || a.Containers != 2 || len(a.Tags) != 1 || a.SizeBytes != 100 ||
+		!a.Created.Equal(time.Unix(1700000000, 0).UTC()) {
+		t.Fatalf("a %+v", a)
+	}
+	if b.ID != "bbbbbbbbbbbb" || b.Containers != 0 || b.Tags == nil || len(b.Tags) != 0 {
+		t.Fatalf("b %+v", b)
+	}
+	if c.Containers != 1 || c.Tags == nil || len(c.Tags) != 0 {
+		t.Fatalf("c %+v", c)
+	}
+	if len(paths) != 2 || paths[1] != "/v1.41/containers/json?all=1" {
+		t.Fatalf("paths %v", paths)
+	}
+}
+
+func TestImagesErrors(t *testing.T) {
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"x"}`, http.StatusNotFound)
+	}))
+	if _, err := newHTTPClient(sock).Images(context.Background()); !errors.Is(err, ErrDockerUnavailable) {
+		t.Fatalf("404: %v", err)
+	}
+	sock = startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/images/json") {
+			w.Write([]byte(`[]`))
+			return
+		}
+		http.Error(w, "x", http.StatusInternalServerError)
+	}))
+	if _, err := newHTTPClient(sock).Images(context.Background()); !errors.Is(err, ErrDockerUnavailable) {
+		t.Fatalf("containers 500: %v", err)
+	}
+}
+
 func TestSocketMissingAndDialFailure(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "nope.sock")
 	c := newHTTPClient(missing)
@@ -121,6 +180,7 @@ func TestSocketMissingAndDialFailure(t *testing.T) {
 		"containers": func() error { _, e := c.Containers(context.Background()); return e },
 		"stats":      func() error { _, e := c.Stats(context.Background(), "abc"); return e },
 		"df":         func() error { _, e := c.DiskUsage(context.Background()); return e },
+		"images":     func() error { _, e := c.Images(context.Background()); return e },
 	} {
 		err := call()
 		if !errors.Is(err, ErrDockerUnavailable) {
@@ -235,6 +295,7 @@ type fakeClient struct {
 
 func (f *fakeClient) Containers(context.Context) ([]Container, error) { return nil, nil }
 func (f *fakeClient) DiskUsage(context.Context) (DiskUsage, error)    { return DiskUsage{}, nil }
+func (f *fakeClient) Images(context.Context) ([]Image, error)         { return nil, nil }
 func (f *fakeClient) Stats(ctx context.Context, id string) (Reading, error) {
 	f.calls.Add(1)
 	f.mu.Lock()

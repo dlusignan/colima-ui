@@ -119,6 +119,7 @@ const mapped: Record<string, Mapping> = {
   '3.8#2': { shape: s.apiErrorShape },
   '3.9#0': { shape: s.metricsShape },
   '3.10#0': { shape: s.containerListShape },
+  '3.12#0': { shape: s.imageListShape },
   '3.11#0': { shape: s.actionListShape },
   '5.3#0': { shape: s.jobOutputEventShape },
   '5.3#1': { shape: s.jobFinishedEventShape },

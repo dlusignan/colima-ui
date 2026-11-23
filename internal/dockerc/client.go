@@ -22,6 +22,15 @@ type Container struct {
 	Ports   []Port    // nil when Docker reports none
 }
 
+// Image is one entry of the image list.
+type Image struct {
+	ID         string    // 12-char short form, without the "sha256:" prefix
+	Tags       []string  // never nil; empty for an untagged image
+	SizeBytes  int64     // image size, shared layers counted in every image
+	Created    time.Time // UTC
+	Containers int       // containers, running or not, whose ImageID is this image
+}
+
 // Port is one port entry of a container. An empty HostIP and a zero HostPort
 // mean the port is exposed but not published.
 type Port struct {
@@ -58,6 +67,10 @@ type Client interface {
 	// running gives ErrContainerNotFound.
 	Stats(ctx context.Context, id string) (Reading, error)
 	DiskUsage(ctx context.Context) (DiskUsage, error)
+	// Images lists all images. The in-use count comes from the container
+	// list, not from Docker's images Containers field, which is -1 on API
+	// v1.41.
+	Images(ctx context.Context) ([]Image, error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,

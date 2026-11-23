@@ -236,6 +236,9 @@ func (a *app) handler() http.Handler {
 	// #38 containers
 	opts = append(opts, httpapi.WithContainers(a.gate, a.containers))
 
+	// #79 images
+	opts = append(opts, httpapi.WithImages(a.gate, a.containers))
+
 	// #39 actions
 	opts = append(opts, httpapi.WithActions(a.store, a.gate))
 
