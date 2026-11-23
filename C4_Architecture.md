@@ -1,6 +1,6 @@
 # Colima UI: C4 Architecture Documentation
 
-Status: Draft 0.1, 22 November 2026
+Status: Draft 0.2, 22 November 2026 (adds the frontend styling and UI library decisions)
 Scope: Levels 1 to 3 of the C4 model (Context, Containers, Components). Level 4 (code) is intentionally left out until the first implementation exists.
 
 ## 1. Purpose
@@ -42,7 +42,7 @@ C4Container
     Person(dev, "Developer", "Uses the UI in a browser")
 
     System_Boundary(sys, "Colima UI") {
-        Container(spa, "Web Application", "React", "Dashboard, profile detail, capacity view, configuration editor, operation log")
+        Container(spa, "Web Application", "React, Tailwind CSS, shadcn/ui", "Dashboard, profile detail, capacity view, configuration editor, terminal style operation log, command palette")
         Container(api, "Backend", "Go", "REST API, event stream, process supervision, metrics sampling. Serves the embedded frontend")
         ContainerDb(db, "History Database", "SQLite", "Metric samples and action log. Never holds current state")
     }
@@ -63,7 +63,7 @@ C4Container
 
 | Container | Technology | Responsibility |
 | --- | --- | --- |
-| Web Application | React, built to static files | Presents state, sends user intent to the API, shows streamed progress. Holds no business rules beyond input validation for convenience. |
+| Web Application | React, Tailwind CSS, shadcn/ui (Radix primitives), built to static files | Presents state, sends user intent to the API, shows streamed progress. Holds no business rules beyond input validation for convenience. |
 | Backend | Go, standard library HTTP, Docker Go SDK | Owns every interaction with the machine. Validates requests, runs Colima commands, streams output, samples metrics, enforces security rules. |
 | History Database | SQLite through a pure Go driver (modernc.org/sqlite), no cgo | Stores time series samples and an action log so history survives restarts. |
 
@@ -127,7 +127,21 @@ The Metrics Sampler feeds the capacity view. It records what is allocated (from 
 
 ### Frontend structure (proposed)
 
-The React application is organized around five views: a dashboard of all profiles, a profile detail page, a capacity view with charts, a configuration editor, and an operation log panel that follows a running job. Server data is fetched through a query cache library, and live data arrives through one Server Sent Events connection.
+The React application is organized around five views: a dashboard of all profiles, a profile detail page, a capacity view with charts, a configuration editor, and an operation log panel that follows a running job. A command palette, opened with Cmd+K, gives keyboard access to every action. Server data is fetched through a query cache library, and live data arrives through one Server Sent Events connection.
+
+### Frontend visual design
+
+The interface targets developers, so the look is a dense, dark, terminal inspired style, built on Tailwind CSS and shadcn/ui. shadcn/ui components are copied into the repository instead of installed as a dependency, which keeps full control over every detail and avoids fighting a heavy component library. The Radix primitives underneath provide accessibility for dialogs, menus, and focus handling.
+
+Theming is driven entirely by CSS variables, so a theme is one file. Dark is the default. The planned palettes are Catppuccin Mocha, Tokyo Night, Gruvbox, Nord, and Dracula, selectable by the user. A light theme is built from the start so that contrast and accessibility problems do not hide in a dark only design.
+
+Typography pairs a monospace font for numbers, profile names, and any data (JetBrains Mono, Geist Mono, or IBM Plex Mono, all free) with a clean sans serif for labels and prose.
+
+Layout favors compact tables over padded cards, status dots for state, and usage bars that resemble terminal meters. Interaction is keyboard first: shortcuts for start, stop, and restart, plus the command palette (the cmdk library).
+
+Two specialized libraries cover the rich parts. The operation log uses xterm.js, so streamed Colima output renders exactly like a real terminal, colors included. The capacity charts use uPlot for fast live time series, with thin lines, no gradients, and subtle grid lines. Recharts is the fallback if uPlot proves too manual to style.
+
+Retro component libraries such as NES.css or 98.css are deliberately avoided. The personality comes from theme and typography, while the layout stays conventional enough to be pleasant in daily use.
 
 ## 5. Key Flows
 
@@ -183,7 +197,12 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Container data | Docker Engine API, not CLI parsing | Stable, typed, documented. |
 | Colima data | CLI JSON output plus config files | Colima has no stable API, so access is isolated in one adapter. |
 | Live updates | Server Sent Events | One way streaming is enough, simpler than WebSockets. |
+| Styling | Tailwind CSS with shadcn/ui | Components live in the repo, so every detail can be restyled. Accessible Radix primitives underneath. |
+| Visual identity | Dark terminal style, themeable through CSS variables | Appeals to the developer audience. A palette is a single file swap, and a light theme ships too. |
+| Operation log | xterm.js | Renders streamed command output, colors included, like a real terminal. |
+| Charts | uPlot, Recharts as fallback | uPlot is small and fast for live time series. Recharts is easier to theme if needed. |
+| Navigation | Command palette (cmdk) and shortcuts | Keyboard first interaction suits the audience and speeds up frequent actions. |
 
 ## 10. Open Questions
 
-Which Colima versions must be supported, and how will the adapter detect the installed version? Should the UI support the Incus and Kubernetes options in the first release or only Docker and containerd? How long should metric history be kept by default? Is multi profile support a launch requirement or a later addition? Will the tool ever need to run on Linux as well as macOS, which affects how the VM and socket paths are discovered?
+Which Colima versions must be supported, and how will the adapter detect the installed version? Should the UI support the Incus and Kubernetes options in the first release or only Docker and containerd? How long should metric history be kept by default? Is multi profile support a launch requirement or a later addition? Will the tool ever need to run on Linux as well as macOS, which affects how the VM and socket paths are discovered? Which themes ship in the first release, and should the chosen theme follow the operating system setting by default?
