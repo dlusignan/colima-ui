@@ -8,6 +8,9 @@ export const queryKeys = {
   job: (id: string) => ['jobs', id] as const,
   metrics: (name: string, params: MetricsParams = {}) =>
     ['profiles', name, 'metrics', params] as const,
+  /** History for one range preset; shares the ['profiles', name, 'metrics'] prefix. */
+  metricsRange: (name: string, scope: string, rangeId: string) =>
+    ['profiles', name, 'metrics', scope, rangeId] as const,
   containers: (name: string) => ['profiles', name, 'containers'] as const,
   actions: (name: string, limit?: number) =>
     ['profiles', name, 'actions', limit] as const,

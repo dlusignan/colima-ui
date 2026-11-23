@@ -75,9 +75,10 @@ export interface ConfigUpdateResult {
 
 export interface MetricPoint {
   takenAt: string
-  cpuPercent: number
-  memoryBytes: number
-  diskBytes: number
+  /** null when the sampler could not read the value; never treat it as 0. */
+  cpuPercent: number | null
+  memoryBytes: number | null
+  diskBytes: number | null
 }
 
 export interface Metrics {

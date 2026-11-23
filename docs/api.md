@@ -346,6 +346,8 @@ Response `200`:
 }
 ```
 
+`cpuPercent`, `memoryBytes` and `diskBytes` are each `null` when the sampler could not read that value (the first tick after a start, a Docker outage, a disk figure older than three minutes). A client must draw a gap for `null`, never `0`.
+
 Points are in time order and are downsampled when the range holds more than `maxPoints` samples, so `points` never exceeds `maxPoints`. A range with no samples, or a scope with no samples, returns `"points": []`. A stopped profile also returns history, not an error.
 
 Errors: `400` `invalid_range` (`from` after `to`, `maxPoints` below 1, unparseable time; `details.parameter` names the field), `404` `profile_not_found`.

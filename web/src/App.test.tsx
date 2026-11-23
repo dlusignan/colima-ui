@@ -81,7 +81,6 @@ describe('routes', () => {
   it.each([
     ['/', 'Dashboard'],
     ['/profiles/dev', 'Detail'],
-    ['/profiles/dev/capacity', 'Capacity'],
     ['/profiles/dev/config', 'Configuration'],
   ])('renders %s', (path, title) => {
     renderApp(path)
@@ -90,6 +89,13 @@ describe('routes', () => {
     expect(
       fetchMock.mock.calls.every(([url]) => url === '/api/events' || url === '/api/profiles'),
     ).toBe(true)
+  })
+
+  it('renders the capacity tab, loaded lazily', async () => {
+    renderApp('/profiles/dev/capacity')
+    expect(screen.getByRole('link', { name: 'Capacity' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByText('Loading...')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('renders the operation log tab, loaded lazily', async () => {
