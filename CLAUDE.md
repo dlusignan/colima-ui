@@ -20,6 +20,17 @@ go run ./cmd/colima-ui -port 9000                # or set COLIMA_UI_PORT
 
 `C4_Architecture.md` is the design source of truth. Keep it updated when decisions change, and check its "Open Questions" section (supported Colima versions, Incus/Kubernetes scope, history retention, multi-profile at launch, Linux support) before assuming an answer.
 
+## Frontend commands
+
+The React app lives in `web/` (Vite, React, TypeScript strict, Tailwind CSS v4, shadcn/ui, TanStack Query, React Router, ESLint flat config, Vitest with React Testing Library and jsdom). The package manager is npm (Node >=22); run everything from `web/`.
+
+- Install: `npm ci` (clean, from the lockfile) or `npm install`
+- Dev server: `npm run dev`. It proxies `/api` to the Go backend at `COLIMA_UI_API`, default `http://127.0.0.1:8787` (port convention shared with the Go backend).
+- Build: `npm run build` (writes `web/dist`, the path issue #25 will embed)
+- Lint: `npm run lint`
+- Test: `npm run test` (one-shot `vitest run`); watch mode `npm run test:watch`
+- Single test: `npm run test -- src/App.test.tsx -t "test name"`
+
 ## Planned architecture
 
 Three C4 "containers": a React SPA, a Go backend (standard library `net/http`, Docker Go SDK), and a SQLite history file (pure-Go `modernc.org/sqlite`, no cgo). The backend embeds the built frontend, so the product ships as one binary running on the developer's machine only.
