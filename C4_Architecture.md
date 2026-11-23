@@ -55,7 +55,7 @@ C4Container
     Rel(spa, api, "Calls", "REST and Server Sent Events")
     Rel(api, db, "Reads and writes history", "SQL, embedded")
     Rel(api, colima, "Executes", "os/exec, whitelisted")
-    Rel(api, docker, "Queries", "Docker Go SDK, Unix socket")
+    Rel(api, docker, "Queries", "Docker Engine API, Unix socket")
     Rel(api, files, "Reads and writes", "Filesystem")
 ```
 
@@ -64,7 +64,7 @@ C4Container
 | Container | Technology | Responsibility |
 | --- | --- | --- |
 | Web Application | React, Tailwind CSS, shadcn/ui (Base UI primitives), built to static files | Presents state, sends user intent to the API, shows streamed progress. Holds no business rules beyond input validation for convenience. |
-| Backend | Go, standard library HTTP, Docker Go SDK | Owns every interaction with the machine. Validates requests, runs Colima commands, streams output, samples metrics, enforces security rules. |
+| Backend | Go, standard library HTTP, a small hand-rolled Docker Engine API client | Owns every interaction with the machine. Validates requests, runs Colima commands, streams output, samples metrics, enforces security rules. |
 | History Database | SQLite through a pure Go driver (modernc.org/sqlite), no cgo | Stores time series samples and an action log so history survives restarts. |
 
 ### Source of truth
@@ -90,7 +90,7 @@ C4Component
         Component(adapter, "Colima Adapter", "Go, os/exec", "Only place that runs the colima binary. Whitelist of subcommands and arguments, parses JSON output, isolates version differences")
         Component(ops, "Operation Manager", "Go, goroutines", "Tracks long running jobs such as start and stop, supports cancellation, captures output")
         Component(events, "Event Stream", "Server Sent Events", "Pushes operation output and live metrics to connected browsers")
-        Component(dockerc, "Docker Client", "Docker Go SDK", "Containers, per container stats, disk usage")
+        Component(dockerc, "Docker Client", "Docker Engine API, hand-rolled client over the Colima Unix socket", "Containers, per container stats, disk usage")
         Component(sampler, "Metrics Sampler", "Go, ticker", "Collects VM and container usage at a fixed interval")
         Component(store, "History Store", "Ring buffer and SQLite", "Short window in memory, long history on disk, retention cleanup")
     }
@@ -191,10 +191,10 @@ One Go binary containing the embedded React build. It runs as a normal process o
 
 | Decision | Choice | Reason |
 | --- | --- | --- |
-| Backend language | Go | Same language as Colima, Lima and Docker. Official Docker SDK. Strong process supervision and a single binary. |
+| Backend language | Go | Same language as Colima, Lima and Docker. Strong process supervision and a single binary. |
 | Frontend | React | Team preference and a large ecosystem for charts and data views. |
 | Storage | SQLite, history only | Embedded, no server to run. Current state is never cached, which prevents drift. |
-| Container data | Docker Engine API, not CLI parsing | Stable, typed, documented. |
+| Container data | Docker Engine API (small hand-rolled client over the Colima Unix socket, pinned to /v1.41), not CLI parsing | Stable, typed, documented. The Docker Go SDK would add about 20 modules and is pre-1.0 on its maintained path. |
 | Colima data | CLI JSON output plus config files | Colima has no stable API, so access is isolated in one adapter. |
 | Live updates | Server Sent Events | One way streaming is enough, simpler than WebSockets. |
 | Styling | Tailwind CSS with shadcn/ui | Components live in the repo, so every detail can be restyled. Accessible Base UI primitives underneath. |
