@@ -272,6 +272,7 @@ describe('shortcuts', () => {
       expect(within(dialog).getByText(s.keys)).toBeInTheDocument()
       expect(within(dialog).getByText(s.description)).toBeInTheDocument()
     }
+    expect(within(dialog).getByText('F6')).toBeInTheDocument()
     await expectNoA11yViolations(dialog)
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
