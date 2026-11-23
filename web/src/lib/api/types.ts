@@ -131,6 +131,31 @@ export interface ImageList {
   images: DockerImage[]
 }
 
+export interface DockerVolume {
+  name: string
+  driver: string
+  createdAt: string
+  sizeBytes: number | null
+  containers: number | null
+}
+
+export interface VolumeList {
+  volumes: DockerVolume[]
+}
+
+export interface DockerNetwork {
+  id: string
+  name: string
+  driver: string
+  scope: string
+  internal: boolean
+  containers: number
+}
+
+export interface NetworkList {
+  networks: DockerNetwork[]
+}
+
 export type ActionOutcome = 'success' | 'failed' | 'cancelled'
 
 export interface ActionEntry {
