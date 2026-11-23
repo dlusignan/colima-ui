@@ -16,3 +16,7 @@ var (
 	// ErrContainerNotFound means the container is gone or no longer running.
 	ErrContainerNotFound = errors.New("dockerc: container not found")
 )
+
+// ErrLogsUnavailable means the container's log driver cannot be read back
+// (Docker answers 501), for example the none or syslog drivers.
+var ErrLogsUnavailable = errors.New("dockerc: container logs are not readable")

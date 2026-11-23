@@ -36,6 +36,14 @@ type fakeDockerClient struct {
 	disk     dockerc.DiskUsage
 	diskErr  error
 	diskFn   func(context.Context) (dockerc.DiskUsage, error)
+	logs     dockerc.LogResult
+	logsErr  error
+	logsArgs []logsCall
+}
+
+type logsCall struct {
+	id   string
+	tail int
 }
 
 func (f *fakeDockerClient) Containers(context.Context) ([]dockerc.Container, error) {
@@ -89,6 +97,13 @@ func (f *fakeDockerClient) Volumes(context.Context) ([]dockerc.Volume, error) {
 
 func (f *fakeDockerClient) Networks(context.Context) ([]dockerc.Network, error) {
 	return f.networks, f.netErr
+}
+
+func (f *fakeDockerClient) Logs(_ context.Context, id string, tail int) (dockerc.LogResult, error) {
+	f.mu.Lock()
+	f.logsArgs = append(f.logsArgs, logsCall{id, tail})
+	f.mu.Unlock()
+	return f.logs, f.logsErr
 }
 
 type fakeProvider struct {

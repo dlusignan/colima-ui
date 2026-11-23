@@ -89,7 +89,7 @@ For `422`, `details.fields` maps each rejected field name to a message. Field na
 
 ## 3. Routes
 
-There are 13 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 18 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -105,6 +105,11 @@ There are 13 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `PUT` | `/api/profiles/{name}/config` | Update configuration |
 | `GET` | `/api/profiles/{name}/metrics` | Metric history |
 | `GET` | `/api/profiles/{name}/containers` | Containers with current usage |
+| `GET` | `/api/profiles/{name}/images` | Docker images |
+| `GET` | `/api/profiles/{name}/volumes` | Docker volumes |
+| `GET` | `/api/profiles/{name}/networks` | Docker networks |
+| `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
+| `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
 | `GET` | `/api/events` | Server Sent Events stream |
 
@@ -579,9 +584,47 @@ Errors:
 - `409` `invalid_state`: the VM is running but the profile does not use the Docker runtime, so there is no engine to describe. `details` is `{"runtime":"not_docker"}`. This differs from the list routes, which return an empty list.
 - `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering.
 
+### 3.16 `GET /api/profiles/{name}/containers/{id}/logs`
+
+Token: yes. Request body: none. Used by the Docker tab to show why a container stopped or failed.
+
+Query parameter, optional: `tail`, the number of lines wanted. The default is 200 and values above 1000 are clamped to 1000. A value below 1, a value that is not a plain base 10 integer (no sign, no spaces, no hex, no decimals), an empty value or a repeated `tail` returns `400` `invalid_range` with `details.parameter` set to `tail`.
+
+Response `200`:
+
+```json
+{
+  "lines": [
+    "2026-05-02T09:41:07.405003140Z server started",
+    "2026-05-02T09:41:08.112003900Z listening on :8080"
+  ],
+  "truncated": false
+}
+```
+
+1. `id` is the container id as `GET /api/profiles/{name}/containers` returns it: 12 to 64 lowercase hexadecimal characters. A name, a prefix, an uppercase id or anything else returns `404` `container_not_found` with a fixed message that does not repeat the input.
+2. Each line starts with Docker's timestamp (RFC 3339 with nanoseconds, UTC) followed by a space and the text. Stdout and stderr are merged in the order Docker sent them, and there is no field that tells them apart.
+3. The text is UTF-8: invalid bytes are replaced with U+FFFD. Trailing `\n` and `\r` are removed. A line is cut at 4000 characters, timestamp included. Output is split on newlines, so there is one entry per line. A line that Docker stored as several pieces (the json-file driver splits lines over 16 KiB) is joined back into one line, which is then cut at 4000 characters. A final line without a newline is kept.
+4. `truncated` is `true` when the container has older output than `tail` lines, when any line was cut, when lines were dropped to keep the response under 512 KiB, or when Docker reported a read error part way through the output (the text of that error is never returned). The oldest lines are dropped first.
+5. `lines` is `[]` for a container that has written nothing.
+6. Stopped containers work, because Docker keeps their output. A container whose log driver does not keep readable logs (for example `none` or `syslog`) returns `409` `invalid_state` with `details` set to `{"reason":"logs_unavailable"}`.
+7. Lines are raw container output. They can contain ANSI escape sequences, control characters and secrets, so clients must render them as plain text and never as HTML. The backend does not log or store them.
+8. The snapshot is bounded by a 15 second read budget. There is no follow mode and no streaming.
+
+This route only reads. There is no container start, stop or remove.
+
+Errors:
+
+1. `400` `invalid_range`: `tail` is not valid (`details.parameter` is `tail`).
+2. `404` `profile_not_found`.
+3. `404` `container_not_found`: the id is malformed, the container does not exist, or the profile is running but does not use the Docker runtime.
+4. `409` `invalid_state`: the VM is stopped (`details.status` is `stopped`).
+5. `409` `invalid_state`: the log driver cannot be read (`details.reason` is `logs_unavailable`).
+6. `502` `docker_unavailable`: the VM is running but the Docker socket is missing or not answering, or Docker sent a stream that is not valid log framing.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile creation or deletion, YAML editing, or profile logs. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile creation or deletion, YAML editing, or VM and control logs. Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

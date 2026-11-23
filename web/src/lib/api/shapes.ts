@@ -8,6 +8,7 @@ import type {
   ActionList,
   ApiErrorBody,
   Container,
+  ContainerLogs,
   ContainerPort,
   ContainerList,
   DockerImage,
@@ -214,6 +215,11 @@ export const engineInfoShape = {
   images: 'number',
   diskUsage: { shape: engineDiskUsageShape },
 } as const satisfies Record<keyof EngineInfo, Kind>
+
+export const containerLogsShape = {
+  lines: 'string[]',
+  truncated: 'boolean',
+} as const satisfies Record<keyof ContainerLogs, Kind>
 
 export const actionEntryShape = {
   startedAt: 'string',

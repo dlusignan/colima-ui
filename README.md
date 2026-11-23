@@ -48,6 +48,7 @@ This list moves from "planned" to "done" as each issue merges.
 11. The Docker volumes of a profile, with driver, creation time, size and how many containers mount each (size and count are `null` when the engine has no figure): `GET /api/profiles/{name}/volumes`.
 12. The Docker networks of a profile, with driver, scope and how many containers are attached, stopped ones included: `GET /api/profiles/{name}/networks`.
 13. The Docker engine of a profile, with its version, resources, container and image counts and a disk usage breakdown: `GET /api/profiles/{name}/engine`. A running profile that does not use Docker gets `409`.
+14. The recent output of one container, as a bounded snapshot with Docker's timestamps (the last 200 lines by default, at most 1000), stopped containers included: `GET /api/profiles/{name}/containers/{id}/logs?tail=N`. There is no streaming.
 
 The full contract is in [`docs/api.md`](docs/api.md).
 

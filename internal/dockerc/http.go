@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -19,6 +20,7 @@ const (
 	listTimeout      = 5 * time.Second
 	statsTimeout     = 5 * time.Second
 	diskUsageTimeout = 15 * time.Second
+	logsTimeout      = 15 * time.Second
 	maxBodyBytes     = 8 << 20
 )
 
@@ -30,6 +32,7 @@ type httpClient struct {
 	listTimeout      time.Duration
 	statsTimeout     time.Duration
 	diskUsageTimeout time.Duration
+	logsTimeout      time.Duration
 }
 
 var _ Client = (*httpClient)(nil)
@@ -52,35 +55,55 @@ func newHTTPClient(socket string) *httpClient {
 		listTimeout:      listTimeout,
 		statsTimeout:     statsTimeout,
 		diskUsageTimeout: diskUsageTimeout,
+		logsTimeout:      logsTimeout,
 	}
 }
 
-// get performs one GET with a deadline and decodes a size-capped JSON body.
-func (c *httpClient) get(ctx context.Context, timeout time.Duration, path string, query url.Values, dst any) error {
-	callCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
+// do performs one GET with a deadline and maps the status. A status in
+// special maps to its error; otherwise 404 and 409 give ErrContainerNotFound
+// and any other non-200 gives ErrDockerUnavailable. On success the caller owns
+// the body and must call cancel after reading it. callCtx is the context the
+// body read is bound to, for transportErr.
+func (c *httpClient) do(ctx context.Context, timeout time.Duration, path string, query url.Values, special map[int]error) (resp *http.Response, callCtx context.Context, cancel context.CancelFunc, err error) {
+	callCtx, cancel = context.WithTimeout(ctx, timeout)
 	u := "http://docker/" + apiVersion + path
 	if len(query) > 0 {
 		u += "?" + query.Encode()
 	}
 	req, err := http.NewRequestWithContext(callCtx, http.MethodGet, u, nil)
 	if err != nil {
-		return fmt.Errorf("%w: bad request", ErrDockerUnavailable)
+		cancel()
+		return nil, nil, nil, fmt.Errorf("%w: bad request", ErrDockerUnavailable)
 	}
-	resp, err := c.hc.Do(req)
+	resp, err = c.hc.Do(req)
 	if err != nil {
-		return c.transportErr(ctx, callCtx)
+		terr := c.transportErr(ctx, callCtx)
+		cancel()
+		return nil, nil, nil, terr
 	}
+	if resp.StatusCode == http.StatusOK {
+		return resp, callCtx, cancel, nil
+	}
+	defer cancel()
 	defer resp.Body.Close()
-
-	switch {
-	case resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusConflict:
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return ErrContainerNotFound
-	case resp.StatusCode != http.StatusOK:
-		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("%w: unexpected status %d", ErrDockerUnavailable, resp.StatusCode)
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	if e, ok := special[resp.StatusCode]; ok {
+		return nil, nil, nil, e
 	}
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusConflict {
+		return nil, nil, nil, ErrContainerNotFound
+	}
+	return nil, nil, nil, fmt.Errorf("%w: unexpected status %d", ErrDockerUnavailable, resp.StatusCode)
+}
+
+// get performs one GET with a deadline and decodes a size-capped JSON body.
+func (c *httpClient) get(ctx context.Context, timeout time.Duration, path string, query url.Values, dst any) error {
+	resp, callCtx, cancel, err := c.do(ctx, timeout, path, query, nil)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBody+1))
 	if err != nil {
 		return c.transportErr(ctx, callCtx)
@@ -92,6 +115,59 @@ func (c *httpClient) get(ctx context.Context, timeout time.Duration, path string
 		return fmt.Errorf("%w: malformed response", ErrDockerUnavailable)
 	}
 	return nil
+}
+
+// Logs reads the last tail lines of a container's stdout and stderr. It makes
+// two read-only calls: an inspect, for Config.Tty and a clean not-found, then
+// the logs call with tail+1 so that older lines can be detected.
+func (c *httpClient) Logs(ctx context.Context, id string, tail int) (LogResult, error) {
+	if !ValidLogID(id) {
+		return LogResult{}, ErrContainerNotFound
+	}
+	if tail < 1 {
+		tail = 1
+	}
+	if tail > MaxLogTail {
+		tail = MaxLogTail
+	}
+	var info struct {
+		Config struct {
+			Tty bool `json:"Tty"`
+		} `json:"Config"`
+	}
+	if err := c.get(ctx, c.listTimeout, "/containers/"+id+"/json", nil, &info); err != nil {
+		return LogResult{}, logsDeadline(err)
+	}
+	q := url.Values{
+		"stdout":     {"1"},
+		"stderr":     {"1"},
+		"timestamps": {"1"},
+		"tail":       {strconv.Itoa(tail + 1)},
+	}
+	special := map[int]error{http.StatusNotImplemented: ErrLogsUnavailable}
+	resp, callCtx, cancel, err := c.do(ctx, c.logsTimeout, "/containers/"+id+"/logs", q, special)
+	if err != nil {
+		return LogResult{}, logsDeadline(err)
+	}
+	defer cancel()
+	defer resp.Body.Close()
+	res, err := decodeLogs(resp.Body, info.Config.Tty, tail)
+	if err != nil {
+		if errors.Is(err, ErrDockerUnavailable) {
+			return LogResult{}, err
+		}
+		return LogResult{}, logsDeadline(c.transportErr(ctx, callCtx))
+	}
+	return res, nil
+}
+
+// logsDeadline turns an expired read deadline into ErrDockerUnavailable, so the
+// route answers 502 as documented. A cancelled caller keeps its own error.
+func logsDeadline(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("%w: log read timed out", ErrDockerUnavailable)
+	}
+	return err
 }
 
 // transportErr maps a failed round trip without leaking the socket path.

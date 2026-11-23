@@ -4,6 +4,7 @@ import type {
   ConfigUpdate,
   ConfigUpdateResult,
   ContainerList,
+  ContainerLogs,
   EngineInfo,
   ImageList,
   Job,
@@ -59,6 +60,12 @@ export const api = {
     ),
   getContainers: (name: string, signal?: AbortSignal) =>
     request<ContainerList>('GET', `/api/profiles/${enc(name)}/containers`, { signal }),
+  getContainerLogs: (name: string, id: string, tail?: number, signal?: AbortSignal) =>
+    request<ContainerLogs>(
+      'GET',
+      withQuery(`/api/profiles/${enc(name)}/containers/${enc(id)}/logs`, { tail }),
+      { signal },
+    ),
   getEngine: (name: string, signal?: AbortSignal) =>
     request<EngineInfo>('GET', `/api/profiles/${enc(name)}/engine`, { signal }),
   getImages: (name: string, signal?: AbortSignal) =>

@@ -131,6 +131,12 @@ export interface ImageList {
   images: DockerImage[]
 }
 
+export interface ContainerLogs {
+  /** Oldest first, each line starts with Docker's timestamp. Plain text only. */
+  lines: string[]
+  truncated: boolean
+}
+
 export interface DockerVolume {
   name: string
   driver: string
