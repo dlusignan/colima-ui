@@ -1,41 +1,26 @@
-import type { JobAction, Profile } from '@/lib/api/types'
-import { useProfileAction } from '@/lib/jobs/useProfileAction'
+import type { Profile } from '@/lib/api/types'
+import { useProfileActionRunner } from '@/lib/jobs/useProfileActionRunner'
 import type { JobTracker } from '@/lib/jobs/useJobTracker'
 import { ProfileRow } from './ProfileRow'
 
 const COLUMNS = ['Name', 'Status', 'Runtime', 'CPUs', 'Memory', 'Disk', 'Colima', 'Source', 'Warnings', 'Actions']
 
-export interface ActionFailure {
-  id: number
-  profile: string
-  action: JobAction
-  error: unknown
-}
-
 interface RowProps {
   profile: Profile
   tracker: JobTracker
   unavailable: boolean
-  onFailure: (profile: string, action: JobAction, error: unknown) => void
+  onError: (message: string) => void
 }
 
-function Row({ profile, tracker, unavailable, onFailure }: RowProps) {
-  const mutation = useProfileAction(profile.name)
+function Row({ profile, tracker, unavailable, onError }: RowProps) {
+  const runner = useProfileActionRunner(profile.name, tracker, onError)
   return (
     <ProfileRow
       profile={profile}
       job={tracker.jobs.get(profile.name)}
-      pending={mutation.isPending}
+      pending={runner.pending}
       unavailable={unavailable}
-      onAction={(action) =>
-        mutation.mutate(
-          { action },
-          {
-            onSuccess: ({ jobId }) => tracker.adopt(profile.name, jobId),
-            onError: (error) => onFailure(profile.name, action, error),
-          },
-        )
-      }
+      onAction={runner.run}
       onDismiss={() => tracker.dismiss(profile.name)}
     />
   )
@@ -44,11 +29,11 @@ function Row({ profile, tracker, unavailable, onFailure }: RowProps) {
 interface ProfileTableProps {
   profiles: readonly Profile[]
   tracker: JobTracker
-  onFailure: RowProps['onFailure']
+  onError: RowProps['onError']
 }
 
 /** Wide table in a scroll container: Layout caps the page width. */
-export function ProfileTable({ profiles, tracker, onFailure }: ProfileTableProps) {
+export function ProfileTable({ profiles, tracker, onError }: ProfileTableProps) {
   return (
     <div
       className="overflow-x-auto rounded-lg border border-border"
@@ -74,7 +59,7 @@ export function ProfileTable({ profiles, tracker, onFailure }: ProfileTableProps
               profile={p}
               tracker={tracker}
               unavailable={(p.warnings ?? []).some((w) => w.code === 'colima_unavailable')}
-              onFailure={onFailure}
+              onError={onError}
             />
           ))}
         </tbody>

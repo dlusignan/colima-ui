@@ -1,14 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api/client'
-import { queryKeys } from '@/lib/api/keys'
-import type { JobAction } from '@/lib/api/types'
 import { useProfiles } from '@/lib/api/useProfiles'
-import { describeActionError } from '@/lib/jobs/describeActionError'
 import { useJobTracker } from '@/lib/jobs/useJobTracker'
 import { ProfileTable, ProfileTableSkeleton } from './ProfileTable'
-import { WarningBanners } from './WarningBanners'
+import { WarningBanners } from '@/components/WarningBanners'
 
 interface Failure {
   id: number
@@ -25,7 +21,6 @@ function listErrorText(error: unknown): string {
 }
 
 export function DashboardView() {
-  const queryClient = useQueryClient()
   const profiles = useProfiles()
   const list = profiles.data?.profiles
   const tracker = useJobTracker(list)
@@ -33,12 +28,8 @@ export function DashboardView() {
   const [announcement, setAnnouncement] = useState('')
   const nextId = useRef(0)
 
-  const onFailure = (profile: string, action: JobAction, error: unknown) => {
-    const d = describeActionError(error, action, profile)
-    if (d.trackJobId) tracker.adopt(profile, d.trackJobId)
-    if (d.refresh) void queryClient.invalidateQueries({ queryKey: queryKeys.profiles })
-    if (d.message) setFailures((f) => [...f, { id: nextId.current++, message: d.message }])
-  }
+  const onError = (message: string) =>
+    setFailures((f) => [...f, { id: nextId.current++, message }])
 
   // Announce each job outcome once.
   const announced = useRef(new Set<string>())
@@ -89,7 +80,7 @@ export function DashboardView() {
           </div>
         )}
         <WarningBanners profiles={list} />
-        <ProfileTable profiles={list} tracker={tracker} onFailure={onFailure} />
+        <ProfileTable profiles={list} tracker={tracker} onError={onError} />
       </>
     )
   }

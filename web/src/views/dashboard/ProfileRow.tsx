@@ -5,7 +5,7 @@ import { formatBytes } from '@/lib/format'
 import type { JobAction, Profile } from '@/lib/api/types'
 import type { TrackedJob } from '@/lib/jobs/useJobTracker'
 import { logPath } from '@/views/log/logPath'
-import { ProfileActions } from './ProfileActions'
+import { ProfileActions } from '@/components/ProfileActions'
 
 const PROGRESS: Record<JobAction, string> = {
   start: 'starting',
