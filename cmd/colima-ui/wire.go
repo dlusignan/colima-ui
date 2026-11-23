@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
+	"time"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 	"github.com/dlusignan/colima-ui/internal/config"
@@ -19,6 +21,9 @@ type colimaRunner interface {
 	colima.Runner
 	colima.Streamer
 }
+
+// vmProbeTimeout bounds the `colima list` call behind a config write.
+const vmProbeTimeout = 5 * time.Second
 
 // app holds the backend components behind the API. Each issue owns one block
 // below, marked by its sentinel comment and separated from the next by a blank
@@ -36,6 +41,7 @@ type app struct {
 	gate   httpapi.ProfileGate
 
 	// #18 config
+	configSvc *config.Service
 
 	// #23 metrics
 
@@ -82,6 +88,19 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir func() 
 	})
 
 	// #18 config
+	// A second Service with the gate: the one above only lists profiles and
+	// has no way to write. The probe over-reports on error, by design in Apply.
+	a.configSvc, err = config.New(base,
+		config.WithGate(a.mgr),
+		config.WithVMRunning(func(profile string) (bool, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), vmProbeTimeout)
+			defer cancel()
+			status, err := a.gate.ProfileStatus(ctx, profile)
+			return strings.EqualFold(status, "running"), err
+		}))
+	if err != nil {
+		return nil, fmt.Errorf("open colima folder for writes: %w", err)
+	}
 
 	// #23 metrics
 
@@ -107,6 +126,7 @@ func (a *app) handler() http.Handler {
 	opts = append(opts, httpapi.WithJobs(a.mgr, a.gate))
 
 	// #18 config
+	opts = append(opts, httpapi.WithConfig(a.configSvc, a.mgr))
 
 	// #23 metrics
 

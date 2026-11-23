@@ -12,7 +12,7 @@ The format is Markdown, not OpenAPI. The frontend keeps its response types in on
 - Every request and response body is JSON (`Content-Type: application/json`), except the event stream in section 5.
 - Timestamps are RFC 3339 strings in UTC, for example `2026-11-23T01:08:04Z`.
 - Every profile route carries the profile name in the path as `{name}`. The name is the Colima profile name (`default` for the default profile). It is path-escaped like any URL segment.
-- Memory and disk sizes are in bytes in profile and metric payloads. The configuration routes use GiB (whole numbers), the unit Colima's YAML uses. Field names carry the unit (`memoryBytes`, `memoryGiB`) so the two cannot be mixed up.
+- Memory and disk sizes are in bytes in profile and metric payloads. The configuration routes use GiB, the unit Colima's YAML uses: `memoryGiB` may be fractional, `cpu` and `diskGiB` are whole numbers. Field names carry the unit (`memoryBytes`, `memoryGiB`) so the two cannot be mixed up.
 - Unknown JSON fields in a request body are rejected with `400`.
 
 ### 1.1 Authentication
