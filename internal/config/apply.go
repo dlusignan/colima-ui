@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,6 +43,10 @@ type Changes struct {
 // Other errors: ErrInvalidProfileName, ErrProfileNotFound, ErrNoGate,
 // ErrMultiDocument, ErrUnwritableTarget, ErrConflict, *ReadError, *ParseError,
 // *TypeError, *WriteError.
+//
+// The VM probe runs before the hold, so a start job that finishes between the
+// probe and TryExclusive can make the restart list come back empty for a VM
+// that is now running. The probe is skipped when ch changes nothing.
 func (s *Service) Apply(profile string, ch Changes) ([]Change, error) {
 	if err := ValidateProfileName(profile); err != nil {
 		return nil, err
@@ -51,7 +57,7 @@ func (s *Service) Apply(profile string, ch Changes) ([]Change, error) {
 	// Probe before taking the hold: it may shell out. An error or a missing
 	// probe counts as running, which over-reports the restart list.
 	running := true
-	if s.vmRunning != nil {
+	if s.vmRunning != nil && (ch.CPU != nil || ch.Memory != nil || ch.Disk != nil) {
 		if r, err := s.vmRunning(profile); err == nil {
 			running = r
 		}
@@ -170,7 +176,7 @@ func (s *Service) applyLocked(profile string, ch Changes, running bool) ([]Chang
 		for _, c := range Diff(current, next, true) {
 			fields = append(fields, c.Field)
 		}
-		s.onWritten(profile, fields)
+		s.callOnWritten(profile, fields)
 	}
 	changes := Diff(current, next, running)
 	if changes == nil {
@@ -318,4 +324,16 @@ func (s *Service) writeAtomic(dir string, state *fileState, data []byte) (err er
 		d.Close()
 	}
 	return nil
+}
+
+// callOnWritten runs the hook after the file was replaced. A panic is logged by
+// type and swallowed: the write already happened, so it must not turn into a
+// dropped connection. A hook that blocks holds the profile's slot.
+func (s *Service) callOnWritten(profile string, fields []string) {
+	defer func() {
+		if p := recover(); p != nil {
+			slog.Error("config written hook panicked", "panicType", fmt.Sprintf("%T", p))
+		}
+	}()
+	s.onWritten(profile, fields)
 }

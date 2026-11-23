@@ -90,7 +90,8 @@ func WithVMRunning(fn func(profile string) (bool, error)) Option {
 // the profile and the names of the fields that changed (cpu, memory, disk, in
 // Diff order, whatever the VM state). It does not fire for a no-op, a failed
 // validation or a failed write. The hook runs inside the exclusive hold, so it
-// must not block or call back into the Service. Nil (the default) means none.
+// must not call back into the Service, and a hook that blocks holds the profile's
+// slot. A panic in the hook is logged and swallowed. Nil (the default) means none.
 func WithOnWritten(fn func(profile string, fields []string)) Option {
 	return func(s *Service) { s.onWritten = fn }
 }

@@ -957,3 +957,24 @@ func TestOnWrittenNilByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestOnWrittenPanicIsContainedAfterWrite(t *testing.T) {
+	e := newEnv(t, basic, WithOnWritten(func(string, []string) { panic("boom") }))
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(4)}); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if !strings.HasPrefix(e.content(t), "cpu: 4") {
+		t.Fatalf("content %q", e.content(t))
+	}
+}
+
+func TestApplyEmptyChangesSkipsVMProbe(t *testing.T) {
+	probed := false
+	e := newEnv(t, basic, WithVMRunning(func(string) (bool, error) { probed = true; return true, nil }))
+	if _, err := e.svc.Apply("default", Changes{}); err != nil || probed {
+		t.Fatalf("err=%v probed=%v", err, probed)
+	}
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(3)}); err != nil || !probed {
+		t.Fatalf("err=%v probed=%v", err, probed)
+	}
+}
