@@ -49,7 +49,7 @@ This list moves from "planned" to "done" as each issue merges.
 12. The Docker networks of a profile, with driver, scope and how many containers are attached, stopped ones included: `GET /api/profiles/{name}/networks`.
 13. The Docker engine of a profile, with its version, resources, container and image counts and a disk usage breakdown: `GET /api/profiles/{name}/engine`. A running profile that does not use Docker gets `409`.
 14. The recent output of one container, as a bounded snapshot with Docker's timestamps (the last 200 lines by default, at most 1000), stopped containers included: `GET /api/profiles/{name}/containers/{id}/logs?tail=N`. There is no streaming.
-15. Creating a profile with the basic settings (name, CPUs, memory, disk, root disk, runtime, VM type, architecture, mount type and Kubernetes): `POST /api/profiles`. It starts a new VM as a `create` job that streams like any other job, and it refuses a name that already exists in any letter case. There is no route to delete or rename a profile.
+15. Creating a profile with the basic settings (name, CPUs, memory, disk, root disk, runtime, VM type, architecture, mount type and Kubernetes) and the advanced ones (hostname, DNS servers and DNS hosts, SSH agent, Rosetta, port forwarder, inotify, network address, mode and interface, CPU type): `POST /api/profiles`. It starts a new VM as a `create` job that streams like any other job, and it refuses a name that already exists in any letter case. There is no route to delete or rename a profile.
 
 The full contract is in [`docs/api.md`](docs/api.md).
 

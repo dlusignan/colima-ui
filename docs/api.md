@@ -85,7 +85,7 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType` and `kubernetesVersion` for profile creation (3.17).
+For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface` and `cpuType` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name` and `dnsHosts[0].address`).
 
 ## 3. Routes
 
@@ -625,7 +625,7 @@ Errors:
 
 ### 3.17 `POST /api/profiles`
 
-Token: yes. Creates a profile by starting a new VM with the basic settings. It is the same kind of job as a start (3.4), so the call returns at once, the output streams over the event stream (section 5) and the job appears in the action log with the action `create`.
+Token: yes. Creates a profile by starting a new VM with the basic settings and, optionally, the advanced ones (networking, DNS, hostname, SSH agent, Rosetta, port forwarder). It is the same kind of job as a start (3.4), so the call returns at once, the output streams over the event stream (section 5) and the job appears in the action log with the action `create`.
 
 Request body: a JSON object with a required `name` and these optional settings. Unknown keys are rejected, keys match exactly (case included) and may appear once. A key set to `null` counts as absent. The body is at most 64 KiB.
 
@@ -641,7 +641,17 @@ Request body: a JSON object with a required `name` and these optional settings. 
   "arch": "aarch64",
   "mountType": "virtiofs",
   "kubernetes": false,
-  "kubernetesVersion": ""
+  "kubernetesVersion": "",
+  "hostname": "dev-vm",
+  "dns": ["1.1.1.1", "2001:db8::1"],
+  "dnsHosts": [{ "name": "example.com", "address": "192.0.2.10" }],
+  "sshAgent": true,
+  "vzRosetta": true,
+  "portForwarder": "ssh",
+  "mountInotify": false,
+  "networkAddress": true,
+  "networkMode": "bridged",
+  "networkInterface": "en0"
 }
 ```
 
@@ -650,6 +660,19 @@ Request body: a JSON object with a required `name` and these optional settings. 
 3. `cpus`, `memoryGiB`, `diskGiB` and `rootDiskGiB` use the same ranges as the config route (3.8). `runtime` is `docker`, `containerd` or `incus`; `vmType` is `qemu`, `vz` or `krunkit`; `arch` is `aarch64` or `x86_64`; `mountType` is `sshfs`, `9p` or `virtiofs`. `kubernetesVersion` must look like `v1.31.2+k3s1`.
 4. `kubernetesVersion` needs `kubernetes` to be `true`; otherwise it is rejected on `kubernetesVersion`. The route does not check which other combinations Colima accepts (for example Kubernetes with the `incus` runtime, or `9p` with the `vz` VM type). Colima refuses those itself and the job then fails with its output.
 5. Colima saves the settings to the new profile's YAML file, so later starts reuse them.
+6. The advanced settings are all optional, and each one becomes exactly one Colima flag (an array becomes the flag repeated, once per element). Every value is checked against the rule below before anything starts. A rejected value is answered on its key (for an array element on `dns[0]`, `dnsHosts[1].name` or `dnsHosts[1].address`) and nothing is launched. `false` and an empty value mean the same as leaving the key out.
+   1. `hostname` (`--hostname`): one DNS label, 1 to 63 letters, digits or hyphens, starting and ending with a letter or digit.
+   2. `dns` (`--dns`, repeated): an array of at most 8 IPv4 or IPv6 addresses. A zone (`fe80::1%en0`), a port, a prefix or a host name is rejected. Repeated addresses are passed on as given.
+   3. `dnsHosts` (`--dns-host name=address`, repeated): an array of at most 16 objects with exactly the keys `name` and `address`. `name` is a host name of dot-separated labels (letters, digits and hyphens, each label at most 63 characters, at most 253 in all, no trailing dot); `address` is an IPv4 or IPv6 address. A null element, an unknown or repeated key, or a value that is not a string is a `400`.
+   4. `sshAgent` (`--ssh-agent`): boolean, forwards the SSH agent into the VM.
+   5. `vzRosetta` (`--vz-rosetta`): boolean, enables Rosetta for amd64 emulation. Accepted only with `vmType` `vz` and `arch` `aarch64`; a left-out `vmType` or `arch` counts as Colima's default (`vz`, `aarch64`). Otherwise `422` on `vzRosetta`.
+   6. `portForwarder` (`--port-forwarder`): `ssh`, `grpc` or `none`.
+   7. `mountInotify` (`--mount-inotify`): boolean, propagates inotify file events to the VM.
+   8. `networkAddress` (`--network-address`): boolean, assigns a reachable IP address to the VM.
+   9. `networkMode` (`--network-mode`): `shared` or `bridged`.
+   10. `networkInterface` (`--network-interface`): a host interface name, a letter or digit first, then letters, digits, dots, underscores and hyphens, at most 15 characters. Accepted only with `networkMode` `bridged`, otherwise `422` on `networkInterface`.
+   11. `cpuType` (`--cpu-type`): a single CPU model name such as `max` or `cortex-a72`, a letter or digit first, then letters, digits, dots, underscores and hyphens, at most 64 characters. A feature list such as `host,+x2apic` is rejected.
+7. Only the two cross-field rules above are checked here, because Colima's help text states them. Other combinations (`cpuType` with a VM type other than `qemu`, `bridged` without `networkAddress`, a port forwarder that a VM type does not support) are left to Colima: it refuses what it cannot run and the job then fails with its output.
 
 Response `202`:
 
@@ -684,7 +707,7 @@ A failed creation can leave a half-created profile behind (a folder, a YAML file
 
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic settings only; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings only (no mounts, environment variables, k3s arguments or custom disk images); they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 
