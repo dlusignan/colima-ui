@@ -78,14 +78,23 @@ func run(args []string, getenv func(string) string) error {
 
 	select {
 	case err := <-errCh:
+		// The server died on its own: still stop the components, so the history
+		// file is flushed and no colima process is orphaned.
+		a.closeStreams()
+		sctx, scancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer scancel()
+		_ = a.shutdown(sctx)
 		return err
 	case <-ctx.Done():
 	}
 	log.Print("shutting down")
-	// The HTTP server stops first so no new request reaches the components,
-	// then the components stop. Each gets its own budget, so a slow in-flight
-	// request cannot leave the manager with an expired context (which would
-	// orphan a colima process). Both run even if the first fails.
+	// The event streams end first: http.Server.Shutdown waits for active
+	// requests and does not cancel them, so an open stream would hold it for the
+	// whole timeout. Then the HTTP server stops, so no new request reaches the
+	// components, then the components stop. Each gets its own budget, so a slow
+	// in-flight request cannot leave the manager with an expired context (which
+	// would orphan a colima process). Both run even if the first fails.
+	a.closeStreams()
 	hctx, hcancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer hcancel()
 	shutErr := s.Shutdown(hctx)
