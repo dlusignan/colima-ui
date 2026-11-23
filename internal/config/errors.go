@@ -77,8 +77,9 @@ var ErrConflict = errors.New("profile file changed on disk; re-read and retry")
 // Writing would silently drop the extra documents, so nothing is written.
 var ErrMultiDocument = errors.New("profile file has more than one YAML document")
 
-// ErrUnwritableTarget is returned when colima.yaml is a dangling symlink or
-// resolves to something that is not a regular file.
+// ErrUnwritableTarget is returned when colima.yaml is a dangling symlink,
+// resolves to something that is not a regular file, or has more than one hard
+// link (a rename would detach the other names).
 var ErrUnwritableTarget = errors.New("profile file is not a writable regular file")
 
 // ErrNoGate is returned when a Service built without WithGate is asked to
@@ -107,3 +108,7 @@ type WriteError struct {
 
 func (e *WriteError) Error() string { return "write profile: " + e.Err.Error() }
 func (e *WriteError) Unwrap() error { return e.Err }
+
+// ErrAliasedValue is returned when an edit would also change another field
+// through a shared YAML anchor. Nothing is written.
+var ErrAliasedValue = errors.New("edit would change other fields through a shared YAML anchor")

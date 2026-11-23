@@ -101,7 +101,7 @@ func readTarget(dir string) (*fileState, error) {
 	if err != nil {
 		return nil, &ReadError{Err: stripPath(err)}
 	}
-	if !st.Mode().IsRegular() {
+	if !st.Mode().IsRegular() || hardLinked(st) {
 		return nil, ErrUnwritableTarget
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
@@ -159,6 +159,9 @@ func (s *Service) applyLocked(profile string, ch Changes, running bool) ([]Chang
 	if err != nil {
 		return nil, &WriteError{Err: errors.New("result does not parse")}
 	}
+	if err := checkAliasEffects(current, next, ch); err != nil {
+		return nil, err
+	}
 	if err := s.writeAtomic(dir, state, out); err != nil {
 		return nil, err
 	}
@@ -167,6 +170,28 @@ func (s *Service) applyLocked(profile string, ch Changes, running bool) ([]Chang
 		changes = []Change{}
 	}
 	return changes, nil
+}
+
+// checkAliasEffects compares the resolved profiles before and after the edit.
+// Editing an anchored scalar also changes its aliases, and those fields skip
+// validation, so any field outside ch that changed value is refused, and each
+// requested field must have resolved to exactly the requested value.
+func checkAliasEffects(current, next *Profile, ch Changes) error {
+	if (ch.CPU != nil && (next.CPU == nil || *next.CPU != *ch.CPU)) ||
+		(ch.Memory != nil && (next.Memory == nil || *next.Memory != *ch.Memory)) ||
+		(ch.Disk != nil && (next.Disk == nil || *next.Disk != *ch.Disk)) {
+		return ErrAliasedValue
+	}
+	for _, c := range Diff(current, next, true) {
+		switch {
+		case c.Field == "cpu" && ch.CPU != nil:
+		case c.Field == "memory" && ch.Memory != nil:
+		case c.Field == "disk" && ch.Disk != nil:
+		default:
+			return ErrAliasedValue
+		}
+	}
+	return nil
 }
 
 // singleDocument rejects input with a second YAML document.

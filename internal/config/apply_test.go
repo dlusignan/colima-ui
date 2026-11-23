@@ -681,6 +681,16 @@ func TestApplyAliasValueReplacedWithPlainScalar(t *testing.T) {
 	}
 }
 
+func TestApplyQuotedValueBecomesPlain(t *testing.T) {
+	e := newEnv(t, "cpu: !!int \"4\"\nmemory: 4\n")
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(5)}); err != nil {
+		t.Fatal(err)
+	}
+	if c := e.content(t); c != "cpu: 5\nmemory: 4\n" {
+		t.Fatalf("content = %q", c)
+	}
+}
+
 func TestApplyQuotedAndNullValues(t *testing.T) {
 	e := newEnv(t, "cpu:\nmemory: 4\n")
 	if _, err := e.svc.Apply("default", Changes{CPU: ip(4)}); err != nil {
@@ -749,4 +759,106 @@ func FuzzApply(f *testing.F) {
 			t.Fatalf("stray: %v", s)
 		}
 	})
+}
+
+func TestApplyAnchorAliasEffects(t *testing.T) {
+	for _, tc := range []struct {
+		name, in string
+		ch       Changes
+		wantErr  bool
+		want     string
+	}{
+		{"alias disk would shrink", "cpu: &n 100\ndisk: *n\n", Changes{CPU: ip(2)}, true, ""},
+		{"alias rootDisk would truncate", "memory: &n 4\nrootDisk: *n\n", Changes{Memory: fp(2.5)}, true, ""},
+		{"alias untyped key", "cpu: &n 2\nfoo: *n\n", Changes{CPU: ip(3)}, true, ""},
+		{"alias field in set but unchanged", "cpu: &n 4\ndisk: *n\n", Changes{CPU: ip(2), Disk: ip(4)}, true, ""},
+		{"anchor without aliases", "cpu: &n 2\ndisk: 60\n", Changes{CPU: ip(3)}, false, "cpu: &n 3\ndisk: 60\n"},
+		{"alias field also in change set", "cpu: &n 4\ndisk: *n\n", Changes{CPU: ip(2), Disk: ip(50)}, false, "cpu: &n 2\ndisk: 50\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, tc.in)
+			_, err := e.svc.Apply("default", tc.ch)
+			if tc.wantErr {
+				if !errors.Is(err, ErrAliasedValue) {
+					t.Fatalf("err = %v", err)
+				}
+				if e.content(t) != tc.in || len(e.strays(t)) != 0 {
+					t.Fatalf("wrote: %q %v", e.content(t), e.strays(t))
+				}
+				return
+			}
+			if err != nil || e.content(t) != tc.want {
+				t.Fatalf("err = %v content = %q", err, e.content(t))
+			}
+		})
+	}
+}
+
+func TestApplyFinalCheckBeforeRename(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(e *env) (hook func())
+		want  error
+	}{
+		{"file removed", func(e *env) func() { return func() { os.Remove(e.file) } }, ErrConflict},
+		{"symlink repointed", func(e *env) func() {
+			a, b := filepath.Join(t.TempDir(), "a.yaml"), filepath.Join(t.TempDir(), "b.yaml")
+			os.WriteFile(a, []byte(basic), 0o644)
+			os.WriteFile(b, []byte(basic), 0o644) // same content, so only the target differs
+			os.Remove(e.file)
+			os.Symlink(a, e.file)
+			return func() { os.Remove(e.file); os.Symlink(b, e.file) }
+		}, ErrConflict},
+		{"swapped for non-regular", func(e *env) func() {
+			return func() { os.Remove(e.file); os.Mkdir(e.file, 0o755) }
+		}, ErrConflict},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t, basic)
+			e.svc.beforeRename = tc.setup(e)
+			_, err := e.svc.Apply("default", Changes{CPU: ip(3)})
+			if !errors.Is(err, tc.want) && !errors.Is(err, ErrUnwritableTarget) {
+				t.Fatalf("err = %v", err)
+			}
+			if err == nil {
+				t.Fatal("want error")
+			}
+			if fi, lerr := os.Lstat(e.file); lerr == nil && fi.Mode().IsRegular() {
+				if e.content(t) == strings.Replace(basic, "cpu: 2", "cpu: 3", 1) {
+					t.Fatal("new content written")
+				}
+			}
+		})
+	}
+}
+
+func TestApplyHardLinkedTargetRefused(t *testing.T) {
+	e := newEnv(t, basic)
+	if err := os.Link(e.file, filepath.Join(e.dir, "second.yaml")); err != nil {
+		t.Skip("hard links unsupported")
+	}
+	_, err := e.svc.Apply("default", Changes{CPU: ip(3)})
+	if !errors.Is(err, ErrUnwritableTarget) {
+		t.Fatalf("err = %v", err)
+	}
+	if e.content(t) != basic {
+		t.Fatal("wrote")
+	}
+}
+
+func TestApplyMergeKeyAndCRLFLosses(t *testing.T) {
+	e := newEnv(t, "base: &b {runtime: docker}\n<<: *b\ncpu: 2\n")
+	if _, err := e.svc.Apply("default", Changes{CPU: ip(3)}); err != nil {
+		t.Fatal(err)
+	}
+	if c := e.content(t); !strings.Contains(c, "!!merge <<: *b") {
+		t.Errorf("merge key: %q", c)
+	}
+	e2 := newEnv(t, "cpu: 2\r\nmemory: 4\r\n")
+	if _, err := e2.svc.Apply("default", Changes{CPU: ip(3)}); err != nil {
+		t.Fatal(err)
+	}
+	if c := e2.content(t); c != "cpu: 3\nmemory: 4\n" {
+		t.Errorf("crlf: %q", c)
+	}
 }
