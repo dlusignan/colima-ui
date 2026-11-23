@@ -53,3 +53,15 @@ type InvalidProfileError struct {
 func (e *InvalidProfileError) Error() string {
 	return fmt.Sprintf("invalid profile name %q: %s", e.Name, e.Reason)
 }
+
+// InvalidOptionError reports a start option that failed validation. Field is
+// the colima flag name without dashes. The rejected value is deliberately not
+// kept or printed, because it is caller-supplied text.
+type InvalidOptionError struct {
+	Field  string
+	Reason string
+}
+
+func (e *InvalidOptionError) Error() string {
+	return fmt.Sprintf("invalid start option %s: %s", e.Field, e.Reason)
+}
