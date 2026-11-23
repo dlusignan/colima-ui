@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Colima UI is a local web interface on top of Colima (VM profiles: start/stop/restart/config, plus visibility into VM capacity vs. actual usage per container). The repo is hosted at github.com/dlusignan/colima-ui. The Go backend scaffold exists (module `github.com/dlusignan/colima-ui`, entry point `cmd/colima-ui`, one package per C4 backend component under `internal/`). Only `internal/httpapi` has code so far (loopback server and `GET /healthz`); the other packages hold just a package comment. `C4_Architecture.md` is Draft 0.1 (C4 levels 1–3; level 4 intentionally deferred).
+Colima UI is a local web interface on top of Colima (VM profiles: start/stop/restart/config, plus visibility into VM capacity vs. actual usage per container). The repo is hosted at github.com/dlusignan/colima-ui. Every backend component and every planned view is built and merged (module `github.com/dlusignan/colima-ui`, entry point `cmd/colima-ui`, one package per C4 backend component under `internal/`, the React app in `web/`). The README's "New features" section lists what is done and what is planned; keep it current whenever a feature merges. The enhanced Docker view (images, volumes, networks, engine facts, richer containers) is tracked as issues #78 to #86, and container logs (#86) wait on an owner decision. `C4_Architecture.md` is the design source of truth (C4 levels 1–3; level 4 intentionally deferred).
 
 ## Commands
 
@@ -43,7 +43,7 @@ The React app lives in `web/` (Vite, React, TypeScript strict, Tailwind CSS v4, 
 
 ## Planned architecture
 
-Three C4 "containers": a React SPA, a Go backend (standard library `net/http`, Docker Go SDK), and a SQLite history file (pure-Go `modernc.org/sqlite`, no cgo). The backend embeds the built frontend, so the product ships as one binary running on the developer's machine only.
+Three C4 "containers": a React SPA, a Go backend (standard library `net/http`, a small hand-written Docker Engine client in `internal/dockerc`), and a SQLite history file (pure-Go `modernc.org/sqlite`, no cgo). The backend embeds the built frontend, so the product ships as one binary running on the developer's machine only.
 
 Invariants that span multiple components:
 
@@ -53,7 +53,7 @@ Invariants that span multiple components:
 - **Config Service treats the YAML files as authority.** It validates values against allowed ranges, reports which changes need a VM restart, and refuses to write while an operation is running on that profile.
 - **Metrics Sampler** (ticker) records allocated (config) vs. used (VM and per-container) figures into the History Store (in-memory ring buffer plus SQLite, with retention cleanup) and publishes live values over SSE.
 - **HTTP Layer is thin**: routing, auth, static assets; no Colima knowledge.
-- Container and image data uses the Docker Engine API (Go SDK over the Colima-exposed Unix socket), not CLI parsing.
+- Container and image data uses the Docker Engine API (a hand-written client over the Colima-exposed Unix socket), not CLI parsing.
 - Frontend: React with a query cache library for REST data and a single SSE connection for live data. Planned views: dashboard, profile detail, capacity charts, config editor, operation log (xterm.js), plus a Cmd+K command palette (cmdk). Styling is Tailwind CSS with shadcn/ui components copied into the repo (not a dependency), a dark terminal-style default, and themes driven by CSS variables (a light theme ships too). Charts use uPlot, with Recharts as fallback. Retro component libraries (NES.css, 98.css) are deliberately avoided. See the C4 doc's "Frontend visual design" section.
 
 ## Security requirements

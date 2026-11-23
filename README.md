@@ -4,9 +4,37 @@ A local web interface for Colima. Manage your profiles, see what your VM is allo
 
 Colima UI runs on your machine as a single binary. It reads Colima's own state (the `colima` CLI, the profile YAML files and the Docker API), so it stays correct when you also use `colima` in a terminal. It never holds a copy of the current state.
 
-## Status
+## New features
 
-The project is under construction. The backend and the frontend shell exist, but not everything the design describes is reachable yet. What works in the binary built from `main` today:
+### Done: available in the binary built from `main`
+
+1. **Dashboard.** One row per Colima profile with its status, runtime, CPUs, memory, disk, Colima version, source and warnings. Start, Stop and Restart buttons act on the real VM; Stop and Restart ask for confirmation first.
+2. **Profile page.** Status header with the same actions, a configuration summary, the containers of the VM (name, image, state, CPU and memory) and the recent action log, with links to the other tabs.
+3. **Configuration editor.** Change a profile's CPUs, memory and disk with validation in the browser and again on the server. It tells you when a change needs a restart and offers to restart, and it warns before you leave with unsaved changes.
+4. **Capacity view.** What the VM is allocated versus what it really uses, as live charts for CPU, memory and disk over a chosen time range, plus a per-container table. Each chart has a "Show data" table for screen readers.
+5. **Operation log.** The output of every start, stop and restart in a terminal view, live while the job runs and available after it finishes.
+6. **Command palette and shortcuts.** `Cmd+K` opens a palette to jump to any profile tab, start, stop or restart a profile, or switch theme. `Cmd+/` lists the keyboard shortcuts.
+7. **Themes.** Six themes (Mocha, Light, Tokyo Night, Gruvbox, Nord and Dracula) plus System, which follows your operating system.
+8. **Live updates.** One event stream carries job output, job completion and metric samples to the browser, so the operation log and the capacity charts update as things happen. The dashboard also refreshes its profile list every few seconds.
+9. **History.** A metrics sampler records VM and per-container usage every 5 seconds, and an action log records every finished job and every applied config change. Both live in a local SQLite file.
+
+If the history file cannot be opened (for example a newer version wrote it), the binary refuses to start and says so, because the file holds history only and can be deleted to start fresh.
+
+### Added to the backlog this round: planned, not built yet
+
+An enhanced Docker view. Today the app shows containers only. The plan, tracked as issues #78 to #86, is:
+
+1. **Richer containers** (#78, #82): status text such as "Exited (0) 3 days ago", published ports and creation time.
+2. **Docker tab** (#79, #83): a new profile tab, starting with an Images section (tags, size, creation time and how many containers use each image).
+3. **Volumes and networks** (#80, #84): what holds your data and which networks exist.
+4. **Engine overview** (#81, #85): Docker version, container and image counts, and a breakdown of Docker's disk usage.
+5. **Container logs** (#86): waiting on a decision about a read-only snapshot versus a live follow mode.
+
+Also under discussion, with no issues yet: creating a new profile (VM) from the interface, with the settings Colima accepts at creation. Colima has no rename command, so renaming is not planned.
+
+This list moves from "planned" to "done" as each issue merges.
+
+## What the backend serves
 
 1. A loopback HTTP server with the token, Host and Origin checks described below.
 2. `GET /healthz`, which needs no token.
@@ -14,13 +42,11 @@ The project is under construction. The backend and the frontend shell exist, but
 4. Start, stop and restart of a profile as jobs, plus job status and cancel: `GET /api/jobs/{id}` and `POST /api/jobs/{id}/cancel`. Jobs run one at a time per profile.
 5. Live per-container usage for a profile: `GET /api/profiles/{name}/containers`, read from the Docker API over the Colima socket.
 6. Reading and editing a profile's resources: `GET` and `PUT /api/profiles/{name}/config`. A write is validated, applied atomically to the profile file and refused while a job runs on that profile.
-7. The embedded React app, with a working operation log view. The dashboard, profile, capacity and config views are placeholders.
+7. The event stream: `GET /api/events` (Server Sent Events) carries `job.output` and `job.finished` for every job, and a `metric` event for each sample.
+8. The history route `GET /api/profiles/{name}/metrics`, fed by the sampler.
+9. The action log route `GET /api/profiles/{name}/actions`.
 
-8. The event stream: `GET /api/events` (Server Sent Events) carries `job.output` and `job.finished` for every job, and a `metric` event for each sample.
-9. The metrics sampler, which reads VM and per-container usage every 5 seconds and refreshes when a job finishes, and the history route `GET /api/profiles/{name}/metrics`.
-10. The action log: every finished job and every applied config change is recorded, and `GET /api/profiles/{name}/actions` lists the recent rows.
-
-Every backend component in the design is wired. If the history file cannot be opened (for example a newer version wrote it), the binary refuses to start and says so, because the file holds history only and can be deleted to start fresh.
+The full contract is in [`docs/api.md`](docs/api.md).
 
 ## Requirements
 
