@@ -411,7 +411,7 @@ By design the API has no route for arbitrary commands, container control, profil
 
 `GET /api/events` returns `text/event-stream`. There is one connection per browser tab. Token: yes.
 
-Query parameters, both optional: `profile={name}` limits events to one profile, and `job={id}` limits `job.output` and `job.finished` to one job.
+Query parameters, both optional: `profile={name}` limits events to one profile, and `job={id}` limits `job.output` and `job.finished` to one job. A `metric` event is not tied to a job, so it passes a `job` filter.
 
 ### 5.1 Token transport
 
