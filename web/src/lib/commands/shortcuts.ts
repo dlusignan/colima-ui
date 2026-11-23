@@ -6,7 +6,7 @@
 export type ShortcutId = 'palette' | 'help' | 'start' | 'stop' | 'restart'
 
 export interface Shortcut {
-  id: ShortcutId
+  id: ShortcutId | 'toasts'
   /** Shown in the help dialog. */
   keys: string
   description: string
@@ -55,5 +55,14 @@ export const shortcuts: readonly Shortcut[] = [
     description: 'Restart the selected profile (asks first)',
     inEditable: false,
     matches: (e) => altShift(e, 'KeyR'),
+  },
+  {
+    // Base UI's toast viewport listens for F6 itself and moves focus into the
+    // notifications, so this row only documents it and never matches here.
+    id: 'toasts',
+    keys: 'F6',
+    description: 'Move focus to the notifications',
+    inEditable: true,
+    matches: () => false,
   },
 ]

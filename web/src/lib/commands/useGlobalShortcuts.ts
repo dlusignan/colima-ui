@@ -21,7 +21,7 @@ export function useGlobalShortcuts(paletteOpen: boolean, onShortcut: (id: Shortc
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.repeat) return
       const shortcut = shortcuts.find((s) => s.matches(e))
-      if (!shortcut) return
+      if (!shortcut || shortcut.id === 'toasts') return
       const { paletteOpen: open, onShortcut: fire } = latest.current
       const dialogOpen = document.querySelector(DIALOG) !== null
       if (shortcut.id === 'palette') {
