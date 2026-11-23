@@ -2,6 +2,7 @@ import { request } from './client'
 import type {
   ActionList,
   ConfigUpdate,
+  CreateProfileRequest,
   ConfigUpdateResult,
   ContainerList,
   ContainerLogs,
@@ -14,6 +15,7 @@ import type {
   NetworkList,
   Profile,
   ProfileConfig,
+  ProfileCreated,
   ProfileList,
   VolumeList,
 } from './types'
@@ -37,6 +39,8 @@ export const api = {
     request<ProfileList>('GET', '/api/profiles', { signal }),
   getProfile: (name: string, signal?: AbortSignal) =>
     request<Profile>('GET', `/api/profiles/${enc(name)}`, { signal }),
+  createProfile: (body: CreateProfileRequest) =>
+    request<ProfileCreated>('POST', '/api/profiles', { body }),
   startProfile: (name: string) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/start`),
   stopProfile: (name: string) =>

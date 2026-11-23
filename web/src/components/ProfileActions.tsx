@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
-import type { JobAction, Profile } from '@/lib/api/types'
+import type { ProfileAction, Profile } from '@/lib/api/types'
 import { actionsDisabled, CONFIRM } from './profileActionRules'
 
 interface ProfileActionsProps {
@@ -8,7 +8,7 @@ interface ProfileActionsProps {
   /** A job is running, or a request is in flight, for this profile. */
   busy: boolean
   unavailable: boolean
-  onAction: (action: JobAction) => void
+  onAction: (action: ProfileAction) => void
 }
 
 /** Start, Stop and Restart for one row. Stop and Restart ask for confirmation. */

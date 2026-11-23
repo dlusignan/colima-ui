@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -117,7 +118,8 @@ func (m *Manager) Submit(r Request) (JobSummary, error) {
 		m.mu.Unlock()
 		return JobSummary{}, ErrClosed
 	}
-	if s, ok := m.slots[r.Profile]; ok {
+	key := slotKey(r.Profile)
+	if s, ok := m.slots[key]; ok {
 		busy := &BusyError{Profile: r.Profile}
 		if s.job != nil {
 			busy.JobID = s.job.id
@@ -147,14 +149,14 @@ func (m *Manager) Submit(r Request) (JobSummary, error) {
 		startedAt: m.opts.Now(),
 		ring:      newOutputRing(m.opts.MaxLines, m.opts.MaxBytes),
 	}
-	m.slots[r.Profile] = &slot{job: j}
+	m.slots[key] = &slot{job: j}
 	m.wg.Add(1)
 	m.mu.Unlock()
 
 	proc, err := m.launch(ctx, r)
 	if err != nil {
 		m.mu.Lock()
-		delete(m.slots, r.Profile)
+		delete(m.slots, key)
 		m.mu.Unlock()
 		cancel()
 		m.wg.Done()
@@ -200,8 +202,8 @@ func (m *Manager) pump(j *job, proc colima.Process) {
 	j.finish(state, code, exit.Tail, m.opts.Now())
 
 	m.mu.Lock()
-	if s, ok := m.slots[j.profile]; ok && s.job == j {
-		delete(m.slots, j.profile)
+	if key := slotKey(j.profile); m.slots[key] != nil && m.slots[key].job == j {
+		delete(m.slots, key)
 	}
 	m.finished = append(m.finished, j.id)
 	for len(m.finished) > m.opts.RetainFinished {
@@ -256,7 +258,7 @@ func (m *Manager) Cancel(ctx context.Context, id string) (JobSummary, error) {
 func (m *Manager) Busy(profile string) (jobID string, running bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if s, ok := m.slots[profile]; ok && s.job != nil {
+	if s, ok := m.slots[slotKey(profile)]; ok && s.job != nil {
 		return s.job.id, true
 	}
 	return "", false
@@ -274,18 +276,19 @@ func (m *Manager) TryExclusive(profile string, fn func() error) (held bool, err 
 		m.mu.Unlock()
 		return false, ErrClosed
 	}
-	if _, ok := m.slots[profile]; ok {
+	key := slotKey(profile)
+	if _, ok := m.slots[key]; ok {
 		m.mu.Unlock()
 		return false, nil
 	}
 	s := &slot{}
-	m.slots[profile] = s
+	m.slots[key] = s
 	m.wg.Add(1)
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		if m.slots[profile] == s {
-			delete(m.slots, profile)
+		if m.slots[key] == s {
+			delete(m.slots, key)
 		}
 		m.mu.Unlock()
 		m.wg.Done()
@@ -322,3 +325,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+// slotKey folds a profile name for the slot table. Colima's folders sit on a
+// case-insensitive filesystem by default, so Dev and dev are one profile and
+// must never hold two slots. Jobs keep the spelling that was requested.
+func slotKey(profile string) string { return strings.ToLower(profile) }

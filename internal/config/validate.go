@@ -102,6 +102,36 @@ func Validate(p *Profile, lim Limits, current *Profile) []FieldError {
 	return errs
 }
 
+// ValidateNew checks a profile that is about to be created. It runs Validate
+// with no stored profile (so the disk-shrink rule is off). Creation-only rules
+// belong here and not in Validate, which also runs against stored profiles on
+// every config PUT: a new rule there could start failing a PUT for a
+// hand-edited file. The rules:
+//
+//  1. A Kubernetes version without Kubernetes enabled: the flag would go out
+//     alone and mean nothing.
+//
+// The combinations Colima itself refuses (Kubernetes with incus, 9p with vz)
+// could not be confirmed from `colima start --help`, so they surface as a
+// failed job with its output.
+func ValidateNew(p *Profile, lim Limits) []FieldError {
+	errs := Validate(p, lim, nil)
+	if p != nil && p.Kubernetes.Version != "" && (p.Kubernetes.Enabled == nil || !*p.Kubernetes.Enabled) &&
+		!hasField(errs, "kubernetes.version") {
+		errs = append(errs, FieldError{Field: "kubernetes.version", Message: "requires kubernetes to be enabled"})
+	}
+	return errs
+}
+
+func hasField(errs []FieldError, field string) bool {
+	for _, e := range errs {
+		if e.Field == field {
+			return true
+		}
+	}
+	return false
+}
+
 // checkMountPath returns a problem description or "". Paths use forward
 // slashes (they are host or guest POSIX paths).
 func checkMountPath(p string, required bool) string {

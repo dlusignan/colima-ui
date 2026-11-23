@@ -2,6 +2,8 @@ package operations
 
 import (
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -86,4 +88,68 @@ func TestTryExclusiveAfterShutdown(t *testing.T) {
 	if held, err := m.TryExclusive("p", func() error { return nil }); held || !errors.Is(err, ErrClosed) {
 		t.Fatalf("held %v err %v", held, err)
 	}
+}
+
+func TestSlotsAreCaseInsensitive(t *testing.T) {
+	m, l, _ := newTestManager(t, nil)
+	s := mustSubmit(t, m, "Dev")
+	var busy *BusyError
+	if _, err := m.Submit(Request{Action: ActionCreate, Profile: "dEV"}); !errors.As(err, &busy) || busy.JobID != s.ID || busy.Profile != "dEV" {
+		t.Fatalf("Submit other case err = %v", err)
+	}
+	if id, running := m.Busy("DEV"); !running || id != s.ID {
+		t.Fatalf("Busy = %q, %v", id, running)
+	}
+	if held, err := m.TryExclusive("dev", func() error { t.Error("fn ran"); return nil }); held || err != nil {
+		t.Fatalf("TryExclusive held %v err %v", held, err)
+	}
+	if got := s.Profile; got != "Dev" {
+		t.Fatalf("job profile = %q, want the requested spelling", got)
+	}
+	l.last().exitWith(0)
+	waitState(t, m, s.ID, StateSucceeded)
+	eventually(t, "slot free", func() bool { _, r := m.Busy("dev"); return !r })
+	mustSubmit(t, m, "dev")
+}
+
+func TestExclusiveHoldBlocksOtherCaseSubmit(t *testing.T) {
+	m, _, _ := newTestManager(t, nil)
+	held, err := m.TryExclusive("Dev", func() error {
+		var busy *BusyError
+		if _, serr := m.Submit(Request{Action: ActionCreate, Profile: "dev"}); !errors.As(serr, &busy) {
+			t.Errorf("Submit err = %v, want BusyError", serr)
+		}
+		return nil
+	})
+	if !held || err != nil {
+		t.Fatalf("held %v err %v", held, err)
+	}
+}
+
+func TestConcurrentCreatesOnCaseVariantsLaunchOnce(t *testing.T) {
+	m, l, _ := newTestManager(t, nil)
+	names := []string{"dev", "Dev", "DEV", "dEv"}
+	var wg sync.WaitGroup
+	var ok, busy atomic.Int32
+	for _, n := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := m.Submit(Request{Action: ActionCreate, Profile: n})
+			var be *BusyError
+			switch {
+			case err == nil:
+				ok.Add(1)
+			case errors.As(err, &be):
+				busy.Add(1)
+			default:
+				t.Errorf("err = %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	if ok.Load() != 1 || busy.Load() != int32(len(names)-1) || l.count() != 1 {
+		t.Fatalf("ok %d busy %d launches %d", ok.Load(), busy.Load(), l.count())
+	}
+	l.last().exitWith(0)
 }

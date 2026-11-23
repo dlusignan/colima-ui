@@ -247,3 +247,37 @@ func assertNoPath(t *testing.T, err error, base string) {
 		t.Errorf("error leaks path: %v", err)
 	}
 }
+
+func TestProfileFolderExists(t *testing.T) {
+	base := t.TempDir()
+	for _, d := range []string{"dev", "emptydir", "_templates"} {
+		if err := os.Mkdir(filepath.Join(base, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(base, "afile"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{
+		"dev": true, "Dev": true, "DEV": true, "emptydir": true, "EmptyDir": true, "afile": true,
+		"ghost": false, "dev2": false, "de": false,
+	} {
+		got, err := s.ProfileFolderExists(name)
+		if err != nil || got != want {
+			t.Errorf("%s: %v %v, want %v", name, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "..", "a/b", "-x", "_templates"} {
+		if _, err := s.ProfileFolderExists(bad); !errors.Is(err, ErrInvalidProfileName) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+	missing, _ := New(filepath.Join(base, "nope"))
+	if got, err := missing.ProfileFolderExists("dev"); got || err != nil {
+		t.Errorf("missing base: %v %v", got, err)
+	}
+}

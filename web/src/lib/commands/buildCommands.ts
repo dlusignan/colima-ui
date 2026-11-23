@@ -1,12 +1,12 @@
 import type { AppRoute } from '@/app/types'
 import { actionsDisabled } from '@/components/profileActionRules'
-import type { JobAction, Profile } from '@/lib/api/types'
+import type { ProfileAction, Profile } from '@/lib/api/types'
 import type { ThemeDef } from '@/lib/theme'
 
 /** What choosing a command does. Data, so the list is testable without cmdk. */
 export type CommandIntent =
   | { type: 'navigate'; to: string }
-  | { type: 'action'; profile: string; action: JobAction }
+  | { type: 'action'; profile: string; action: ProfileAction }
   | { type: 'theme'; id: string }
   | { type: 'help' }
 
@@ -29,7 +29,7 @@ interface BuildInput {
   tabs: readonly AppRoute[]
 }
 
-const ACTIONS: { action: JobAction; label: string }[] = [
+const ACTIONS: { action: ProfileAction; label: string }[] = [
   { action: 'start', label: 'Start' },
   { action: 'stop', label: 'Stop' },
   { action: 'restart', label: 'Restart' },

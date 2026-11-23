@@ -33,7 +33,30 @@ export interface JobRef {
   jobId: string
 }
 
-export type JobAction = 'start' | 'stop' | 'restart'
+/** Body of POST /api/profiles. Only name is required; a missing setting keeps Colima's default. */
+export interface CreateProfileRequest {
+  name: string
+  cpus?: number
+  memoryGiB?: number
+  diskGiB?: number
+  rootDiskGiB?: number
+  runtime?: string
+  vmType?: string
+  arch?: string
+  mountType?: string
+  kubernetes?: boolean
+  kubernetesVersion?: string
+}
+
+export interface ProfileCreated {
+  jobId: string
+  profile: string
+}
+
+/** What a profile's buttons can start. */
+export type ProfileAction = 'start' | 'stop' | 'restart'
+/** What a job can be doing: a profile action, or creating the profile (POST /api/profiles, 3.17). */
+export type JobAction = ProfileAction | 'create'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {

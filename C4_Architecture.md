@@ -149,6 +149,8 @@ Starting a profile. The user clicks start. The browser posts to the API. The HTT
 
 Viewing capacity. The Metrics Sampler wakes on its interval, reads VM and container figures, writes them to the History Store, and publishes the latest values. The capacity view loads recent history over REST, then keeps itself current from the event stream.
 
+Creating a profile. The user submits a name and basic settings. The route validates every value, refuses a name that already exists (in Colima's list or as a folder, in any letter case) and asks the Operation Manager for a `create` job, which runs `colima start` on the new name. From there it behaves like a start.
+
 Editing configuration. The user changes CPU, memory or disk. The Config Service validates the values, writes the YAML, and returns a list of changes that need a restart. The UI shows that cost and offers a restart, which runs as a normal operation.
 
 ## 6. Security Boundaries
@@ -237,6 +239,7 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Shutdown order | Event streams end first, then the HTTP server stops, then the sampler, the Operation Manager, the action log recorder and finally the History Store | An open stream would otherwise hold the HTTP shutdown for its whole timeout, and the recorder must drain after the manager so the last finished job is written before the store closes. |
 | Finished job output | Kept in memory only. After a backend restart a finished job shows its action log summary and no output | Matches the API contract, which already treats output after a restart as unavailable. |
 | Container logs | A read-only snapshot of the last 200 lines by default (at most 1000) per container, fetched on demand. No streaming and no follow mode | Container output can contain secrets, and a live stream needs bounds on followers and retained output. The snapshot keeps the backend stateless and bounded (64 KiB per frame, 4000 characters per line, 512 KiB per response). A follow mode can be added later on top of it. |
+| Profile creation | Allowed from the UI, basic settings first (name, CPUs, memory, disk, root disk, runtime, VM type, architecture, mount type, Kubernetes). Advanced settings, mounts and environment variables come later. Colima has no rename, and there is no delete route yet. Creation is a `create` job (a `colima start` on a new name) through the Operation Manager, refused when the name exists in any letter case. A failed creation can leave a half-created profile that the user removes in a terminal | Creation is the first thing a new user needs. Reusing the job pipeline gives streamed output and an action log row for free. Colima accepts any start on an unknown name, so the route itself must refuse existing names or a create would silently rewrite a profile's settings. The operation slots are keyed by lowercase name because the default macOS filesystem treats `Dev` and `dev` as one folder. |
 
 ## 10. Open Questions
 

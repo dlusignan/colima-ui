@@ -52,6 +52,8 @@ type app struct {
 	runner colimaRunner
 	mgr    *operations.Manager
 	gate   httpapi.ProfileGate
+	// creator is the #97 create route's backend.
+	creator httpapi.ProfileCreator
 
 	// #18 config
 	configSvc *config.Service
@@ -161,9 +163,12 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 	if err != nil {
 		return nil, fmt.Errorf("open colima folder: %w", err)
 	}
-	a.gate = profileGate{runner: runner, files: svc}
+	gate := profileGate{runner: runner, files: svc, folders: svc}
+	a.gate = gate
+	// One set of host caps for the config PUT (its default) and for creation.
+	lim := config.DefaultLimits()
 	a.mgr = operations.New(operations.Options{
-		Launcher: operations.ColimaLauncher{S: runner},
+		Launcher: operations.ColimaLauncher{S: runner, Limits: colimaLimits(lim)},
 		// Called in order from the job's pump, none of them blocks: the action
 		// log queues, the hub never blocks, and Refresh only signals. The
 		// sampler is built below, so it is read lazily like a.mgr above.
@@ -173,6 +178,8 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 			refreshObserver{refresh: func() { a.refresh() }},
 		},
 	})
+
+	a.creator = profileCreator{mgr: a.mgr, exists: gate.ProfileExists, limits: lim}
 
 	// #18 config
 	// A second Service with the gate: the one above only lists profiles and
@@ -226,6 +233,9 @@ func (a *app) handler() http.Handler {
 
 	// #17 jobs
 	opts = append(opts, httpapi.WithJobs(a.mgr, a.gate))
+
+	// #97 create
+	opts = append(opts, httpapi.WithCreate(a.creator))
 
 	// #18 config
 	opts = append(opts, httpapi.WithConfig(a.configSvc, a.mgr))

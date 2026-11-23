@@ -52,6 +52,22 @@ describe('useJobTracker', () => {
     expect(result.current.jobs.has('synthetic-a')).toBe(false)
   })
 
+  it('follows a create job and holds its failed outcome', async () => {
+    const get = vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_c', action: 'create' }))
+    const client = createTestClient()
+    const { result } = renderHook(() => useJobTracker([profileFixture({ activeJobId: 'j_c' })]), {
+      wrapper: wrapperFor(client),
+    })
+    await waitFor(() =>
+      expect(result.current.jobs.get('synthetic-a')).toMatchObject({ action: 'create', state: 'running' }),
+    )
+    get.mockResolvedValue(jobFixture({ id: 'j_c', action: 'create', state: 'failed', exitCode: 2 }))
+    await act(() => client.invalidateQueries({ queryKey: queryKeys.job('j_c') }))
+    await waitFor(() =>
+      expect(result.current.jobs.get('synthetic-a')).toMatchObject({ action: 'create', state: 'failed', exitCode: 2 }),
+    )
+  })
+
   it('adopts a job id from a profile_busy answer', async () => {
     vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_7', action: 'restart' }))
     const { result } = renderHook(() => useJobTracker([profileFixture()]), {

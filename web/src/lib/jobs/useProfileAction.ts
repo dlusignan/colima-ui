@@ -1,9 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api/endpoints'
 import { queryKeys } from '@/lib/api/keys'
-import type { JobAction, JobRef, ProfileList } from '@/lib/api/types'
+import type { ProfileAction, JobRef, ProfileList } from '@/lib/api/types'
 
-function call(action: JobAction, name: string): Promise<JobRef> {
+function call(action: ProfileAction, name: string): Promise<JobRef> {
   switch (action) {
     case 'start':
       return api.startProfile(name)
@@ -23,7 +23,7 @@ function call(action: JobAction, name: string): Promise<JobRef> {
 export function useProfileAction(profile: string) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ action }: { action: JobAction }) => call(action, profile),
+    mutationFn: ({ action }: { action: ProfileAction }) => call(action, profile),
     onSuccess: ({ jobId }) => {
       queryClient.setQueryData<ProfileList>(queryKeys.profiles, (list) =>
         list && {

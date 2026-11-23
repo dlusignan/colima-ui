@@ -16,11 +16,46 @@ type profileLister interface{ ListProfiles() ([]string, error) }
 
 // profileGate is the production httpapi.ProfileGate. It decides which names
 // the operation routes may pass to colima. That matters because
-// `colima start -p <new name>` creates a profile and the API has no create
-// route, so an unknown name must never get through.
+// `colima start -p <new name>` creates a profile, so an unknown name must never
+// get through those routes; creation has its own route and checks (ProfileExists).
 type profileGate struct {
-	runner colima.Runner
-	files  profileLister // nil when no config folder is known
+	runner  colima.Runner
+	files   profileLister // nil when no config folder is known
+	folders folderChecker // nil when no config folder is known
+}
+
+// folderChecker reports whether the Colima folder holds an entry for a name in
+// any letter case. *config.Service satisfies it.
+type folderChecker interface {
+	ProfileFolderExists(name string) (bool, error)
+}
+
+// ProfileExists reports whether a creation must treat name as taken: it is in
+// `colima list`, or the Colima folder holds an entry for it, in either case
+// comparing names ignoring letter case (the default macOS filesystem does).
+// Unlike ProfileStatus, "default" is not special: it exists only if listed or
+// it has a folder. The name must pass both validators first.
+func (g profileGate) ProfileExists(ctx context.Context, name string) (bool, error) {
+	if colima.ValidateProfile(name) != nil || config.ValidateProfileName(name) != nil {
+		return false, httpapi.ErrInvalidProfileName
+	}
+	list, err := colima.List(ctx, g.runner)
+	if err != nil {
+		return false, fmt.Errorf("list profiles: %w", err)
+	}
+	for _, in := range list {
+		if strings.EqualFold(in.Name, name) {
+			return true, nil
+		}
+	}
+	if g.folders != nil {
+		taken, err := g.folders.ProfileFolderExists(name)
+		if err != nil {
+			return false, fmt.Errorf("scan profile folders: %w", err)
+		}
+		return taken, nil
+	}
+	return false, nil
 }
 
 // ProfileStatus implements httpapi.ProfileGate.
