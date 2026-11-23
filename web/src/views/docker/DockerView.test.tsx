@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/lib/api/client'
 import { api } from '@/lib/api/endpoints'
-import type { DockerImage, DockerNetwork, DockerVolume, Profile } from '@/lib/api/types'
+import type { DockerImage, DockerNetwork, DockerVolume, EngineInfo, Profile } from '@/lib/api/types'
 import { expectNoA11yViolations } from '@/test/axe'
 import { profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
@@ -29,8 +29,21 @@ const networks: DockerNetwork[] = [
   { id: 'n2', name: 'synthetic-private', driver: 'bridge', scope: 'local', internal: true, containers: 0 },
 ]
 
+const engine: EngineInfo = {
+  version: '27.0.0',
+  apiVersion: '1.46',
+  os: 'linux',
+  arch: 'aarch64',
+  cpus: 4,
+  memoryBytes: 8 * 1024 ** 3,
+  containers: { total: 5, running: 3, paused: 0, stopped: 2 },
+  images: 7,
+  diskUsage: { imagesBytes: 2 * 1024 ** 3, containersBytes: 1024 ** 2, volumesBytes: 512 * 1024 ** 2, buildCacheBytes: 0, layersBytes: 1024 ** 3 },
+}
+
 function setup(profile: Profile = profileFixture({ name: 'dev', status: 'running' })) {
   vi.spyOn(api, 'listProfiles').mockResolvedValue({ profiles: [profile] })
+  vi.spyOn(api, 'getEngine').mockResolvedValue(engine)
   const getImages = vi.spyOn(api, 'getImages').mockResolvedValue({ images })
   const getVolumes = vi.spyOn(api, 'getVolumes').mockResolvedValue({ volumes })
   const getNetworks = vi.spyOn(api, 'getNetworks').mockResolvedValue({ networks })
@@ -113,11 +126,13 @@ describe('volumes section', () => {
     await expectNoA11yViolations(container)
   })
 
-  it('has a heading outline of Docker, Images, Volumes, Networks', async () => {
+  it('has a heading outline of Docker, Overview, Images, Volumes, Networks', async () => {
     setup()
     await screen.findByRole('table', { name: 'Networks in dev' })
     expect(screen.getAllByRole('heading').map((h) => [h.tagName, h.textContent])).toEqual([
       ['H2', 'Docker: dev'],
+      ['H3', 'Overview'],
+      ['H4', 'Disk usage'],
       ['H3', 'Images'],
       ['H3', 'Volumes'],
       ['H3', 'Networks'],

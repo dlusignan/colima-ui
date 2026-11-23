@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom'
 import { useProfiles } from '@/lib/api/useProfiles'
+import { OverviewSection } from './OverviewSection'
 import { ImagesSection } from './ImagesSection'
 import { NetworksSection } from './NetworksSection'
 import { VolumesSection } from './VolumesSection'
@@ -22,7 +23,7 @@ export function DockerView() {
   } else {
     body = (
       <>
-        {/* The engine overview card (issue #85) goes here, above the sections. */}
+        <OverviewSection profile={profile} />
         <ImagesSection profile={profile} />
         <VolumesSection profile={profile} />
         <NetworksSection profile={profile} />
