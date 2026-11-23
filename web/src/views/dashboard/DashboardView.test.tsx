@@ -9,6 +9,7 @@ import type { Profile } from '@/lib/api/types'
 import { expectNoA11yViolations } from '@/test/axe'
 import { jobFixture, profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
+import { CreateProfileProvider } from '@/views/create/CreateProfileProvider'
 import { DashboardView } from './DashboardView'
 
 afterEach(() => vi.restoreAllMocks())
@@ -20,7 +21,9 @@ function setup(profiles: Profile[] | Error) {
   const view = render(
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter>
-        <DashboardView />
+        <CreateProfileProvider>
+          <DashboardView />
+        </CreateProfileProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -80,6 +83,8 @@ describe('table', () => {
   it('tabs through name, start, stop, restart in order', async () => {
     const { user } = setup([stopped])
     await screen.findByRole('table', { name: 'Colima profiles' })
+    await user.tab()
+    expect(screen.getByRole('button', { name: 'New profile' })).toHaveFocus()
     await user.tab() // scroll region
     await user.tab()
     expect(screen.getByRole('link', { name: 'prod' })).toHaveFocus()
@@ -191,7 +196,9 @@ describe('states', () => {
     render(
       <QueryClientProvider client={createTestClient()}>
         <MemoryRouter>
-          <DashboardView />
+          <CreateProfileProvider>
+            <DashboardView />
+          </CreateProfileProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     )

@@ -9,6 +9,7 @@ export type CommandIntent =
   | { type: 'action'; profile: string; action: ProfileAction }
   | { type: 'theme'; id: string }
   | { type: 'help' }
+  | { type: 'create-profile' }
 
 export interface PaletteCommand {
   /** Unique; also the cmdk value. */
@@ -49,6 +50,12 @@ export function buildCommands({ profiles, currentProfile, busy, themes, tabs }: 
   const commands: PaletteCommand[] = [
     { label: 'Go to Dashboard', group: 'Navigate', keywords: ['home', 'profiles'], intent: { type: 'navigate', to: '/' } },
   ]
+  commands.push({
+    label: 'Create profile',
+    group: 'Profiles',
+    keywords: ['new', 'add', 'profile', 'vm'],
+    intent: { type: 'create-profile' },
+  })
   for (const p of ordered) {
     for (const tab of tabs) {
       commands.push({
