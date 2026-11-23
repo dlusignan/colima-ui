@@ -195,6 +195,10 @@ Errors:
 - `404` `profile_not_found`.
 - `409` `profile_busy`: another job is running on that profile. `details.jobId` is the running job.
 - `409` `invalid_state`: start on a running profile, or stop on a stopped one. `details.status` is the current status. Restart is allowed from either state.
+- `400` `bad_request`: the body is not empty or `{}`.
+- `502` `colima_failed`: Colima could not be queried or launched.
+- `503` `shutting_down`: the backend is stopping and accepts no new jobs.
+- `500` `internal_error`: unexpected failure.
 
 ### 3.5 `GET /api/jobs/{id}`
 
@@ -244,6 +248,8 @@ Errors:
 
 - `404` `job_not_found`.
 - `409` `job_not_running`: the job already finished. `details.state` holds its final state.
+- `400` `bad_request`: the body is not empty or `{}`.
+- `500` `internal_error`: the cancellation was not recorded within 10 seconds (a repeated cancel then returns `200` or `409`).
 
 ### 3.7 `GET /api/profiles/{name}/config`
 
