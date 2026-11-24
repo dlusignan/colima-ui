@@ -8,16 +8,23 @@ import { ApiError } from '@/lib/api/client'
 import { api } from '@/lib/api/endpoints'
 import { queryKeys } from '@/lib/api/keys'
 import { logPath } from '@/views/log/logPath'
+import { AdvancedFields, type RowHandlers } from './AdvancedFields'
+import { describe, SELECT_CLASS } from './formStyle'
+import { Message } from './formParts'
 import {
   buildRequest,
   EMPTY_VALUES,
   FIELD_NAMES,
+  fieldOrder,
+  isFieldKey,
+  MAX_DNS,
+  MAX_DNS_HOSTS,
   NUMBER_LIMITS,
+  requestRows,
   SELECT_OPTIONS,
   validateCreate,
   type CreateValues,
   type FieldErrors,
-  type FieldName,
   type NumberField,
   type SelectField,
 } from './validateCreate'
@@ -29,18 +36,30 @@ const NUMBER_META: Record<NumberField, { unit: string; step: string; placeholder
   rootDiskGiB: { unit: 'GiB', step: '1', placeholder: '20' },
 }
 
-const SELECT_CLASS =
-  'h-8 w-full min-w-0 rounded-lg border border-input bg-transparent px-2 py-1 text-base outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive md:text-sm dark:bg-input/30'
-
-/** Field messages from a 422, verbatim from the server. */
-function fieldErrorsFrom(error: unknown): FieldErrors {
+/**
+ * Field messages from a 422, verbatim from the server. Array elements are
+ * named by their place in the request, so they are mapped back to form rows
+ * (blank rows are not sent).
+ */
+function fieldErrorsFrom(error: unknown, values: CreateValues): FieldErrors {
   if (!(error instanceof ApiError) || error.status !== 422) return {}
   const fields = error.details.fields
   if (typeof fields !== 'object' || fields === null) return {}
+  const rows = requestRows(values)
   const out: FieldErrors = {}
-  for (const f of FIELD_NAMES) {
-    const v = (fields as Record<string, unknown>)[f]
-    if (typeof v === 'string' && v) out[f] = v
+  for (const [key, message] of Object.entries(fields as Record<string, unknown>)) {
+    if (typeof message !== 'string' || !message || !isFieldKey(key)) continue
+    const dns = /^dns\[(\d+)\]$/.exec(key)
+    const host = /^dnsHosts\[(\d+)\]\.(name|address)$/.exec(key)
+    if (dns) {
+      const row = rows.dns[Number(dns[1])]
+      if (row !== undefined) out[`dns[${row}]`] = message
+    } else if (host) {
+      const row = rows.dnsHosts[Number(host[1])]
+      if (row !== undefined) out[`dnsHosts[${row}].${host[2]}`] = message
+    } else {
+      out[key] = message
+    }
   }
   return out
 }
@@ -69,27 +88,6 @@ function describeError(error: unknown, name: string): string {
   }
 }
 
-function describe(id: string, hint: boolean, error?: string) {
-  return [hint ? `${id}-hint` : null, error ? `${id}-error` : null].filter(Boolean).join(' ') || undefined
-}
-
-function Message({ id, error, hint }: { id: string; error?: string; hint?: string }) {
-  return (
-    <>
-      {hint && (
-        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-          {hint}
-        </p>
-      )}
-      {error && (
-        <p id={`${id}-error`} className="text-xs text-destructive">
-          {error}
-        </p>
-      )}
-    </>
-  )
-}
-
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -113,21 +111,87 @@ function CreateForm({ onClose }: { onClose: () => void }) {
   const [clientErrors, setClientErrors] = useState<FieldErrors>({})
   const [serverErrors, setServerErrors] = useState<FieldErrors>({})
   const [summary, setSummary] = useState('')
-  const [focusRequest, setFocusRequest] = useState<{ field: FieldName; n: number } | null>(null)
+  const [focusRequest, setFocusRequest] = useState<{ key: string; n: number } | null>(null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const [announcement, setAnnouncement] = useState('')
 
   const create = useMutation({ mutationFn: api.createProfile })
 
   useEffect(() => {
-    if (focusRequest) document.getElementById(`${formId}-${focusRequest.field}`)?.focus()
+    if (!focusRequest) return
+    const { key } = focusRequest
+    const id = key === 'dns' || key === 'dnsHosts' ? `${formId}-${key}-add` : `${formId}-${key}`
+    document.getElementById(id)?.focus()
   }, [focusRequest, formId])
 
-  const firstInvalid = (errors: FieldErrors) => FIELD_NAMES.find((f) => errors[f])
-  const requestFocus = (field: FieldName) => setFocusRequest((r) => ({ field, n: (r?.n ?? 0) + 1 }))
+  const isAdvancedKey = (key: string) => !(FIELD_NAMES as readonly string[]).includes(key)
+  const firstInvalid = (errors: FieldErrors, from: CreateValues) => fieldOrder(from).find((k) => errors[k])
+  /** Focuses a field, opening the Advanced section first when the field is inside it. */
+  const requestFocus = (key: string) => {
+    if (isAdvancedKey(key)) setAdvancedOpen(true)
+    setFocusRequest((r) => ({ key, n: (r?.n ?? 0) + 1 }))
+  }
+
+  const dropErrors = (matches: (key: string) => boolean) => {
+    const keep = (e: FieldErrors) => Object.fromEntries(Object.entries(e).filter(([k]) => !matches(k)))
+    setClientErrors(keep)
+    setServerErrors(keep)
+  }
 
   function edit<K extends keyof CreateValues>(field: K, value: CreateValues[K]) {
     setValues((v) => ({ ...v, [field]: value }))
-    setClientErrors((e) => ({ ...e, [field]: undefined }))
-    setServerErrors((e) => ({ ...e, [field]: undefined }))
+    // Rules that depend on this field no longer apply to the old answer.
+    dropErrors(
+      (k) =>
+        k === field ||
+        (field === 'dns' && k.startsWith('dns')) ||
+        ((field === 'vmType' || field === 'arch') && k === 'vzRosetta') ||
+        (field === 'networkMode' && k === 'networkInterface'),
+    )
+  }
+
+  const count = (n: number, noun: string) => `${n === 0 ? 'No' : n} ${noun}${n === 1 ? '' : 's'}`
+
+  const rows: RowHandlers = {
+    onDns: (i, value) => {
+      setValues((v) => ({ ...v, dns: v.dns.map((d, j) => (j === i ? value : d)) }))
+      dropErrors((k) => k === `dns[${i}]` || k === 'dns')
+    },
+    addDns: () => {
+      if (values.dns.length >= MAX_DNS) return
+      const n = values.dns.length + 1
+      setValues((v) => ({ ...v, dns: [...v.dns, ''] }))
+      setAnnouncement(`DNS server ${n} added. ${count(n, 'DNS server')} in the list.`)
+      requestFocus(`dns[${n - 1}]`)
+    },
+    removeDns: (i) => {
+      const left = values.dns.length - 1
+      setValues((v) => ({ ...v, dns: v.dns.filter((_, j) => j !== i) }))
+      dropErrors((k) => k.startsWith('dns'))
+      setAnnouncement(`DNS server ${i + 1} removed. ${count(left, 'DNS server')} left.`)
+      requestFocus(left === 0 ? 'dns' : `dns[${Math.min(i, left - 1)}]`)
+    },
+    onHost: (i, field, value) => {
+      setValues((v) => ({
+        ...v,
+        dnsHosts: v.dnsHosts.map((r, j) => (j === i ? { ...r, [field]: value } : r)),
+      }))
+      dropErrors((k) => k === `dnsHosts[${i}].${field}` || k === 'dnsHosts')
+    },
+    addHost: () => {
+      if (values.dnsHosts.length >= MAX_DNS_HOSTS) return
+      const n = values.dnsHosts.length + 1
+      setValues((v) => ({ ...v, dnsHosts: [...v.dnsHosts, { name: '', address: '' }] }))
+      setAnnouncement(`DNS host ${n} added. ${count(n, 'DNS host')} in the list.`)
+      requestFocus(`dnsHosts[${n - 1}].name`)
+    },
+    removeHost: (i) => {
+      const left = values.dnsHosts.length - 1
+      setValues((v) => ({ ...v, dnsHosts: v.dnsHosts.filter((_, j) => j !== i) }))
+      dropErrors((k) => k.startsWith('dnsHosts'))
+      setAnnouncement(`DNS host ${i + 1} removed. ${count(left, 'DNS host')} left.`)
+      requestFocus(left === 0 ? 'dnsHosts' : `dnsHosts[${Math.min(i, left - 1)}].name`)
+    },
   }
 
   function onSubmit(e: FormEvent) {
@@ -136,7 +200,7 @@ function CreateForm({ onClose }: { onClose: () => void }) {
     setSummary('')
     const errors = validateCreate(values)
     setClientErrors(errors)
-    const bad = firstInvalid(errors)
+    const bad = firstInvalid(errors, values)
     if (bad) {
       setServerErrors({})
       setSummary('Fix the marked fields and try again.')
@@ -152,19 +216,19 @@ function CreateForm({ onClose }: { onClose: () => void }) {
         void navigate(logPath(profile, jobId))
       },
       onError: (error) => {
-        let fields = fieldErrorsFrom(error)
+        let fields = fieldErrorsFrom(error, values)
         if (error instanceof ApiError && error.code === 'profile_exists') {
           fields = { name: describeError(error, body.name) }
         }
         setServerErrors(fields)
         setSummary(describeError(error, body.name))
-        const bad = firstInvalid(fields)
+        const bad = firstInvalid(fields, values)
         if (bad) requestFocus(bad)
       },
     })
   }
 
-  const errorFor = (f: FieldName) => serverErrors[f] ?? clientErrors[f]
+  const errorFor = (f: string) => serverErrors[f] ?? clientErrors[f]
   const pending = create.isPending
 
   const nameId = `${formId}-name`
@@ -290,6 +354,21 @@ function CreateForm({ onClose }: { onClose: () => void }) {
             <Message id={versionId} error={errorFor('kubernetesVersion')} />
           </div>
         )}
+
+        <AdvancedFields
+          formId={formId}
+          values={values}
+          pending={pending}
+          open={advancedOpen}
+          onToggle={() => setAdvancedOpen((o) => !o)}
+          errorFor={errorFor}
+          edit={edit}
+          rows={rows}
+        />
+
+        <div role="status" className="sr-only">
+          {announcement}
+        </div>
 
         <div role="alert" className="text-sm text-destructive">
           {summary}
