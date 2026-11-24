@@ -16,6 +16,7 @@ export const queryKeys = {
     ['profiles', name, 'container-logs', id, tail] as const,
   engine: (name: string) => ['profiles', name, 'engine'] as const,
   images: (name: string) => ['profiles', name, 'images'] as const,
+  image: (name: string, image: string) => ['profiles', name, 'images', image] as const,
   volumes: (name: string) => ['profiles', name, 'volumes'] as const,
   volume: (name: string, volume: string) => ['profiles', name, 'volumes', volume] as const,
   networks: (name: string) => ['profiles', name, 'networks'] as const,

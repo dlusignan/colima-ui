@@ -154,6 +154,22 @@ type Client interface {
 	RemoveNetwork(ctx context.Context, ref string) error
 	// PruneNetworks removes unused networks; Docker keeps the predefined ones.
 	PruneNetworks(ctx context.Context) (NetworkPruneResult, error)
+
+	// TagImage adds repository:tag to the image found by ID or reference. All
+	// arguments are validated here (ValidImageRef, ValidImageTarget); an
+	// invalid one gives ErrBadName before any request. A target tag that is on
+	// another image gives ErrConflict (Docker would silently move it).
+	TagImage(ctx context.Context, ref, repository, tag string) error
+	// InspectImage reads one image by ID or reference: no environment, labels,
+	// commands or layer command text. An unknown one gives ErrObjectNotFound.
+	InspectImage(ctx context.Context, ref string) (ImageDetail, error)
+	// RemoveImage removes an image (by ID: with all its references) or untags
+	// one reference, never with force. An image used by any container gives
+	// *InUseError (an ErrConflict) and an unknown one ErrObjectNotFound.
+	RemoveImage(ctx context.Context, ref string) (ImageRemoval, error)
+	// PruneImages removes unused images: dangling only, or with all every
+	// unused image (PruneImagesIncludesTagged).
+	PruneImages(ctx context.Context, all bool) (ImagePruneResult, error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,

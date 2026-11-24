@@ -572,3 +572,14 @@ func (f *fakeClient) RemoveNetwork(context.Context, string) error { return nil }
 func (f *fakeClient) PruneNetworks(context.Context) (NetworkPruneResult, error) {
 	return NetworkPruneResult{}, nil
 }
+
+func (f *fakeClient) TagImage(context.Context, string, string, string) error { return nil }
+func (f *fakeClient) InspectImage(context.Context, string) (ImageDetail, error) {
+	return ImageDetail{}, nil
+}
+func (f *fakeClient) RemoveImage(context.Context, string) (ImageRemoval, error) {
+	return ImageRemoval{}, nil
+}
+func (f *fakeClient) PruneImages(context.Context, bool) (ImagePruneResult, error) {
+	return ImagePruneResult{}, nil
+}

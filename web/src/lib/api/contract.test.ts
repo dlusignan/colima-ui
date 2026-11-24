@@ -66,6 +66,10 @@ function checkKind(kind: Kind, value: unknown, where: string): void {
     case 'number|null':
       expect(value === null || typeof value === 'number', where).toBe(true)
       return
+    case 'number[]':
+      expect(Array.isArray(value), where).toBe(true)
+      for (const v of value as unknown[]) expect(typeof v, where).toBe('number')
+      return
     case 'string[]':
       expect(Array.isArray(value), where).toBe(true)
       for (const v of value as unknown[]) expect(typeof v, where).toBe('string')
@@ -121,6 +125,13 @@ const mapped: Record<string, Mapping> = {
   '3.10#0': { shape: s.containerListShape },
   '3.12#0': { shape: s.imageListShape },
   '3.11#0': { shape: s.actionListShape },
+  '3.26#0': { shape: s.tagImageRequestShape },
+  '3.27#0': { shape: s.imageDetailShape },
+  '3.28#0': { shape: s.imageRemoveResultShape },
+  '3.28#1': { shape: s.imageRemoveResultShape },
+  '3.29#0': { shape: s.pruneImagesRequestShape },
+  '3.29#1': { shape: s.imagePruneResultShape },
+  '3.29#2': { shape: s.imagePruneResultShape },
   '3.13#0': { shape: s.volumeListShape },
   '3.14#0': { shape: s.networkListShape },
   '3.15#0': { shape: s.engineInfoShape },

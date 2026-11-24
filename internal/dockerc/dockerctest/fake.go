@@ -65,6 +65,11 @@ type Fake struct {
 	NetworkDetail  dockerc.NetworkDetail
 	NetworkPrune   dockerc.NetworkPruneResult
 
+	// Results of the image write methods.
+	ImageDetail  dockerc.ImageDetail
+	ImageRemoval dockerc.ImageRemoval
+	ImagePrune   dockerc.ImagePruneResult
+
 	mu    sync.Mutex
 	calls []Call
 	errs  map[string]error
@@ -228,6 +233,28 @@ func (f *Fake) RemoveNetwork(_ context.Context, ref string) error {
 
 func (f *Fake) PruneNetworks(context.Context) (dockerc.NetworkPruneResult, error) {
 	return zeroOnErr(f.NetworkPrune, f.record("PruneNetworks"))
+}
+
+// TagImage validates like the real client: the reference, the repository and
+// the tag, else ErrBadName.
+func (f *Fake) TagImage(_ context.Context, ref, repository, tag string) error {
+	err := f.RecordRef("TagImage", ref, repository, tag)
+	if err == nil && !dockerc.ValidImageTarget(repository, tag) {
+		err = dockerc.ErrBadName
+	}
+	return err
+}
+
+func (f *Fake) InspectImage(_ context.Context, ref string) (dockerc.ImageDetail, error) {
+	return zeroOnErr(f.ImageDetail, f.RecordRef("InspectImage", ref))
+}
+
+func (f *Fake) RemoveImage(_ context.Context, ref string) (dockerc.ImageRemoval, error) {
+	return zeroOnErr(f.ImageRemoval, f.RecordRef("RemoveImage", ref))
+}
+
+func (f *Fake) PruneImages(_ context.Context, all bool) (dockerc.ImagePruneResult, error) {
+	return zeroOnErr(f.ImagePrune, f.record("PruneImages", all))
 }
 
 // Provider implements dockerc.Provider. It records the profile of every For
