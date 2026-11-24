@@ -19,6 +19,8 @@ import {
   isFieldKey,
   MAX_DNS,
   MAX_DNS_HOSTS,
+  MAX_ENV,
+  MAX_MOUNTS,
   NUMBER_LIMITS,
   requestRows,
   SELECT_OPTIONS,
@@ -48,15 +50,28 @@ function fieldErrorsFrom(error: unknown, values: CreateValues): FieldErrors {
   const rows = requestRows(values)
   const out: FieldErrors = {}
   for (const [key, message] of Object.entries(fields as Record<string, unknown>)) {
-    if (typeof message !== 'string' || !message || !isFieldKey(key)) continue
+    const envKey = /^env\.(.+)$/.exec(key)
+    if (typeof message !== 'string' || !message || !(isFieldKey(key) || envKey || /^env\[\d+\]$/.test(key))) continue
     const dns = /^dns\[(\d+)\]$/.exec(key)
     const host = /^dnsHosts\[(\d+)\]\.(name|address)$/.exec(key)
+    const mount = /^mounts\[(\d+)\]\.path$/.exec(key)
+    const envIndex = /^env\[(\d+)\]$/.exec(key)
     if (dns) {
       const row = rows.dns[Number(dns[1])]
       if (row !== undefined) out[`dns[${row}]`] = message
     } else if (host) {
       const row = rows.dnsHosts[Number(host[1])]
       if (row !== undefined) out[`dnsHosts[${row}].${host[2]}`] = message
+    } else if (mount) {
+      const row = rows.mounts[Number(mount[1])]
+      if (row !== undefined) out[`mounts[${row}].path`] = message
+    } else if (envIndex) {
+      // The server numbers a bad key by its place in the sorted order.
+      const row = rows.envSorted[Number(envIndex[1])]
+      if (row !== undefined) out[`env[${row}].key`] = message
+    } else if (envKey) {
+      const row = rows.envByKey.get(envKey[1])
+      if (row !== undefined) out[`env[${row}].value`] = message
     } else {
       out[key] = message
     }
@@ -120,7 +135,8 @@ function CreateForm({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     if (!focusRequest) return
     const { key } = focusRequest
-    const id = key === 'dns' || key === 'dnsHosts' ? `${formId}-${key}-add` : `${formId}-${key}`
+    const group = key === 'dns' || key === 'dnsHosts' || key === 'mounts' || key === 'env'
+    const id = group ? `${formId}-${key}-add` : `${formId}-${key}`
     document.getElementById(id)?.focus()
   }, [focusRequest, formId])
 
@@ -191,6 +207,44 @@ function CreateForm({ onClose }: { onClose: () => void }) {
       dropErrors((k) => k.startsWith('dnsHosts'))
       setAnnouncement(`DNS host ${i + 1} removed. ${count(left, 'DNS host')} left.`)
       requestFocus(left === 0 ? 'dnsHosts' : `dnsHosts[${Math.min(i, left - 1)}].name`)
+    },
+    onMount: (i, field, value) => {
+      setValues((v) => ({ ...v, mounts: v.mounts.map((r, j) => (j === i ? { ...r, [field]: value } : r)) }))
+      if (field === 'path') dropErrors((k) => k === `mounts[${i}].path` || k === 'mounts')
+    },
+    addMount: () => {
+      if (values.mounts.length >= MAX_MOUNTS) return
+      const n = values.mounts.length + 1
+      setValues((v) => ({ ...v, mounts: [...v.mounts, { path: '', writable: false }] }))
+      setAnnouncement(`Mount ${n} added. ${count(n, 'mount')} in the list.`)
+      requestFocus(`mounts[${n - 1}].path`)
+    },
+    removeMount: (i) => {
+      const left = values.mounts.length - 1
+      setValues((v) => ({ ...v, mounts: v.mounts.filter((_, j) => j !== i) }))
+      dropErrors((k) => k.startsWith('mounts'))
+      setAnnouncement(`Mount ${i + 1} removed. ${count(left, 'mount')} left.`)
+      requestFocus(left === 0 ? 'mounts' : `mounts[${Math.min(i, left - 1)}].path`)
+    },
+    onEnv: (i, field, value) => {
+      setValues((v) => ({ ...v, env: v.env.map((r, j) => (j === i ? { ...r, [field]: value } : r)) }))
+      dropErrors((k) => k === `env[${i}].key` || k === `env[${i}].value` || k === 'env')
+    },
+    toggleEnvShown: (i) =>
+      setValues((v) => ({ ...v, env: v.env.map((r, j) => (j === i ? { ...r, shown: !r.shown } : r)) })),
+    addEnv: () => {
+      if (values.env.length >= MAX_ENV) return
+      const n = values.env.length + 1
+      setValues((v) => ({ ...v, env: [...v.env, { key: '', value: '', shown: false }] }))
+      setAnnouncement(`Variable ${n} added. ${count(n, 'variable')} in the list.`)
+      requestFocus(`env[${n - 1}].key`)
+    },
+    removeEnv: (i) => {
+      const left = values.env.length - 1
+      setValues((v) => ({ ...v, env: v.env.filter((_, j) => j !== i) }))
+      dropErrors((k) => k.startsWith('env'))
+      setAnnouncement(`Variable ${i + 1} removed. ${count(left, 'variable')} left.`)
+      requestFocus(left === 0 ? 'env' : `env[${Math.min(i, left - 1)}].key`)
     },
   }
 
