@@ -117,7 +117,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 44 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 45 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -129,7 +129,8 @@ There are 44 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `POST` | `/api/profiles/{name}/stop` | Stop a profile |
 | `POST` | `/api/profiles/{name}/restart` | Restart a profile |
 | `POST` | `/api/profiles/{name}/update` | Update the container runtime of a running profile |
-| `POST` | `/api/profiles/{name}/delete` | Delete a stopped profile as a job; needs the profile name as confirmation (3.32) |
+| `POST` | `/api/profiles/{name}/delete` | Delete a profile as a job, only when its VM holds no Docker containers, images or volumes; needs the profile name as confirmation (3.32) |
+| `GET` | `/api/profiles/{name}/contents` | Counts of Docker containers, images and volumes in a running profile (3.37) |
 | `GET` | `/api/jobs/{id}` | Job status and captured output |
 | `POST` | `/api/jobs/{id}/cancel` | Cancel a running job |
 | `GET` | `/api/profiles/{name}/config` | Read configuration |
@@ -1252,7 +1253,7 @@ Errors:
 
 ### 3.32 `POST /api/profiles/{name}/delete`
 
-Token: yes. Deletes the profile's VM with `colima delete -p <name> --force` as a job (action `delete`), plus `--data` when asked. `--force` is always passed so the process never waits on a prompt the UI cannot answer; the confirmation lives in this request instead. **This cannot be undone.** The call answers `202` once the job exists: unlike start and stop, it waits for the in-slot status read described below (normally well under a second, at most 15 seconds) before the job is created. Follow the job like a start (3.4, 3.5, 3.6, section 5). The job holds the profile's slot, can be cancelled, writes an action log row (`delete`) and its output streams like a stop. When it succeeds the profile leaves the list and the sampler stops for it; its recorded history stays in the database.
+Token: yes. Deletes the profile's VM, only when it holds no Docker containers, images or volumes (see the errors below), with `colima delete -p <name> --force` as a job (action `delete`), plus `--data` when asked. `--force` is always passed so the process never waits on a prompt the UI cannot answer; the confirmation lives in this request instead. **This cannot be undone.** The call answers `202` once the job exists: unlike start and stop, it waits for the in-slot status read and Docker count described below (normally well under a second, at most 35 seconds) before the job is created. Follow the job like a start (3.4, 3.5, 3.6, section 5). The job holds the profile's slot, can be cancelled, writes an action log row (`delete`) and its output streams like a stop. When it succeeds the profile leaves the list and the sampler stops for it; its recorded history stays in the database.
 
 Request body (at most 1 KiB, strict: exact keys, each at most once):
 
@@ -1275,16 +1276,26 @@ Errors:
 1. `404` `profile_not_found`: the name is malformed, or the profile is neither listed by Colima nor present in Colima's folder as a real directory (a file or a symlink with the name does not count; names compare ignoring letter case). Unlike the other routes, `default` gets no special case here: it can be deleted only when it exists.
 2. `422` `confirmation_required`: `confirm` is missing or does not equal the name.
 3. `409` `profile_busy`: another job runs on the profile (`details.jobId`).
-4. `409` `invalid_state`: the VM is not `stopped` or `broken` (`details.status` is the current status, for example `running`, as in 3.4). Only those two statuses can be deleted; anything else, including a status the backend does not know, is refused. A `broken` VM is allowed so a half-created or damaged profile can be cleaned up. The user stops it first; nothing starts.
-5. `400` `bad_request`, `502` `colima_failed`, `503` `shutting_down`, `500` `internal_error` as in 3.4.
+4. `409` `invalid_state`: the state does not allow a delete. `details.status` is the current status (as in 3.4) and, except for a plain refusal, `details.reason` says why:
+   1. `docker_not_empty`: the VM is `running` with the Docker runtime and holds at least one container (of any state), image or volume. `details` also carries `containers`, `images` and `volumes` (counts only, never names or ids). Remove the Docker objects first.
+   2. `cannot_verify`: the VM is `stopped`. Its Docker engine cannot be read, so it cannot be shown empty. Start it, empty it, then delete it.
+   3. No `reason`: any other status (`starting`, `stopping`, an unknown one) is refused; only `running` (when empty), `broken` and `running` on another runtime are allowed. A `broken` VM is allowed so a half-created or damaged profile can be cleaned up; its Docker contents are not read.
+   A `running` profile whose runtime is not Docker is allowed: there is no engine to count. If the VM stops between the status read and the Docker read, the answer is `409` with `details.status` `stopped`.
+5. `502` `docker_unavailable`: the profile is `running` but its Docker contents could not be read (missing socket, daemon error, timeout, or a failure to resolve the socket). The delete fails closed: nothing is deleted, and no daemon text or path is returned.
+6. `400` `bad_request`, `502` `colima_failed`, `503` `shutting_down`, `500` `internal_error` as in 3.4.
 
-Order of checks: body shape, busy, profile lookup, confirmation, status, then the job is submitted. The busy check runs before the status read because that read (`colima list`) can be slow. The job re-reads the status inside the profile slot, right before running `colima delete`: if the VM is no longer `stopped` or `broken` (for example it was started from a terminal in between), nothing is deleted and the job ends as `failed` with one closing line in its output; its action log row says `not run: profile was not stopped`, not a Colima exit status. Like the busy check in 1.3, this re-check is best effort: it sees only this backend's own jobs and a single read of the live status, so a VM started from a terminal in the instant between the re-check and `colima delete` is not prevented.
+Order of checks: body shape, busy, profile lookup, confirmation, state (and for a running profile the Docker count), then the job is submitted. The busy check runs before the slow reads (`colima list`, then up to four Docker list calls) so a job that began meanwhile is seen. The job re-reads the status inside the profile slot, right before running `colima delete`, and for a running profile counts the Docker objects again. If the state no longer allows the delete (for example the VM was started or stopped from a terminal in between), the count is not zero, or the count cannot be made (it fails closed, like the route), nothing is deleted and the job ends as `failed` with one closing line in its output. Its action log row says `not run: docker not empty`, `not run: could not check docker contents`, `not run: profile is stopped, docker contents cannot be checked` or `not run: profile state did not allow deleting`, never a Colima exit status.
+
+Residual race: the count and `colima delete` are not atomic. A container, image or volume created (for example from a terminal) after the in-slot count and before the VM is removed is deleted with the VM. Like the busy check in 1.3, the guard is best effort against anything outside this backend's own jobs; it cannot be closed by a one-shot check.
+
+A running profile can now be deleted: `colima delete -p <name> --force` stops and removes the VM. The job output, the cancel behaviour and the action log row are the same as for any delete. The profile leaves the list when the job finishes (the sampler is told to refresh and drops it), and the event stream carries the usual `job.finished` event.
 
 Things to know:
 
-1. While the delete is waiting for that status read, `GET /api/profiles` and a `409 profile_busy` answer can already show the job id, but `GET /api/jobs/{id}` answers `404 job_not_found` for it until the job exists (up to 15 seconds). Clients should retry a `404` for an id they just received.
+1. While the delete is waiting for that status read, `GET /api/profiles` and a `409 profile_busy` answer can already show the job id, but `GET /api/jobs/{id}` answers `404 job_not_found` for it until the job exists (up to 35 seconds). Clients should retry a `404` for an id they just received.
 2. The action log row (`delete`, 3.11) carries `with runtime data` as its detail when `deleteData` was `true`. Once the profile is gone, `GET /api/profiles/{name}/actions` answers `404` for it, so the row cannot be read through the API any more. History is keyed by profile name only, so a profile created later with the same name shows the older rows too.
-3. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
+3. The UI asks `GET /api/profiles/{name}/contents` (3.37) when its delete dialog opens, to show what blocks a delete. That answer is advisory; this route decides.
+4. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
 
 
 ### 3.33 `GET /api/profiles/{name}/kubernetes`
@@ -1423,6 +1434,31 @@ Errors, on top of the shared ones of 1.3:
 | `502` | `docker_unavailable` | The socket is missing or not answering, Docker answered with an error, or it did not answer in time |
 
 Docker's error text is never returned. One action log row is written per request that reaches Docker, with the action `docker.container.start`, `docker.container.stop` or `docker.container.restart`, and as `detail` the first 12 characters of the id followed by `changed=true`, `changed=false` or `changed=unknown`. The `304` case is a `success` row with `changed=false`. A `failed` row says `changed=false` when Docker refused (`404`, `409`, or the VM not running) and `changed=unknown` when the outcome is not known (the socket failed, Docker answered `5xx`, or the call timed out), because the container may have changed. A refused request (steps 1 to 4 of 1.3, a body, an invalid id) writes no row.
+
+### 3.37 `GET /api/profiles/{name}/contents`
+
+Token: yes. Request body: none. Counts the Docker objects inside a running profile, so the delete dialog (3.32) can say what blocks a delete. It uses the Docker list reads behind 3.10, 3.12 and 3.13: containers of every state (stopped ones count), images and volumes. It is a read: no busy check and no action log row. It makes four Docker list calls, so clients must ask once when the dialog opens and must not poll it. It returns counts only, never a name or an id.
+
+Response `200`, a running profile with the Docker runtime:
+
+```json
+{ "applicable": true, "containers": 3, "images": 5, "volumes": 1 }
+```
+
+Response `200`, a running profile whose runtime is not Docker (there is no engine to count; a delete is allowed):
+
+```json
+{ "applicable": false }
+```
+
+Errors:
+
+1. `404` `profile_not_found`: the name is unknown or malformed (it never reaches a process or Docker).
+2. `409` `invalid_state`: the profile is not `running` (`details.status`, as in 3.10).
+3. `502` `docker_unavailable`: the Docker socket is missing or not answering, or any of the three reads failed. Nothing partial is returned.
+4. `502` `colima_failed` and `500` `internal_error` as in 3.4.
+
+The numbers are a snapshot: the three reads are separate calls, and a delete (3.32) counts again on its own, so this answer never authorizes a delete.
 
 ## 4. Routes that do not exist
 
