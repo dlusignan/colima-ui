@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 )
@@ -32,6 +33,10 @@ type TaskRequest struct {
 	MaxPerProfile int
 	Run           TaskFunc
 }
+
+// emitAfterCancelWait bounds how long a line emitted after cancel waits for
+// the pump.
+const emitAfterCancelWait = 100 * time.Millisecond
 
 func taskGroupKey(profile string, a Action) string {
 	return slotKey(profile) + "\x00" + string(a)
@@ -124,10 +129,19 @@ type taskProc struct {
 func startTaskProc(ctx context.Context, cancel context.CancelFunc, run TaskFunc) *taskProc {
 	p := &taskProc{lines: make(chan string), cancel: cancel, done: make(chan struct{})}
 	emit := func(line string) {
-		// A task that outruns the pump waits for it; a cancelled one does not.
+		// A task that outruns the pump waits for it. After cancel the pump is
+		// still draining, so a line sent now (a task's closing message) is
+		// delivered, with a short bound in case it is not.
+		line = strings.TrimRight(line, "\r\n")
 		select {
-		case p.lines <- strings.TrimRight(line, "\r\n"):
+		case p.lines <- line:
 		case <-ctx.Done():
+			t := time.NewTimer(emitAfterCancelWait)
+			defer t.Stop()
+			select {
+			case p.lines <- line:
+			case <-t.C:
+			}
 		}
 	}
 	go func() {

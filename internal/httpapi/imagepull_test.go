@@ -566,3 +566,68 @@ func TestImagePullAnswerIsValidJSONWithFixedKeys(t *testing.T) {
 		t.Fatalf("%v %v", err, got)
 	}
 }
+
+func TestImagePullCancelledLineIsAlwaysRecorded(t *testing.T) {
+	e := newPullEnv(t)
+	started := make(chan struct{}, 1)
+	e.fake.PullFunc = func(ctx context.Context, _ func(string)) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		return fmt.Errorf("dockerc: %w", ctx.Err())
+	}
+	for i := 0; i < 200; i++ {
+		var id string
+		deadline := time.Now().Add(3 * time.Second)
+		for {
+			rec := e.post(t, `{"reference":"a:1"}`)
+			if rec.Code == 202 {
+				id = decodeMap(t, rec)["jobId"].(string)
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("iteration %d: %d", i, rec.Code)
+			}
+			time.Sleep(time.Millisecond)
+		}
+		<-started
+		if rec := call(t, e.h, "POST", "/api/jobs/"+id+"/cancel", ""); rec.Code != 200 {
+			t.Fatalf("cancel: %d", rec.Code)
+		}
+		lines := outputLines(e.job(t, id))
+		if lines[len(lines)-1] != "Pull cancelled." {
+			t.Fatalf("iteration %d: output = %q", i, lines)
+		}
+	}
+}
+
+// NoAudit keeps the shared writer from appending a row even when an audit store
+// is wired (the job observer writes the only pull row), while an ordinary spec
+// on the same writer still does.
+func TestNoAuditSpecWritesNoRowWithAStoreBehindIt(t *testing.T) {
+	gate, busy, fake := &fakeGate{status: "Running"}, &fakeBusy{}, &dockerctest.Fake{}
+	audit := &recordingAudit{}
+	w := newDockerWriter(gate, &dockerctest.Provider{Client: fake}, busy, audit)
+	run := func(context.Context, dockerc.Client) error { return nil }
+	h := NewHandler(testPort, testToken, NewAPI(func(rt *Router) {
+		rt.Handle("POST /api/profiles/{name}/x", func(rw http.ResponseWriter, r *http.Request) error {
+			return w.serve(rw, r, writeSpec{Action: "docker.test.noaudit", NoAudit: true,
+				Plan: func() (writePlan, error) { return writePlan{Run: run}, nil }})
+		})
+		rt.Handle("POST /api/profiles/{name}/y", func(rw http.ResponseWriter, r *http.Request) error {
+			return w.serve(rw, r, writeSpec{Action: "docker.test.audit",
+				Plan: func() (writePlan, error) { return writePlan{Run: run}, nil }})
+		})
+	}), nil)
+	if rec := call(t, h, "POST", "/api/profiles/synthetic-a/x", ""); rec.Code != 204 {
+		t.Fatalf("x: %d", rec.Code)
+	}
+	if n := len(audit.Rows()); n != 0 {
+		t.Fatalf("NoAudit wrote %d rows", n)
+	}
+	if rec := call(t, h, "POST", "/api/profiles/synthetic-a/y", ""); rec.Code != 204 {
+		t.Fatalf("y: %d", rec.Code)
+	}
+	if rows := audit.Rows(); len(rows) != 1 || rows[0].Action != "docker.test.audit" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}

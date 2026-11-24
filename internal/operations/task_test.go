@@ -92,10 +92,11 @@ func TestTaskDoesNotHoldTheProfileSlot(t *testing.T) {
 	cj := mustSubmit(t, m, "dev")
 	l.proc(0).exitWith(0)
 	waitState(t, m, cj.ID, StateSucceeded)
-	held, err := m.TryExclusive("DEV", func() error { return nil })
-	if !held || err != nil {
-		t.Fatalf("TryExclusive = %v, %v", held, err)
-	}
+	// The colima slot is released just after the final state is recorded.
+	eventually(t, "exclusive hold", func() bool {
+		held, err := m.TryExclusive("DEV", func() error { return nil })
+		return held && err == nil
+	})
 	// And a colima job does not block tasks.
 	cj2 := mustSubmit(t, m, "dev")
 	started2 := make(chan struct{}, 1)
@@ -328,5 +329,27 @@ func TestTaskWithoutFunctionIsRefused(t *testing.T) {
 	m, _, _ := newTestManager(t, nil)
 	if _, err := m.SubmitTask(TaskRequest{Action: ActionImagePull, Profile: "dev"}); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func TestTaskClosingLineAfterCancelIsAlwaysRecorded(t *testing.T) {
+	m, _, _ := newTestManager(t, nil)
+	for i := 0; i < 200; i++ {
+		started := make(chan struct{}, 1)
+		s, err := m.SubmitTask(taskReq("dev", "a:1", func(ctx context.Context, emit func(string)) error {
+			started <- struct{}{}
+			<-ctx.Done()
+			emit("closing")
+			return ctx.Err()
+		}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-started
+		got, err := m.Cancel(ctxTimeout(t, 3*time.Second), s.ID)
+		if err != nil || len(got.Output) != 1 || got.Output[0].Text != "closing" {
+			t.Fatalf("iteration %d: %+v, %v", i, got, err)
+		}
+		eventually(t, "released", func() bool { m.mu.Lock(); defer m.mu.Unlock(); return len(m.taskKeys) == 0 })
 	}
 }
