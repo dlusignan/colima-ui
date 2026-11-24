@@ -30,7 +30,7 @@ func TestValidImageRef(t *testing.T) {
 	good := []string{
 		"nginx", "nginx:1.27", "library/nginx", "library/nginx:latest", "synthetic/web:1",
 		"registry.example.com/team/app:v1", "registry.example.com:5000/team/app", "localhost/app",
-		"localhost:5000/app:tag", "nginx@" + dig, "nginx:1.27@" + dig, "a.b/c__d/e-f.g", "Example.COM/app",
+		"localhost:5000/app:tag", "nginx@" + dig, "nginx:1.27@" + dig, "a.b/c__d/e-f.g", "Example.COM/app", "EXAMPLE.com:5000/team/app:v1",
 		"app:_tag", strings.Repeat("a", 255),
 	}
 	bad := []string{
@@ -38,7 +38,7 @@ func TestValidImageRef(t *testing.T) {
 		"Nginx", "library/Nginx", "nginx\n", "nginx:1\n", "nginx:tag/extra", "a/./b", "a/b/", "nginx@",
 		"nginx@sha256:short", "nginx@" + dig + "x!", "ngin%78", "a?b", "a#b", "a\\b", "-a", "a-", "a--",
 		"a..b", "a._b", "http://a/b", "a/b:c:d", "user@host/app", "nginx:" + strings.Repeat("a", 129),
-		strings.Repeat("a", 256), "host:99999999/app", "ho st/app", "-host.com/app", "a\x00b",
+		strings.Repeat("a", 256), "host:99999999/app", "example.com/App", "Example.COM/Team/app", "[::1]:5000/app", "[2001:db8::1]/app", "ho st/app", "-host.com/app", "a\x00b",
 	}
 	for _, s := range good {
 		if !ValidImageRef(s) {

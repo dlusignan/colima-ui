@@ -20,8 +20,13 @@ import (
 //  1. Profile lookup through the ProfileGate: 404 profile_not_found for an
 //     unknown or malformed name, 409 invalid_state when the VM is not running.
 //  2. Busy check: 409 profile_busy while a start, stop or restart job runs on
-//     the profile, like the config route. The check is advisory, a job may
-//     start a moment later, and Docker then fails or succeeds on its own.
+//     the profile, like the config route. The check is advisory: it sees only
+//     this backend's own jobs, not a colima run from a terminal or a config
+//     write in progress, and a job may start a moment later; Docker then
+//     fails or succeeds on its own. For the same reason a slow route such as
+//     pull (#120) must NOT hold the profile slot for its whole run: that would
+//     block start, stop and restart for minutes, and the slot is not meant
+//     for Docker work.
 //  3. Body: the route's keys are decoded strictly (decodeStrictObject: unknown,
 //     duplicate and wrong-case keys, null as a struct, trailing data and a body
 //     over the limit are 400 bad_request); a route without keys takes an empty
@@ -30,7 +35,9 @@ import (
 //     what to run. A failure is a 422 invalid_request with field names (use
 //     requireObjectName and requireImageRef). Nothing has touched Docker yet.
 //  5. The Docker client for the profile, then the call itself, then one action
-//     log row for the attempt, then the answer.
+//     log row for the attempt, then the answer. From here on the work runs on a
+//     context that ignores a client hang-up (bounded by the spec timeout), so
+//     a write that has started finishes and is recorded with its real outcome.
 //
 // How to add a write route: build a dockerWriter once with newDockerWriter in
 // the route group's WithX option, and in the handler declare the body struct,
@@ -69,7 +76,14 @@ type dockerWriter struct {
 	audit  ActionRecorder
 }
 
+// newDockerWriter panics on a nil gate, provider or busy lookup: a write route
+// without them would skip the checks that make it safe, so the mistake must
+// show at start-up, not on the first request. A nil audit is allowed (the row
+// is skipped).
 func newDockerWriter(gate ProfileGate, docker dockerc.Provider, busy ConfigBusy, audit ActionRecorder) *dockerWriter {
+	if gate == nil || docker == nil || busy == nil {
+		panic("httpapi: newDockerWriter needs a gate, a Docker provider and a busy lookup")
+	}
 	return &dockerWriter{gate: gate, docker: docker, busy: busy, audit: audit}
 }
 
@@ -158,9 +172,15 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 		return errInternal()
 	}
 
-	client, err := d.docker.For(ctx, name)
+	// Everything before this point only read state, so a client that left
+	// simply gets nothing. From here a write may already be under way at
+	// Docker, so it runs detached from the request and ends by its own
+	// deadline, and the row below tells what happened.
+	rctx, rcancel := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
+	defer rcancel()
+	client, err := d.docker.For(rctx, name)
 	if err == nil {
-		err = plan.Run(ctx, client)
+		err = plan.Run(rctx, client)
 	}
 	d.record(r.Context(), name, spec.Action, plan.Object, err)
 	if err != nil {
@@ -226,12 +246,23 @@ func dockerWriteError(action, object string, err error) error {
 	case errors.Is(err, dockerc.ErrInvalidRequest):
 		return newAPIError(http.StatusUnprocessableEntity, "invalid_request",
 			"Docker did not accept the request values.", map[string]any{"fields": map[string]any{}})
-	case errors.Is(err, dockerc.ErrDockerUnavailable),
-		errors.Is(err, dockerc.ErrDaemon),
-		errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, dockerc.ErrDaemon):
+		slog.Warn("docker write failed", "action", action, "error", err)
+		return newAPIError(http.StatusBadGateway, "docker_unavailable",
+			"Docker answered with an error.", nil)
+	case errors.Is(err, context.DeadlineExceeded):
+		slog.Warn("docker write timed out", "action", action)
+		return newAPIError(http.StatusBadGateway, "docker_unavailable",
+			"Docker did not answer in time.", nil)
+	case errors.Is(err, dockerc.ErrDockerUnavailable):
 		slog.Warn("docker write failed", "action", action, "error", err)
 		return newAPIError(http.StatusBadGateway, "docker_unavailable",
 			"The Docker socket is missing or not answering.", nil)
+	case errors.Is(err, context.Canceled):
+		// Only a shutdown can cancel the detached context. Not worth an
+		// error line; the row already says failed.
+		slog.Debug("docker write cancelled", "action", action)
+		return errInternal()
 	}
 	slog.Error("docker write failed", "action", action, "error", err)
 	return errInternal()

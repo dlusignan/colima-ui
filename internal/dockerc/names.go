@@ -37,7 +37,10 @@ var (
 // single separators ("." "_" "__" or dashes) between alphanumerics, so ".."
 // and empty components never match. A reference is not a name: it may contain
 // "/", ":" and "@", and RefPath escapes it for a URL. It does not check that
-// the registry or repository exists.
+// the registry or repository exists. The grammar is narrower than Docker's on
+// purpose: a registry host may use uppercase letters (it is a domain), but the
+// repository path may not; IPv6 registry hosts in brackets are rejected; and
+// the 255-byte limit applies to the whole reference, tag and digest included.
 func ValidImageRef(ref string) bool {
 	if ref == "" || len(ref) > MaxRefLen {
 		return false

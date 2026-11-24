@@ -16,17 +16,59 @@ import (
 // slow calls pass their own.
 const writeTimeout = 30 * time.Second
 
-// post performs one POST with a deadline. A non-nil body is sent as JSON; a
+// fixedPath is a constant Docker URL path such as "/volumes/create". The
+// named type makes a caller write fixedPath("...") or pass an untyped constant;
+// a validated name must go through objectTarget or refTarget instead.
+type fixedPath string
+
+// target is the URL path of one write call. It can only be made by
+// fixedTarget, objectTarget or refTarget, so the write helpers never receive
+// a path string a caller assembled from a name: a name or reference is
+// validated and escaped as one unit, and cannot add a segment.
+type target struct{ path string }
+
+// fixedTarget is a target for a constant path with no variable part.
+func fixedTarget(p fixedPath) target { return target{path: string(p)} }
+
+// objectTarget is root + "/" + name, for example objectTarget("/volumes",
+// "pgdata"), optionally followed by constant suffixes such as "/disconnect".
+// It fails with ErrBadName unless name passes ValidObjectName.
+func objectTarget(root fixedPath, name string, suffix ...fixedPath) (target, error) {
+	p, err := ObjectPath(string(root), name)
+	if err != nil {
+		return target{}, err
+	}
+	return target{path: p + joinSuffix(suffix)}, nil
+}
+
+// refTarget is objectTarget for an image reference (ValidImageRef).
+func refTarget(root fixedPath, ref string, suffix ...fixedPath) (target, error) {
+	p, err := RefPath(string(root), ref)
+	if err != nil {
+		return target{}, err
+	}
+	return target{path: p + joinSuffix(suffix)}, nil
+}
+
+func joinSuffix(s []fixedPath) string {
+	var b strings.Builder
+	for _, x := range s {
+		b.WriteString(string(x))
+	}
+	return b.String()
+}
+
+// post performs one POST with a deadline. The target comes from fixedTarget, objectTarget or refTarget. A non-nil body is sent as JSON; a
 // non-nil dst receives the size-capped JSON answer. A status in ok counts as
 // success (200, 201 and 204 when ok is empty); any other status is mapped by
 // writeStatusErr, and the daemon's error text is dropped.
-func (c *httpClient) post(ctx context.Context, timeout time.Duration, path string, query url.Values, body, dst any, ok ...int) error {
-	return c.send(ctx, http.MethodPost, timeout, path, query, body, dst, ok)
+func (c *httpClient) post(ctx context.Context, timeout time.Duration, t target, query url.Values, body, dst any, ok ...int) error {
+	return c.send(ctx, http.MethodPost, timeout, t.path, query, body, dst, ok)
 }
 
 // delete performs one DELETE with a deadline, with the same rules as post.
-func (c *httpClient) delete(ctx context.Context, timeout time.Duration, path string, query url.Values, dst any, ok ...int) error {
-	return c.send(ctx, http.MethodDelete, timeout, path, query, nil, dst, ok)
+func (c *httpClient) delete(ctx context.Context, timeout time.Duration, t target, query url.Values, dst any, ok ...int) error {
+	return c.send(ctx, http.MethodDelete, timeout, t.path, query, nil, dst, ok)
 }
 
 func (c *httpClient) send(ctx context.Context, method string, timeout time.Duration, path string, query url.Values, body, dst any, ok []int) error {

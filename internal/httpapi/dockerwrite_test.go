@@ -293,6 +293,7 @@ func TestDockerWriteProviderFailures(t *testing.T) {
 	}{
 		{"vm stopped meanwhile", dockerc.ErrVMNotRunning, 409, "invalid_state"},
 		{"not docker", dockerc.ErrRuntimeNotDocker, 409, "invalid_state"},
+		{"non-docker failure", errors.New("provider broke at /home/user"), 500, "internal_error"},
 		{"socket gone", fmt.Errorf("%w: cannot reach docker socket", dockerc.ErrDockerUnavailable), 502, "docker_unavailable"},
 	}
 	for _, tc := range tests {
@@ -330,17 +331,71 @@ func TestDockerWriteFailingActionLogChangesNothing(t *testing.T) {
 	}
 }
 
+func TestDockerWriteCancelledIsQuietAndRecorded(t *testing.T) {
+	e := newWriteEnv()
+	e.run = func(context.Context, dockerc.Client) error { return context.Canceled }
+	wantErr(t, e.post(t, tURL, `{"name":"pgdata"}`), 500, "internal_error")
+	if rows := e.audit.Rows(); len(rows) != 1 || rows[0].Outcome != "failed" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestNewDockerWriterPanicsOnNilDependencies(t *testing.T) {
+	e := newWriteEnv()
+	for name, f := range map[string]func(){
+		"gate":     func() { newDockerWriter(nil, e.provider, &e.busy, nil) },
+		"provider": func() { newDockerWriter(e.gate, nil, &e.busy, nil) },
+		"busy":     func() { newDockerWriter(e.gate, e.provider, nil, nil) },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("nil %s did not panic", name)
+				}
+			}()
+			f()
+		}()
+	}
+}
+
+func TestDockerWriteMessagesMatchTheCause(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{dockerc.ErrDaemon, "answered with an error"},
+		{context.DeadlineExceeded, "did not answer in time"},
+		{dockerc.ErrDockerUnavailable, "missing or not answering"},
+	} {
+		e := newWriteEnv()
+		e.fake.FailWith("Volumes", tc.err)
+		rec := e.post(t, tURL, `{"name":"pgdata"}`)
+		if rec.Code != 502 || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("%v: %d %s", tc.err, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestDockerWriteWithoutRecorderStillWorks(t *testing.T) {
 	e := newWriteEnv()
 	d := newDockerWriter(e.gate, e.provider, &e.busy, nil)
 	d.record(context.Background(), "p", "a", "o", nil) // must not panic
 }
 
-func TestDockerWriteAuditSurvivesClientHangUp(t *testing.T) {
+func TestDockerWriteSurvivesClientHangUp(t *testing.T) {
 	e := newWriteEnv()
 	ctx, cancel := context.WithCancel(context.Background())
-	e.run = func(context.Context, dockerc.Client) error {
+	var finished bool
+	e.run = func(rctx context.Context, c dockerc.Client) error {
 		cancel() // the client goes away while Docker works
+		time.Sleep(20 * time.Millisecond)
+		if err := rctx.Err(); err != nil {
+			return err // a write cut off by the hang-up would show here
+		}
+		if _, err := c.Volumes(rctx); err != nil {
+			return err
+		}
+		finished = true
 		return nil
 	}
 	req := httptest.NewRequest("POST", tURL, strings.NewReader(`{"name":"pgdata"}`)).WithContext(ctx)
@@ -348,8 +403,11 @@ func TestDockerWriteAuditSurvivesClientHangUp(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	e.h.ServeHTTP(httptest.NewRecorder(), req)
 	rows := e.audit.Rows()
-	if len(rows) != 1 || rows[0].Outcome != "success" {
-		t.Fatalf("rows = %+v", rows)
+	if !finished || len(rows) != 1 || rows[0].Outcome != "success" {
+		t.Fatalf("finished = %v, rows = %+v", finished, rows)
+	}
+	if len(e.fake.CallsTo("Volumes")) != 1 {
+		t.Fatal("the Docker call did not complete")
 	}
 	if err := e.audit.ctxErrs[0]; err != nil {
 		t.Fatalf("append ran on a cancelled context: %v", err)

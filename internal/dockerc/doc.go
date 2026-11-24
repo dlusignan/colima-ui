@@ -5,9 +5,11 @@
 // mostly read: list containers, read one stats sample, read disk usage. Writes
 // go through the unexported post and delete helpers (write.go), which map
 // Docker's status to typed errors (ErrObjectNotFound, ErrConflict,
-// ErrInvalidRequest, ErrDaemon) and drop the daemon's error text. Every write
-// URL is built with ObjectPath or RefPath, after ValidObjectName or
-// ValidImageRef, and the helpers refuse any path with a "." or ".." segment.
+// ErrInvalidRequest, ErrDaemon) and drop the daemon's error text. Their
+// URL comes from a target (fixedTarget, objectTarget or refTarget), never a
+// caller-built string, so a name cannot add a segment; objectTarget and
+// refTarget validate with ValidObjectName and ValidImageRef, and the helpers
+// still refuse any path with a "." or ".." segment.
 // The HTTP client never follows a redirect.
 //
 // The exported interface (Client, Provider) uses only plain value types, so

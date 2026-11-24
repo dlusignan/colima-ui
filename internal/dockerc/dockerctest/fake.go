@@ -7,6 +7,15 @@
 // that an accepted one made exactly the expected call with the expected
 // arguments.
 //
+// Every dockerc write method must validate every argument itself, before any
+// request: names with ValidObjectName, references with ValidImageRef, and every
+// value that ends up in a query string or path (tag targets, fromImage, ...),
+// returning ErrBadName for an invalid one. Each method needs a test against the
+// real client (a unix socket server, as in dockerc/write_test.go) that sends
+// hostile values and checks that no request reaches the socket. The Fake mirrors
+// the rule: its RecordObject and RecordRef validate like the real client, so a
+// route that forgot to validate fails in the route's test too.
+//
 // Adding a write method to dockerc.Client breaks the build of this package
 // (see the assertion below) until the Fake gets the method too. The new method
 // should do nothing but return f.record("MethodName", args...), so it is
@@ -97,8 +106,40 @@ func (f *Fake) record(method string, args ...any) error {
 	return f.errs[method]
 }
 
+// zeroOnErr returns v, or the zero value when err is set, like the real client.
+func zeroOnErr[T any](v T, err error) (T, error) {
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return v, nil
+}
+
+func nilOnErr[T any](v []T, err error) ([]T, error) { return zeroOnErr(v, err) }
+
+// RecordObject is what a write method taking an object name calls: it records
+// the call (with the name first in Args, then extra), and returns ErrBadName
+// when name fails dockerc.ValidObjectName, as the real client would before
+// making any request, else the failure set for the method.
+func (f *Fake) RecordObject(method, name string, extra ...any) error {
+	err := f.record(method, append([]any{name}, extra...)...)
+	if !dockerc.ValidObjectName(name) {
+		return dockerc.ErrBadName
+	}
+	return err
+}
+
+// RecordRef is RecordObject for an image reference (dockerc.ValidImageRef).
+func (f *Fake) RecordRef(method, ref string, extra ...any) error {
+	err := f.record(method, append([]any{ref}, extra...)...)
+	if !dockerc.ValidImageRef(ref) {
+		return dockerc.ErrBadName
+	}
+	return err
+}
+
 func (f *Fake) Containers(context.Context) ([]dockerc.Container, error) {
-	return f.ContainerList, f.record("Containers")
+	return nilOnErr(f.ContainerList, f.record("Containers"))
 }
 
 func (f *Fake) Stats(_ context.Context, id string) (dockerc.Reading, error) {
@@ -106,27 +147,27 @@ func (f *Fake) Stats(_ context.Context, id string) (dockerc.Reading, error) {
 }
 
 func (f *Fake) DiskUsage(context.Context) (dockerc.DiskUsage, error) {
-	return f.Disk, f.record("DiskUsage")
+	return zeroOnErr(f.Disk, f.record("DiskUsage"))
 }
 
 func (f *Fake) Info(context.Context) (dockerc.Engine, error) {
-	return f.EngineInfo, f.record("Info")
+	return zeroOnErr(f.EngineInfo, f.record("Info"))
 }
 
 func (f *Fake) Images(context.Context) ([]dockerc.Image, error) {
-	return f.ImageList, f.record("Images")
+	return nilOnErr(f.ImageList, f.record("Images"))
 }
 
 func (f *Fake) Volumes(context.Context) ([]dockerc.Volume, error) {
-	return f.VolumeList, f.record("Volumes")
+	return nilOnErr(f.VolumeList, f.record("Volumes"))
 }
 
 func (f *Fake) Networks(context.Context) ([]dockerc.Network, error) {
-	return f.NetworkList, f.record("Networks")
+	return nilOnErr(f.NetworkList, f.record("Networks"))
 }
 
 func (f *Fake) Logs(_ context.Context, id string, tail int) (dockerc.LogResult, error) {
-	return f.LogResult, f.record("Logs", id, tail)
+	return zeroOnErr(f.LogResult, f.record("Logs", id, tail))
 }
 
 // Provider implements dockerc.Provider. It records the profile of every For
