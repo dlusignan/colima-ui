@@ -103,4 +103,14 @@ describe('useJobTracker', () => {
     await new Promise((r) => setTimeout(r, 700))
     expect(get).toHaveBeenCalledTimes(1)
   })
+
+  it('never reports a running image pull as the profile job', async () => {
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_p', action: 'image-pull' }))
+    const { result } = renderHook(() => useJobTracker([profileFixture()]), {
+      wrapper: wrapperFor(createTestClient()),
+    })
+    act(() => result.current.adopt('synthetic-a', 'j_p'))
+    await waitFor(() => expect(api.getJob).toHaveBeenCalled())
+    expect(result.current.jobs.has('synthetic-a')).toBe(false)
+  })
 })

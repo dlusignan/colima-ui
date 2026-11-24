@@ -79,6 +79,13 @@ describe('JobOutcomeToasts', () => {
     await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument())
   })
 
+  it('names an image pull in plain words', async () => {
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_p', action: 'image-pull' }))
+    const { stream } = setup()
+    await emit(stream, finished({ jobId: 'j_p', state: 'cancelled', exitCode: null }))
+    expect(await screen.findByRole('status')).toHaveTextContent('default: image pull cancelled')
+  })
+
   it('keeps a failed job as an error toast with the exit code', async () => {
     vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_2', action: 'start' }))
     const { stream } = setup()

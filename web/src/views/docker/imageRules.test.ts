@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { DockerImage } from '@/lib/api/types'
-import { pruneCandidates, shortImageId, splitReference, validateRepository } from './imageRules'
+import { pruneCandidates, shortImageId, splitReference, validatePullReference, validateRepository } from './imageRules'
 
 const image = (tags: string[], containers: number): DockerImage => ({
   id: 'sha256:' + 'a'.repeat(64),
@@ -36,4 +36,32 @@ describe('imageRules', () => {
     expect(pruneCandidates(list, 'dangling')).toEqual([list[1]])
     expect(pruneCandidates(list, 'all')).toEqual([list[0], list[1]])
   })
+})
+
+describe('validatePullReference', () => {
+  it.each([
+    'postgres:18-alpine',
+    'ghcr.io/owner/app:1.2',
+    'localhost:5000/team/app:v1',
+    'Registry.Example.test:5000/team/app:v1',
+    'postgres@sha256:' + 'a'.repeat(64),
+    'postgres:18@sha256:' + 'a'.repeat(64),
+    'a'.repeat(100) + ':1',
+  ])('accepts %s', (ref) => expect(validatePullReference(ref)).toBeUndefined())
+
+  it.each([
+    ['empty', '', /Enter an image reference/],
+    ['no tag or digest', 'postgres', /Add a tag or a digest/],
+    ['registry with port and no tag', 'localhost:5000/app', /Add a tag or a digest/],
+    ['too long', 'a'.repeat(254) + ':1', /at most 255/],
+    ['userinfo', 'user:pass@registry.example.test/app:1', /Credentials/],
+    ['bad digest', 'postgres@sha256:abc', /Not a valid digest/],
+    ['sha256 repository', 'sha256:v1', /read like an image ID/],
+    ['64 hex repository', 'a'.repeat(64) + ':v1', /read like an image ID/],
+    ['uppercase path', 'Team/App:1', /lowercase/],
+    ['space', 'post gres:1', /lowercase/],
+    ['bad tag', 'app:-x', /Use letters, digits/],
+    ['bad host', 'bad_host.example/app:1', /registry host|lowercase/],
+    ['ipv6 host', '[::1]:5000/app:1', /registry host|lowercase|Use letters/],
+  ])('rejects %s', (_n, ref, message) => expect(validatePullReference(ref)).toMatch(message))
 })

@@ -102,3 +102,36 @@ export type PruneMode = 'dangling' | 'all'
 export function pruneCandidates(images: readonly DockerImage[], mode: PruneMode): DockerImage[] {
   return images.filter((i) => i.containers === 0 && (mode === 'all' || i.tags.length === 0))
 }
+
+const DIGEST = /^[a-zA-Z][a-zA-Z0-9]*(?:[-_+.][a-zA-Z][a-zA-Z0-9]*)*:[0-9a-fA-F]{32,}$/
+
+/**
+ * Checks a reference to pull the way ValidPullRef in internal/dockerc/pull.go
+ * does: a valid reference that carries a tag or a digest, whose repository is
+ * not `sha256` or a 64 character hex string. Registry credentials (user@host)
+ * are refused too: the server never sends any. Returns the problem as text, or
+ * undefined when the server will accept it. The caller passes the trimmed value.
+ */
+export function validatePullReference(ref: string): string | undefined {
+  if (ref === '') return 'Enter an image reference, for example postgres:18-alpine.'
+  if (ref.length > MAX_IMAGE_REFERENCE) return `Use at most ${MAX_IMAGE_REFERENCE} characters.`
+  let rest = ref
+  let digest = false
+  const at = rest.indexOf('@')
+  if (at >= 0) {
+    if (!DIGEST.test(rest.slice(at + 1))) {
+      return 'Not a valid digest. Use name@sha256:<hex>. Credentials (user@host) are not supported: only public images can be pulled.'
+    }
+    rest = rest.slice(0, at)
+    digest = true
+  }
+  const colon = rest.lastIndexOf(':')
+  if (colon > rest.lastIndexOf('/')) {
+    const tag = validateTag(rest.slice(colon + 1))
+    if (tag) return tag
+    rest = rest.slice(0, colon)
+  } else if (!digest) {
+    return 'Add a tag or a digest, for example postgres:18-alpine. A pull never takes "latest" on its own.'
+  }
+  return validateRepository(rest)
+}
