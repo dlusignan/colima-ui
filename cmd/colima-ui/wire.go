@@ -249,8 +249,9 @@ func (a *app) handler() http.Handler {
 	// #79 images
 	opts = append(opts, httpapi.WithImages(a.gate, a.containers))
 
-	// #80 volumes and networks
-	opts = append(opts, httpapi.WithVolumes(a.gate, a.containers))
+	// #80 volumes and networks (#117 adds the volume write routes, which need
+	// the job manager's busy lookup and the action log)
+	opts = append(opts, httpapi.WithVolumes(a.gate, a.containers, a.mgr, a.store))
 	opts = append(opts, httpapi.WithNetworks(a.gate, a.containers))
 
 	// #81 engine

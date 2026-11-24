@@ -553,3 +553,12 @@ func TestSnapshotNoGoroutineLeak(t *testing.T) {
 		t.Fatalf("goroutines %d -> %d", before, after)
 	}
 }
+
+func (f *fakeClient) CreateVolume(context.Context, string, map[string]string) (Volume, error) {
+	return Volume{}, nil
+}
+func (f *fakeClient) InspectVolume(context.Context, string) (VolumeDetail, error) {
+	return VolumeDetail{}, nil
+}
+func (f *fakeClient) RemoveVolume(context.Context, string) error        { return nil }
+func (f *fakeClient) PruneVolumes(context.Context) (PruneResult, error) { return PruneResult{}, nil }

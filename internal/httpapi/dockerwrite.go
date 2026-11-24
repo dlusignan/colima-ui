@@ -241,6 +241,11 @@ func dockerWriteError(action, object string, err error) error {
 	case errors.Is(err, dockerc.ErrObjectNotFound):
 		return newAPIError(http.StatusNotFound, "not_found", "No such Docker object.", details)
 	case errors.Is(err, dockerc.ErrConflict):
+		// A volume still mounted says by how many containers (a count only).
+		var inUse *dockerc.InUseError
+		if errors.As(err, &inUse) {
+			details["containers"] = inUse.Containers
+		}
 		return newAPIError(http.StatusConflict, "conflict",
 			"The Docker object is in use or protected.", details)
 	case errors.Is(err, dockerc.ErrInvalidRequest):
