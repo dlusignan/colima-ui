@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -55,6 +57,7 @@ var jobIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // WithJobs registers the operation routes:
 //
 //	POST /api/profiles/{name}/start|stop|restart
+//	POST /api/profiles/{name}/delete
 //	GET  /api/jobs/{id}
 //	POST /api/jobs/{id}/cancel
 func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
@@ -63,6 +66,7 @@ func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
 		rt.Handle("POST /api/profiles/{name}/start", j.action(operations.ActionStart))
 		rt.Handle("POST /api/profiles/{name}/stop", j.action(operations.ActionStop))
 		rt.Handle("POST /api/profiles/{name}/restart", j.action(operations.ActionRestart))
+		rt.Handle("POST /api/profiles/{name}/delete", j.delete)
 		rt.Handle("GET /api/jobs/{id}", j.get)
 		rt.Handle("POST /api/jobs/{id}/cancel", j.cancel)
 	}
@@ -115,6 +119,73 @@ func (j *jobRoutes) action(act operations.Action) apiHandler {
 		writeJSON(w, http.StatusAccepted, map[string]string{"jobId": sum.ID})
 		return nil
 	}
+}
+
+// deleteBodyLimit bounds the delete body: one name (at most 64 bytes) and a flag.
+const deleteBodyLimit = 1 << 10
+
+// delete serves POST /api/profiles/{name}/delete. The order: the body shape
+// (400), the gate (it validates the name before anything else sees it, 404),
+// the confirmation (422, must equal the path name exactly), Busy (409
+// profile_busy), the running check (409 profile_running, decided
+// conservatively: the user stops the VM first), then Submit, which stays
+// authoritative for the slot. Nothing starts before every check has passed, and
+// the launcher always passes --force, so the process never waits on a prompt.
+func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Confirm    *string
+		DeleteData *bool
+	}
+	// An empty body means {}, so a missing confirm is the route's own 422.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, deleteBodyLimit))
+	if err != nil {
+		return errBadRequest("Request body is not valid.")
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = []byte("{}")
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if err := decodeStrictObject(w, r, deleteBodyLimit, map[string]any{
+		"confirm": &in.Confirm, "deleteData": &in.DeleteData,
+	}); err != nil {
+		return err
+	}
+	name := r.PathValue("name")
+
+	ctx, cancel := context.WithTimeout(r.Context(), gateTimeout)
+	defer cancel()
+	status, err := j.gate.ProfileStatus(ctx, name)
+	switch {
+	case errors.Is(err, ErrInvalidProfileName):
+		return profileNotFound("")
+	case errors.Is(err, ErrProfileNotFound):
+		return profileNotFound(name)
+	case err != nil:
+		slog.Error("profile lookup failed", "action", operations.ActionDelete, "error", err)
+		return errColimaFailed()
+	}
+
+	if in.Confirm == nil || *in.Confirm != name {
+		return newAPIError(http.StatusUnprocessableEntity, "confirmation_required",
+			"Send the profile name in confirm to delete it.", map[string]any{})
+	}
+	if id, running := j.mgr.Busy(name); running {
+		return busyError(name, id)
+	}
+	if strings.ToLower(status) == "running" {
+		return newAPIError(http.StatusConflict, "profile_running",
+			"Stop the profile before deleting it.", map[string]any{"status": "running"})
+	}
+
+	sum, err := j.mgr.Submit(operations.Request{
+		Action: operations.ActionDelete, Profile: name,
+		DeleteData: in.DeleteData != nil && *in.DeleteData,
+	})
+	if err != nil {
+		return submitError(name, operations.ActionDelete, err)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"jobId": sum.ID})
+	return nil
 }
 
 func profileNotFound(name string) *APIError {

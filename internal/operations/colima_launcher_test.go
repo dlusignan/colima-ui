@@ -38,7 +38,7 @@ func TestColimaLauncherMapsActionsToAdapterCalls(t *testing.T) {
 func TestColimaLauncherRejectsUnknownActionAndBadProfile(t *testing.T) {
 	s := &argsStreamer{}
 	l := ColimaLauncher{S: s}
-	if _, err := l.Launch(context.Background(), Request{Action: "delete", Profile: "dev"}); !errors.Is(err, ErrUnknownAction) {
+	if _, err := l.Launch(context.Background(), Request{Action: "bogus", Profile: "dev"}); !errors.Is(err, ErrUnknownAction) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := l.Launch(context.Background(), Request{Action: ActionStart, Profile: "../x"}); err == nil {
@@ -104,5 +104,28 @@ func TestColimaLauncherCreateBackstopRejectsBadOptions(t *testing.T) {
 	one := 1
 	if _, err := (ColimaLauncher{S: s}).Launch(context.Background(), Request{Action: ActionCreate, Profile: "dev", Options: colima.StartOptions{CPUs: &one}}); err == nil {
 		t.Error("zero limits must reject a resource flag")
+	}
+}
+
+func TestColimaLauncherDeleteArgv(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s}
+	for _, data := range []bool{false, true} {
+		if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev", DeleteData: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := [][]string{
+		{"delete", "-p", "dev", "--force"},
+		{"delete", "-p", "dev", "--force", "--data"},
+	}
+	if !reflect.DeepEqual(s.args, want) {
+		t.Fatalf("args = %v, want %v", s.args, want)
+	}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "../x"}); err == nil {
+		t.Fatal("want invalid profile error")
+	}
+	if len(s.args) != 2 {
+		t.Fatalf("streamer called for a hostile name: %v", s.args)
 	}
 }
