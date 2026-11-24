@@ -9,14 +9,16 @@ interface ProfileActionsProps {
   busy: boolean
   unavailable: boolean
   onAction: (action: ProfileAction) => void
+  /** Adds Update runtime, which is on the profile page only. */
+  showUpdate?: boolean
 }
 
 /** Start, Stop and Restart for one row. Stop and Restart ask for confirmation. */
-export function ProfileActions({ profile, busy, unavailable, onAction }: ProfileActionsProps) {
+export function ProfileActions({ profile, busy, unavailable, onAction, showUpdate }: ProfileActionsProps) {
   const { name, status } = profile
   const disabled = actionsDisabled(status, busy || unavailable)
 
-  const confirmed = (action: 'stop' | 'restart') => {
+  const confirmed = (action: 'stop' | 'restart' | 'update') => {
     const button = (
       <Button
         size="xs"
@@ -36,7 +38,7 @@ export function ProfileActions({ profile, busy, unavailable, onAction }: Profile
         title={`${CONFIRM[action].label} ${name}?`}
         description={CONFIRM[action].description(name)}
         confirmLabel={CONFIRM[action].label}
-        destructive
+        destructive={action !== 'update'}
         onConfirm={() => onAction(action)}
       />
     )
@@ -56,6 +58,7 @@ export function ProfileActions({ profile, busy, unavailable, onAction }: Profile
       </Button>
       {confirmed('stop')}
       {confirmed('restart')}
+      {showUpdate && confirmed('update')}
     </div>
   )
 }

@@ -78,6 +78,8 @@ export const api = {
    */
   deleteProfile: (name: string, body: DeleteProfileRequest) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/delete`, { body }),
+  updateProfile: (name: string) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/update`),
   getJob: (id: string, signal?: AbortSignal) =>
     request<Job>('GET', `/api/jobs/${enc(id)}`, { signal }),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${enc(id)}/cancel`),

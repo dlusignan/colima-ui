@@ -17,6 +17,8 @@ const (
 	// the runtime data too when Request.DeleteData is set. The route that
 	// submits it checks the confirmation and that the profile is stopped.
 	ActionDelete Action = "delete"
+	// ActionUpdate refreshes the container runtime of a running profile.
+	ActionUpdate Action = "update"
 	// ActionCreate starts a profile that does not exist yet, with the options
 	// in Request.Options. The route that submits it checks existence.
 	ActionCreate Action = "create"

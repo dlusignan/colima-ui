@@ -11,6 +11,7 @@ const PROGRESS: Record<JobAction, string> = {
   stop: 'stopping',
   restart: 'restarting',
   delete: 'deleting',
+  update: 'updating',
   create: 'creating',
   'image-pull': 'pulling',
 }

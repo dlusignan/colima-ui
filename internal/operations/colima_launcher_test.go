@@ -22,7 +22,7 @@ func (s *argsStreamer) Stream(_ context.Context, args []string) (colima.Process,
 func TestColimaLauncherMapsActionsToAdapterCalls(t *testing.T) {
 	s := &argsStreamer{}
 	l := ColimaLauncher{S: s}
-	for _, a := range []Action{ActionStart, ActionStop, ActionRestart} {
+	for _, a := range []Action{ActionStart, ActionStop, ActionRestart, ActionUpdate} {
 		if _, err := l.Launch(context.Background(), Request{Action: a, Profile: "dev"}); err != nil {
 			t.Fatalf("%s: %v", a, err)
 		}
@@ -31,6 +31,7 @@ func TestColimaLauncherMapsActionsToAdapterCalls(t *testing.T) {
 		{"start", "-p", "dev"},
 		{"stop", "-p", "dev"},
 		{"restart", "-p", "dev"},
+		{"update", "-p", "dev"},
 	}
 	if !reflect.DeepEqual(s.args, want) {
 		t.Fatalf("args = %v, want %v", s.args, want)

@@ -117,7 +117,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 34 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 35 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -128,6 +128,7 @@ There are 34 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `POST` | `/api/profiles/{name}/start` | Start a profile |
 | `POST` | `/api/profiles/{name}/stop` | Stop a profile |
 | `POST` | `/api/profiles/{name}/restart` | Restart a profile |
+| `POST` | `/api/profiles/{name}/update` | Update the container runtime of a running profile |
 | `POST` | `/api/profiles/{name}/delete` | Delete a stopped profile as a job; needs the profile name as confirmation (3.32) |
 | `GET` | `/api/jobs/{id}` | Job status and captured output |
 | `POST` | `/api/jobs/{id}/cancel` | Cancel a running job |
@@ -232,9 +233,11 @@ Response `200`: one profile object, the same fields as an element of the list ab
 
 Errors: `404` `profile_not_found`, `502` `colima_failed`.
 
-### 3.4 Start, stop and restart
+### 3.4 Start, stop, restart and update
 
-`POST /api/profiles/{name}/start`, `POST /api/profiles/{name}/stop`, `POST /api/profiles/{name}/restart`
+`POST /api/profiles/{name}/start`, `POST /api/profiles/{name}/stop`, `POST /api/profiles/{name}/restart`, `POST /api/profiles/{name}/update`
+
+`update` runs `colima update -p <profile>`, which refreshes the container runtime inside a running VM, and is refused with `409 invalid_state` unless the profile is running. The job has `action` `update`, holds the profile slot, streams output, can be cancelled and writes an `update` action log row.
 
 Token: yes. Request body: none (an empty body or `{}`). The call returns at once and does not wait for the command.
 
@@ -251,6 +254,7 @@ Errors:
 - `404` `profile_not_found`.
 - `409` `profile_busy`: another job is running on that profile. `details.jobId` is the running job.
 - `409` `invalid_state`: start on a running profile, or stop on a stopped one. `details.status` is the current status. Restart is allowed from either state.
+- `409` `invalid_state` for `update` when the profile is not running (`details.status` is the current status; nothing is started).
 - `400` `bad_request`: the body is not empty or `{}`.
 - `502` `colima_failed`: Colima could not be queried or launched.
 - `503` `shutting_down`: the backend is stopping and accepts no new jobs.
@@ -282,7 +286,7 @@ Response `200`:
 
 Fields:
 
-- `action`: `start`, `stop`, `restart`, `delete` (3.32), `create` (3.17) or `image-pull` (3.30). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
+- `action`: `start`, `stop`, `restart`, `update`, `delete` (3.32), `create` (3.17) or `image-pull` (3.30). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
 - `state`: `running`, `succeeded`, `failed` or `cancelled`.
 - `finishedAt` and `exitCode` are `null` while the job is running. `exitCode` is also `null` for a cancelled job whose process was killed.
 - `output` holds the captured lines in order. Each line has a per-job `seq` that starts at 1 and rises by 1. Lines keep their ANSI escape sequences.

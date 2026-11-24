@@ -46,6 +46,15 @@ func Delete(ctx context.Context, s Streamer, profile string, deleteData bool) (P
 	return stream(ctx, s, args)
 }
 
+// Update runs `colima update -p <profile>`, which refreshes the container
+// runtime inside a running VM. It takes no other arguments.
+func Update(ctx context.Context, s Streamer, profile string) (Process, error) {
+	if err := ValidateProfile(profile); err != nil {
+		return nil, err
+	}
+	return stream(ctx, s, []string{"update", "-p", profile})
+}
+
 func stopLike(ctx context.Context, s Streamer, verb, profile string, force bool) (Process, error) {
 	if err := ValidateProfile(profile); err != nil {
 		return nil, err

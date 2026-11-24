@@ -26,6 +26,7 @@ const PROGRESS: Record<JobAction, string> = {
   stop: 'stopping',
   restart: 'restarting',
   delete: 'deleting',
+  update: 'updating',
   create: 'creating',
   'image-pull': 'pulling',
 }
@@ -61,7 +62,7 @@ export function ProfileView() {
 
   const requestDelete = (deleteData: boolean) => {
     if (deletion.isPending) return
-        deletion.mutate(
+    deletion.mutate(
       { deleteData },
       {
         onSuccess: ({ jobId }) => tracker.adopt(name, jobId),
@@ -125,7 +126,7 @@ export function ProfileView() {
       <section aria-label="Status" className="flex flex-col gap-2 rounded-lg border border-border px-3 py-3">
         <div className="flex flex-wrap items-center gap-4">
           <StatusDot status={profile.status} label={running && job ? PROGRESS[job.action] : undefined} />
-          <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={runner.run} />
+          <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={runner.run} showUpdate />
           <SshConfigDialog profile={name} />
           {(job || profile.activeJobId) && (
             <Link className="text-sm underline underline-offset-4" to={logPath(name, logJobId)}>
