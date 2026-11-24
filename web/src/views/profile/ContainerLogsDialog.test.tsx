@@ -25,6 +25,15 @@ const open = (user: ReturnType<typeof userEvent.setup>) =>
   user.click(screen.getByRole('button', { name: 'Logs for synthetic-web' }))
 
 describe('ContainerLogsDialog', () => {
+  it('scrolls inside the window when the content is taller than it', async () => {
+    const { get, user } = setup()
+    get.mockResolvedValue({ lines: ['a'], truncated: false })
+    await open(user)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.className).toContain('max-h-[85vh]')
+    expect(dialog.className).toContain('overflow-y-auto')
+  })
+
   it('requests nothing until opened, then renders lines as text and passes axe', async () => {
     const { get, user } = setup()
     get.mockResolvedValue({

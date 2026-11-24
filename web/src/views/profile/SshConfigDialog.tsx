@@ -107,7 +107,7 @@ export function SshConfigDialog({ profile }: { profile: string }) {
         SSH config
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="top-[8%] max-w-2xl">
+        <DialogContent className="top-[8%] max-h-[85vh] max-w-2xl overflow-y-auto">
           <DialogTitle>SSH config for {profile}</DialogTitle>
           <DialogDescription>The settings Colima prints for this profile. They do not update by themselves.</DialogDescription>
           {body}

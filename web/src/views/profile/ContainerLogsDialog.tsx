@@ -104,7 +104,7 @@ export function ContainerLogsDialog({
         Logs
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="top-[8%] max-w-3xl">
+        <DialogContent className="top-[8%] max-h-[85vh] max-w-3xl overflow-y-auto">
           <DialogTitle>Logs for {container.name}</DialogTitle>
           <DialogDescription>A snapshot of recent output, oldest first. It does not update by itself.</DialogDescription>
           <div className="flex flex-wrap items-center gap-2">
