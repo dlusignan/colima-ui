@@ -15,6 +15,16 @@ import { SectionToolbar } from './SectionToolbar'
 import { useDockerMutation } from './useDockerMutation'
 import { plural } from './volumeText'
 
+/** Column label and the classes that hide it on narrow screens. */
+const COLUMNS = [
+  ['Name', ''],
+  ['Driver', ''],
+  ['Scope', 'hidden md:table-cell'],
+  ['Internal', 'hidden lg:table-cell'],
+  ['Containers', ''],
+  ['Actions', ''],
+] as const
+
 /** Networks of a running VM. Nothing is requested while the VM is not running. */
 export function NetworksSection({ profile }: { profile: Profile }) {
   const running = profile.status === 'running'
@@ -91,8 +101,8 @@ export function NetworksSection({ profile }: { profile: Profile }) {
             <caption className="sr-only">Networks in {profile.name}</caption>
             <thead>
               <tr className="border-b border-border text-left text-xs text-muted-foreground">
-                {['Name', 'Driver', 'Scope', 'Internal', 'Containers', 'Actions'].map((c) => (
-                  <th key={c} scope="col" className="px-3 py-2 font-medium">
+                {COLUMNS.map(([c, hide]) => (
+                  <th key={c} scope="col" className={`px-3 py-2 font-medium ${hide}`}>
                     {c}
                   </th>
                 ))}
@@ -101,12 +111,12 @@ export function NetworksSection({ profile }: { profile: Profile }) {
             <tbody>
               {list.map((n) => (
                 <tr key={n.id} className="border-b border-border last:border-0 align-top">
-                  <th scope="row" className="px-3 py-2 text-left font-mono font-medium break-all">
+                  <th scope="row" title={n.name} className="px-3 py-2 text-left font-mono font-medium break-all">
                     {n.name}
                   </th>
                   <td className="px-3 py-2">{n.driver}</td>
-                  <td className="px-3 py-2">{n.scope}</td>
-                  <td className="px-3 py-2">{n.internal ? 'Yes' : 'No'}</td>
+                  <td className="hidden px-3 py-2 md:table-cell">{n.scope}</td>
+                  <td className="hidden px-3 py-2 lg:table-cell">{n.internal ? 'Yes' : 'No'}</td>
                   <td className="px-3 py-2 whitespace-nowrap">{n.containers}</td>
                   <td className="px-3 py-2">
                     <RowActions

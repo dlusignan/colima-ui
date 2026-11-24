@@ -18,8 +18,8 @@ export function Layout() {
   return (
     <ToastProvider>
       <div className="min-h-screen bg-background text-foreground">
-        <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-3">
-          <div className="flex items-center gap-6">
+        <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 py-3 sm:px-6 xl:px-8">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
             <h1 className="text-lg font-semibold">Colima UI</h1>
             <nav aria-label="Main">
               <NavLink
@@ -31,14 +31,14 @@ export function Layout() {
               </NavLink>
             </nav>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <Button size="sm" variant="outline" onClick={() => setHelpOpen(true)}>
               Shortcuts
             </Button>
             <ThemeSwitcher />
           </div>
         </header>
-        <main className="mx-auto max-w-5xl p-6">
+        <main className="min-w-0 p-4 sm:p-6 xl:px-8">
           <AuthGate>
             <EventStreamProvider>
               <CreateProfileProvider>

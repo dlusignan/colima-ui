@@ -3,7 +3,19 @@ import { useProfileActionRunner } from '@/lib/jobs/useProfileActionRunner'
 import type { JobTracker } from '@/lib/jobs/useJobTracker'
 import { ProfileRow } from './ProfileRow'
 
-const COLUMNS = ['Name', 'Status', 'Runtime', 'CPUs', 'Memory', 'Disk', 'Colima', 'Source', 'Warnings', 'Actions']
+/** Column label and the classes that hide it on narrow screens. */
+const COLUMNS = [
+  ['Name', ''],
+  ['Status', ''],
+  ['Runtime', 'hidden md:table-cell'],
+  ['CPUs', 'hidden sm:table-cell'],
+  ['Memory', 'hidden sm:table-cell'],
+  ['Disk', 'hidden lg:table-cell'],
+  ['Colima', 'hidden xl:table-cell'],
+  ['Source', 'hidden xl:table-cell'],
+  ['Warnings', ''],
+  ['Actions', ''],
+] as const
 
 interface RowProps {
   profile: Profile
@@ -31,7 +43,7 @@ interface ProfileTableProps {
   onError: RowProps['onError']
 }
 
-/** Wide table in a scroll container: Layout caps the page width. */
+/** Columns hide progressively on narrow screens; the scroll container is the last resort. */
 export function ProfileTable({ profiles, tracker, onError }: ProfileTableProps) {
   return (
     <div
@@ -44,8 +56,8 @@ export function ProfileTable({ profiles, tracker, onError }: ProfileTableProps) 
         <caption className="sr-only">Colima profiles</caption>
         <thead>
           <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            {COLUMNS.map((c) => (
-              <th key={c} scope="col" className="px-3 py-2 font-medium">
+            {COLUMNS.map(([c, hide]) => (
+              <th key={c} scope="col" className={`px-3 py-2 font-medium ${hide}`}>
                 {c}
               </th>
             ))}

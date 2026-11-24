@@ -53,7 +53,11 @@ export function ProfileRow({ profile, job, pending, unavailable, onAction }: Pro
 
   return (
     <tr data-profile={profile.name} className="border-b border-border last:border-0">
-      <th scope="row" className="px-3 py-2 text-left font-mono font-medium">
+      <th
+        scope="row"
+        title={`Colima ${profile.colimaVersion || 'unknown'}, source ${SOURCE_LABEL[profile.source] ?? profile.source}`}
+        className="px-3 py-2 text-left font-mono font-medium break-words"
+      >
         <Link className="underline-offset-4 hover:underline" to={`/profiles/${encodeURIComponent(profile.name)}`}>
           {profile.name}
         </Link>
@@ -61,12 +65,12 @@ export function ProfileRow({ profile, job, pending, unavailable, onAction }: Pro
       <td className="px-3 py-2">
         <StatusDot status={profile.status} label={label} />
       </td>
-      <td className="px-3 py-2 font-mono">{profile.runtime || '—'}</td>
-      <td className="px-3 py-2 font-mono">{orDash(profile.cpus, String)}</td>
-      <td className="px-3 py-2 font-mono">{orDash(profile.memoryBytes, formatBytes)}</td>
-      <td className="px-3 py-2 font-mono">{orDash(profile.diskBytes, formatBytes)}</td>
-      <td className="px-3 py-2 font-mono">{profile.colimaVersion || '—'}</td>
-      <td className="px-3 py-2">{SOURCE_LABEL[profile.source] ?? profile.source}</td>
+      <td className="hidden px-3 py-2 font-mono md:table-cell">{profile.runtime || '—'}</td>
+      <td className="hidden px-3 py-2 font-mono sm:table-cell">{orDash(profile.cpus, String)}</td>
+      <td className="hidden px-3 py-2 font-mono sm:table-cell">{orDash(profile.memoryBytes, formatBytes)}</td>
+      <td className="hidden px-3 py-2 font-mono lg:table-cell">{orDash(profile.diskBytes, formatBytes)}</td>
+      <td className="hidden px-3 py-2 font-mono xl:table-cell">{profile.colimaVersion || '—'}</td>
+      <td className="hidden px-3 py-2 xl:table-cell">{SOURCE_LABEL[profile.source] ?? profile.source}</td>
       <td className="px-3 py-2">
         <ul className="flex flex-wrap gap-1">
           {(profile.warnings ?? []).map((w) => (
