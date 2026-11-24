@@ -15,6 +15,8 @@ import type {
   ContainerList,
   ContainerLogs,
   EngineInfo,
+  KubernetesConfirmRequest,
+  KubernetesStatus,
   SshConfig,
   ImageList,
   Job,
@@ -45,6 +47,12 @@ export const PRUNE_NETWORKS_CONFIRMATION = 'delete-unused-networks'
 /** The fixed text `POST .../images/prune` requires in `confirm` (docs/api.md 3.29). */
 export const PRUNE_IMAGES_CONFIRMATION = 'delete-unused-images'
 
+/** The fixed text `POST .../kubernetes/reset` requires in `confirm` (docs/api.md 3.33). */
+export const RESET_KUBERNETES_CONFIRMATION = 'reset-kubernetes'
+
+/** The fixed text `POST .../kubernetes/delete` requires in `confirm` (docs/api.md 3.33). */
+export const DELETE_KUBERNETES_CONFIRMATION = 'delete-kubernetes'
+
 function withQuery(
   path: string,
   params: Record<string, string | number | undefined>,
@@ -72,6 +80,26 @@ export const api = {
     request<JobRef>('POST', `/api/profiles/${enc(name)}/restart`),
   updateProfile: (name: string) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/update`),
+  getKubernetes: (name: string, signal?: AbortSignal) =>
+    request<KubernetesStatus>('GET', `/api/profiles/${enc(name)}/kubernetes`, { signal }),
+  kubernetesStart: (name: string) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/kubernetes/start`),
+  kubernetesStop: (name: string) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/kubernetes/stop`),
+  /**
+   * Destroys the cluster's workloads and state. The server requires the
+   * confirmation text, which is sent here so no caller can forget it: call this
+   * only after the user has confirmed.
+   */
+  kubernetesReset: (name: string) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/kubernetes/reset`, {
+      body: { confirm: RESET_KUBERNETES_CONFIRMATION } satisfies KubernetesConfirmRequest,
+    }),
+  /** Same as reset: destroys the cluster, and sends the confirmation text itself. */
+  kubernetesDelete: (name: string) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/kubernetes/delete`, {
+      body: { confirm: DELETE_KUBERNETES_CONFIRMATION } satisfies KubernetesConfirmRequest,
+    }),
   getJob: (id: string, signal?: AbortSignal) =>
     request<Job>('GET', `/api/jobs/${enc(id)}`, { signal }),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${enc(id)}/cancel`),

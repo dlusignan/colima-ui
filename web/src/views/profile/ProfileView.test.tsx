@@ -25,6 +25,7 @@ function setup(profiles: Profile[] | Error, at = '/profiles/dev') {
   const actions = vi.spyOn(api, 'getActions').mockResolvedValue({
     entries: [{ startedAt: '2026-01-01T10:00:00Z', action: 'start', outcome: 'success', detail: null }],
   })
+  const kubernetes = vi.spyOn(api, 'getKubernetes').mockResolvedValue({ enabled: false })
   const view = render(
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter initialEntries={[at]}>
@@ -37,7 +38,7 @@ function setup(profiles: Profile[] | Error, at = '/profiles/dev') {
       </MemoryRouter>
     </QueryClientProvider>,
   )
-  return { list, containers, actions, user: userEvent.setup(), ...view }
+  return { list, containers, actions, kubernetes, user: userEvent.setup(), ...view }
 }
 
 const running = profileFixture({ name: 'dev', status: 'running' })
@@ -228,5 +229,86 @@ describe('containers table details', () => {
     const created = within(up).getByText(/ago$|just now/, { selector: 'span[title]' })
     expect(created).toHaveAttribute('title', new Date('2026-01-01T00:00:00Z').toLocaleString())
     await expectNoA11yViolations(root)
+  })
+})
+
+describe('kubernetes group', () => {
+  it('is hidden while kubernetes is off', async () => {
+    const { kubernetes } = setup([running])
+    await screen.findByRole('heading', { name: 'Configuration' })
+    await waitFor(() => expect(kubernetes).toHaveBeenCalledWith('dev', expect.anything()))
+    expect(screen.queryByRole('group', { name: 'Kubernetes' })).not.toBeInTheDocument()
+  })
+
+  it('is not even asked for while the profile is stopped', async () => {
+    const { kubernetes } = setup([stopped])
+    await screen.findByRole('heading', { name: 'Configuration' })
+    expect(kubernetes).not.toHaveBeenCalled()
+    expect(screen.queryByRole('group', { name: 'Kubernetes' })).not.toBeInTheDocument()
+  })
+
+  it('is hidden when the probe fails', async () => {
+    const { kubernetes } = setup([running])
+    kubernetes.mockRejectedValue(new ApiError(502, 'colima_failed', 'x'))
+    await screen.findByRole('heading', { name: 'Configuration' })
+    expect(screen.queryByRole('group', { name: 'Kubernetes' })).not.toBeInTheDocument()
+  })
+
+  it('shows four buttons when kubernetes is on and start sends no confirmation', async () => {
+    const start = vi.spyOn(api, 'kubernetesStart').mockResolvedValue({ jobId: 'j_7' })
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_7', profile: 'dev', action: 'kubernetes-start' }))
+    const { kubernetes, user } = setup([running])
+    kubernetes.mockResolvedValue({ enabled: true })
+    const group = await screen.findByRole('group', { name: 'Kubernetes' })
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['Start', 'Stop', 'Reset', 'Delete'])
+    await user.click(within(group).getByRole('button', { name: 'Start Kubernetes on dev' }))
+    expect(start).toHaveBeenCalledWith('dev')
+    expect(await screen.findByText('starting Kubernetes')).toBeInTheDocument()
+    await waitFor(() => expect(isDisabled(screen.getByRole('button', { name: 'Reset Kubernetes on dev' }))).toBe(true))
+  })
+
+  it('reset and delete explain the destruction and call the route only after confirming', async () => {
+    const reset = vi.spyOn(api, 'kubernetesReset').mockResolvedValue({ jobId: 'j_8' })
+    const del = vi.spyOn(api, 'kubernetesDelete').mockResolvedValue({ jobId: 'j_9' })
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_8', profile: 'dev', action: 'kubernetes-reset' }))
+    const { kubernetes, user } = setup([running])
+    kubernetes.mockResolvedValue({ enabled: true })
+    await user.click(await screen.findByRole('button', { name: 'Delete Kubernetes on dev' }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog).toHaveTextContent('workloads and cluster state are destroyed')
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(del).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Reset Kubernetes on dev' }))
+    const second = await screen.findByRole('alertdialog')
+    expect(second).toHaveTextContent('workloads and cluster state are destroyed')
+    expect(reset).not.toHaveBeenCalled()
+    await user.click(within(second).getByRole('button', { name: 'Reset' }))
+    await waitFor(() => expect(reset).toHaveBeenCalledTimes(1))
+    expect(reset).toHaveBeenCalledWith('dev')
+  })
+
+  it('ignores a second submit while the first is in flight', async () => {
+    let resolve: (v: { jobId: string }) => void = () => {}
+    const stop = vi.spyOn(api, 'kubernetesStop').mockReturnValue(new Promise((r) => (resolve = r)))
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_5', profile: 'dev', action: 'kubernetes-stop' }))
+    const { kubernetes, user } = setup([running])
+    kubernetes.mockResolvedValue({ enabled: true })
+    const button = await screen.findByRole('button', { name: 'Stop Kubernetes on dev' })
+    await user.click(button)
+    await waitFor(() => expect(isDisabled(button)).toBe(true))
+    await user.click(button)
+    expect(stop).toHaveBeenCalledTimes(1)
+    resolve({ jobId: 'j_5' })
+  })
+
+  it('shows the kubernetes_not_enabled conflict as a toast', async () => {
+    vi.spyOn(api, 'kubernetesStart').mockRejectedValue(
+      new ApiError(409, 'invalid_state', 'x', { status: 'running', reason: 'kubernetes_not_enabled' }),
+    )
+    const { kubernetes, user } = setup([running])
+    kubernetes.mockResolvedValue({ enabled: true })
+    await user.click(await screen.findByRole('button', { name: 'Start Kubernetes on dev' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Kubernetes is not enabled on dev.')
   })
 })

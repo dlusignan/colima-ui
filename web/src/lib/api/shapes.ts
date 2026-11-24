@@ -24,6 +24,8 @@ import type {
   EngineContainers,
   EngineDiskUsage,
   EngineInfo,
+  KubernetesConfirmRequest,
+  KubernetesStatus,
   SshConfig,
   SshConfigEntry,
   ImageList,
@@ -417,6 +419,14 @@ export const sshConfigShape = {
   raw: 'string',
   entries: { arrayOf: sshConfigEntryShape },
 } as const satisfies Record<keyof SshConfig, Kind>
+
+export const kubernetesStatusShape = {
+  enabled: 'boolean',
+} as const satisfies Record<keyof KubernetesStatus, Kind>
+
+export const kubernetesConfirmRequestShape = {
+  confirm: 'string',
+} as const satisfies Record<keyof KubernetesConfirmRequest, Kind>
 
 export const containerLogsShape = {
   lines: 'string[]',

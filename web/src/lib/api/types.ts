@@ -83,12 +83,29 @@ export interface ProfileCreated {
 
 /** What a profile's buttons can start. */
 export type ProfileAction = 'start' | 'stop' | 'restart' | 'update'
+/** The four Kubernetes cluster actions (docs/api.md 3.33); each is a job on the profile. */
+export type KubernetesAction =
+  | 'kubernetes-start'
+  | 'kubernetes-stop'
+  | 'kubernetes-reset'
+  | 'kubernetes-delete'
+
+/** Answer of `GET /api/profiles/{name}/kubernetes` (docs/api.md 3.32). */
+export interface KubernetesStatus {
+  enabled: boolean
+}
+
+/** Body of the reset and delete routes (docs/api.md 3.33). */
+export interface KubernetesConfirmRequest {
+  confirm: string
+}
+
 /**
  * What a job can be doing: a profile action, creating the profile (POST
  * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's
  * start/stop slot, and its output is progress text rather than process output).
  */
-export type JobAction = ProfileAction | 'create' | 'image-pull'
+export type JobAction = ProfileAction | KubernetesAction | 'create' | 'image-pull'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {

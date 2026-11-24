@@ -11,6 +11,10 @@ const PROGRESS: Record<JobAction, string> = {
   stop: 'stopping',
   restart: 'restarting',
   update: 'updating',
+  'kubernetes-start': 'starting Kubernetes',
+  'kubernetes-stop': 'stopping Kubernetes',
+  'kubernetes-reset': 'resetting Kubernetes',
+  'kubernetes-delete': 'deleting Kubernetes',
   create: 'creating',
   'image-pull': 'pulling',
 }
