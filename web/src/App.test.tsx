@@ -34,6 +34,11 @@ describe('header', () => {
     expect(screen.getByRole('link', { name: 'Dashboard' })).toBeInTheDocument()
     expect(screen.getByRole('combobox', { name: /theme/i })).toBeInTheDocument()
   })
+
+  it('mounts the notifications region once, even without a token', () => {
+    renderApp('/')
+    expect(screen.getAllByRole('region', { name: 'Notifications' })).toHaveLength(1)
+  })
 })
 
 describe('auth gate', () => {
