@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -49,7 +50,7 @@ func noDockerCall(t *testing.T, e *volEnv) {
 
 func TestContainerActionChanged(t *testing.T) {
 	for _, v := range caVerbs {
-		for _, id := range []string{caID12, caID64} {
+		for _, id := range []string{caID64} {
 			e := newCAEnv()
 			rec := e.do(t, "POST", caBase+id+"/"+v.verb, "")
 			if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"changed":true}` {
@@ -86,18 +87,19 @@ func TestContainerActionUnchanged304(t *testing.T) {
 func TestContainerActionDockerErrors(t *testing.T) {
 	secret := "/home/user/.colima/synthetic"
 	tests := []struct {
-		name   string
-		err    error
-		status int
-		code   string
+		name    string
+		err     error
+		status  int
+		code    string
+		changed string
 	}{
-		{"unknown", dockerc.ErrObjectNotFound, 404, "not_found"},
-		{"state refused", dockerc.ErrConflict, 409, "conflict"},
-		{"docker down", dockerc.ErrDockerUnavailable, 502, "docker_unavailable"},
-		{"daemon", fmt.Errorf("%w %s", dockerc.ErrDaemon, secret), 502, "docker_unavailable"},
-		{"vm stopped under us", dockerc.ErrVMNotRunning, 409, "invalid_state"},
-		{"not docker", dockerc.ErrRuntimeNotDocker, 409, "invalid_state"},
-		{"docker 400 text", fmt.Errorf("%w %s", dockerc.ErrInvalidRequest, secret), 422, "invalid_request"},
+		{"unknown", dockerc.ErrObjectNotFound, 404, "not_found", "false"},
+		{"state refused", fmt.Errorf("%w %s", dockerc.ErrConflict, secret), 409, "conflict", "false"},
+		{"docker down", dockerc.ErrDockerUnavailable, 502, "docker_unavailable", "unknown"},
+		{"daemon", fmt.Errorf("%w %s", dockerc.ErrDaemon, secret), 502, "docker_unavailable", "unknown"},
+		{"timeout", fmt.Errorf("x: %w", context.DeadlineExceeded), 502, "docker_unavailable", "unknown"},
+		{"vm stopped under us", dockerc.ErrVMNotRunning, 409, "invalid_state", "false"},
+		{"not docker", dockerc.ErrRuntimeNotDocker, 409, "invalid_state", "false"},
 	}
 	for _, v := range caVerbs {
 		for _, tc := range tests {
@@ -110,8 +112,14 @@ func TestContainerActionDockerErrors(t *testing.T) {
 					t.Fatal("daemon text leaked")
 				}
 				rows := e.audit.Rows()
-				if len(rows) != 1 || rows[0].Action != v.action || rows[0].Outcome != "failed" || *rows[0].Detail != caID12+" changed=false" {
+				if len(rows) != 1 || rows[0].Action != v.action || rows[0].Outcome != "failed" || *rows[0].Detail != caID12+" changed="+tc.changed {
 					t.Fatalf("rows = %+v", rows)
+				}
+				if tc.code == "conflict" {
+					if m := decodeMap(t, rec)["error"].(map[string]any)["message"]; m != containerConflictMessage ||
+						strings.Contains(fmt.Sprint(m), "in use or protected") {
+						t.Fatalf("message = %v", m)
+					}
 				}
 			})
 		}
@@ -129,7 +137,7 @@ func TestContainerActionProviderFailures(t *testing.T) {
 	} {
 		e := newCAEnv()
 		e.provider.Err = tc.err
-		wantErr(t, e.do(t, "POST", caBase+caID12+"/stop", ""), tc.status, tc.code)
+		wantErr(t, e.do(t, "POST", caBase+caID64+"/stop", ""), tc.status, tc.code)
 		if len(e.fake.Calls()) != 0 {
 			t.Fatal("Docker called")
 		}
@@ -142,9 +150,9 @@ func TestContainerActionProviderFailures(t *testing.T) {
 func TestContainerActionNotFoundNamesOnlyTheValidID(t *testing.T) {
 	e := newCAEnv()
 	e.fake.FailWith("StartContainer", dockerc.ErrObjectNotFound)
-	rec := e.do(t, "POST", caBase+caID12+"/start", "")
+	rec := e.do(t, "POST", caBase+caID64+"/start", "")
 	d := wantErr(t, rec, 404, "not_found").Error.Details
-	if d["name"] != caID12 {
+	if d["name"] != caID64 {
 		t.Fatalf("details = %v", d)
 	}
 }
@@ -167,7 +175,7 @@ func TestContainerActionGateAndBusy(t *testing.T) {
 			t.Run(v.verb+" "+tc.name, func(t *testing.T) {
 				e := newCAEnv()
 				tc.setup(e)
-				rec := e.do(t, "POST", caBase+caID12+"/"+v.verb, "")
+				rec := e.do(t, "POST", caBase+caID64+"/"+v.verb, "")
 				wantErr(t, rec, tc.status, tc.code)
 				if strings.Contains(rec.Body.String(), "/home/user") {
 					t.Fatal("leak")
@@ -184,7 +192,7 @@ func TestContainerActionGateAndBusy(t *testing.T) {
 func TestContainerActionStoppedVMDetails(t *testing.T) {
 	e := newCAEnv()
 	e.gate.status = "Stopped"
-	w := wantErr(t, e.do(t, "POST", caBase+caID12+"/start", ""), 409, "invalid_state")
+	w := wantErr(t, e.do(t, "POST", caBase+caID64+"/start", ""), 409, "invalid_state")
 	if w.Error.Details["status"] != "stopped" {
 		t.Fatalf("details = %v", w.Error.Details)
 	}
@@ -194,7 +202,7 @@ func TestContainerActionBodies(t *testing.T) {
 	for _, v := range caVerbs {
 		for _, body := range []string{`{}`, `{"t":0}`, `{"timeout":1}`, `null`, `[]`, `x`, `0`, `"a"`, strings.Repeat(" ", 10) + `{}`, strings.Repeat("a", 5000)} {
 			e := newCAEnv()
-			wantErr(t, e.do(t, "POST", caBase+caID12+"/"+v.verb, body), 400, "bad_request")
+			wantErr(t, e.do(t, "POST", caBase+caID64+"/"+v.verb, body), 400, "bad_request")
 			noDockerCall(t, e)
 			if len(e.audit.Rows()) != 0 {
 				t.Fatal("row for a refused body")
@@ -202,38 +210,46 @@ func TestContainerActionBodies(t *testing.T) {
 		}
 		// Whitespace only is an empty body.
 		e := newCAEnv()
-		if rec := e.do(t, "POST", caBase+caID12+"/"+v.verb, " \n"); rec.Code != 200 {
+		if rec := e.do(t, "POST", caBase+caID64+"/"+v.verb, " \n"); rec.Code != 200 {
 			t.Fatalf("%s whitespace body: %d", v.verb, rec.Code)
 		}
 	}
 }
 
 func TestContainerActionHostileIDs(t *testing.T) {
+	// Every id the mux routes to the handler is a 422.
 	ids := []string{
-		"web", "synthetic-web", "0123456789a", caID64 + "0", "0123456789AB", "0123456789ag",
-		"%2e%2e", "..", ".", "0123456789a%2fb", "0123456789%2e%2e", "0123456789a%3fx", "0123456789a%23",
-		"0123456789a%00", "0123456789a%0a", "0123456789a%e2%80%8b", "0123456789a%e2%80%ae", "0123456789a+",
-		"%ff", "%", "0123456789a%5c", "sha256:0123456789ab",
+		"web", "synthetic-web", "0123456789a", caID12, caID64[:63], caID64 + "0", strings.ToUpper(caID64),
+		caID64[:63] + "g", "%2e%2e", "0123456789a%2fb", caID64[:62] + "%2f", caID64[:60] + "%3fx",
+		caID64[:63] + "%23", caID64[:63] + "%00", caID64[:63] + "%0a", caID64[:61] + "%e2%80%8b",
+		caID64[:61] + "%e2%80%ae", caID64[:63] + "+", "%ff", "%", caID64[:63] + "%5c", "sha256:" + caID64,
+		"sha256:" + caID64[:57],
 	}
 	for _, v := range caVerbs {
 		for _, id := range ids {
-			e := newCAEnv()
-			target := caBase + id + "/" + v.verb
-			if _, err := url.ParseRequestURI(target); err != nil {
-				continue // not even a request the server can see
+			if _, err := url.ParseRequestURI(caBase + id + "/" + v.verb); err != nil {
+				continue // net/http itself answers 400 before any handler
 			}
-			rec := e.do(t, "POST", target, "")
-			if rec.Code != 422 && rec.Code != 404 && rec.Code != 400 && rec.Code != 301 { // 301: the mux cleans a dot segment
+			e := newCAEnv()
+			rec := e.do(t, "POST", caBase+id+"/"+v.verb, "")
+			if rec.Code != 422 {
 				t.Errorf("%s %q: %d %s", v.verb, id, rec.Code, rec.Body.String())
 			}
 			noDockerCall(t, e)
 			if len(e.audit.Rows()) != 0 {
 				t.Errorf("%s %q: audit row for a hostile id", v.verb, id)
 			}
-			// No echo of the hostile text in the answer.
-			if dec, err := url.PathUnescape(id); err == nil && dec != "" && len(dec) > 3 && strings.Contains(rec.Body.String(), dec) {
+			if dec, err := url.PathUnescape(id); err == nil && len(dec) > 3 && strings.Contains(rec.Body.String(), dec) {
 				t.Errorf("%s %q echoed: %s", v.verb, id, rec.Body.String())
 			}
+		}
+		// Dot segments never reach the handler: the mux cleans the path (301).
+		for _, id := range []string{"..", "."} {
+			e := newCAEnv()
+			if rec := e.do(t, "POST", caBase+id+"/"+v.verb, ""); rec.Code != 301 {
+				t.Errorf("%s %q: %d", v.verb, id, rec.Code)
+			}
+			noDockerCall(t, e)
 		}
 	}
 }
@@ -251,17 +267,17 @@ func TestContainerActionInvalidIDIs422WithFixedMessage(t *testing.T) {
 func TestContainerActionMethodsAndAuth(t *testing.T) {
 	e := newCAEnv()
 	for _, m := range []string{"GET", "PUT", "DELETE", "PATCH"} {
-		wantErr(t, e.do(t, m, caBase+caID12+"/start", ""), 405, "method_not_allowed")
+		wantErr(t, e.do(t, m, caBase+caID64+"/start", ""), 405, "method_not_allowed")
 	}
 	// No kill, pause, remove or other verb exists.
 	for _, verb := range []string{"kill", "pause", "unpause", "remove", "rm", "exec", "stop/", "start/extra"} {
-		rec := e.do(t, "POST", caBase+caID12+"/"+verb, "")
+		rec := e.do(t, "POST", caBase+caID64+"/"+verb, "")
 		if rec.Code != 404 {
 			t.Errorf("%s: %d", verb, rec.Code)
 		}
 	}
 	// No token, no action.
-	req := httptest.NewRequest("POST", caBase+caID12+"/start", nil)
+	req := httptest.NewRequest("POST", caBase+caID64+"/start", nil)
 	req.Host = goodHost
 	rec := httptest.NewRecorder()
 	e.h.ServeHTTP(rec, req)
@@ -284,7 +300,7 @@ func TestContainerActionSurvivesClientHangUp(t *testing.T) {
 	// The write is already under way at Docker when the browser leaves: the
 	// call must still run with a live context and the row must be written.
 	e := newCAEnv()
-	rec := e.do(t, "POST", caBase+caID12+"/stop", "")
+	rec := e.do(t, "POST", caBase+caID64+"/stop", "")
 	if rec.Code != 200 {
 		t.Fatalf("%d", rec.Code)
 	}

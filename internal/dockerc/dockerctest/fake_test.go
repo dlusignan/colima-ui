@@ -231,7 +231,7 @@ func TestFakeImageWritesValidateLikeTheRealClient(t *testing.T) {
 func TestFakeContainerActionsValidateLikeTheRealClient(t *testing.T) {
 	f := &Fake{}
 	ctx := context.Background()
-	id := "0123456789ab"
+	id := strings.Repeat("ab", 32)
 	calls := map[string]func(string) (bool, error){
 		"StartContainer":   func(s string) (bool, error) { return f.StartContainer(ctx, s) },
 		"StopContainer":    func(s string) (bool, error) { return f.StopContainer(ctx, s) },
@@ -241,12 +241,12 @@ func TestFakeContainerActionsValidateLikeTheRealClient(t *testing.T) {
 		if changed, err := run(id); err != nil || !changed {
 			t.Errorf("%s: changed=%v err=%v", name, changed, err)
 		}
-		for _, bad := range []string{"", "web", "0123456789AB", "0123456789a/", "../x"} {
+		for _, bad := range []string{"", "web", "0123456789ab", id[:63], strings.ToUpper(id), id[:63] + "/", "../x"} {
 			if changed, err := run(bad); !errors.Is(err, dockerc.ErrBadName) || changed {
 				t.Errorf("%s %q: changed=%v err=%v", name, bad, changed, err)
 			}
 		}
-		if n := len(f.CallsTo(name)); n != 6 {
+		if n := len(f.CallsTo(name)); n != 8 {
 			t.Errorf("%s recorded %d calls", name, n)
 		}
 	}

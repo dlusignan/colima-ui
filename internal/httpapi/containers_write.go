@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -13,7 +14,13 @@ import (
 // than the default write deadline.
 const containerActionTimeout = 60 * time.Second
 
-const invalidContainerIDMessage = "Not a valid container id."
+const (
+	invalidContainerIDMessage = "Not a valid container id: send the full 64 character id."
+	// containerConflictMessage is the 409 text of these routes: Docker refused
+	// to act on the container as it is (paused, marked for removal, or limits
+	// that no longer fit the host). It is fixed text, never Docker's.
+	containerConflictMessage = "Docker refused to change this container in its current state."
+)
 
 // containerActionJSON is the answer of a container action. Changed is false
 // when Docker said the container was already in the asked state (304).
@@ -55,14 +62,17 @@ func (c *containerActionRoutes) restart(w http.ResponseWriter, r *http.Request) 
 }
 
 // act runs one container verb. The id is the only value taken from the
-// request; it must be 12 to 64 lowercase hex characters, so nothing else can
-// reach the log row, the Docker URL or an error answer. The row records the
-// short id and whether anything changed, false for a 304 and for a failure.
+// request; it must be a full 64 character lowercase hex id, so nothing else can
+// reach the log row, the Docker URL or an error answer, and Docker cannot
+// resolve it as a name or a prefix. The row records the short id and whether
+// anything changed: true or false when Docker answered, false when it refused
+// (404, 409) and unknown when the outcome is not known (transport, timeout and
+// daemon failures: the container may have changed).
 func (c *containerActionRoutes) act(w http.ResponseWriter, r *http.Request, action string,
 	do func(dockerc.Client, context.Context, string) (bool, error)) error {
 	var out containerActionJSON
 	return c.w.serve(w, r, writeSpec{
-		Action: action, Timeout: containerActionTimeout, EmptyBodyOnly: true,
+		Action: action, Timeout: containerActionTimeout, EmptyBodyOnly: true, ConflictMessage: containerConflictMessage,
 		Plan: func() (writePlan, error) {
 			id := r.PathValue("id")
 			if !dockerc.ValidContainerID(id) {
@@ -77,11 +87,19 @@ func (c *containerActionRoutes) act(w http.ResponseWriter, r *http.Request, acti
 					out.Changed = err == nil && changed
 					return err
 				},
-				AuditDetailAfter: func(error) string {
-					if out.Changed {
+				AuditDetailAfter: func(runErr error) string {
+					switch {
+					case runErr == nil && out.Changed:
 						return short + " changed=true"
+					case runErr == nil,
+						errors.Is(runErr, dockerc.ErrObjectNotFound),
+						errors.Is(runErr, dockerc.ErrConflict),
+						errors.Is(runErr, dockerc.ErrBadName),
+						errors.Is(runErr, dockerc.ErrVMNotRunning),
+						errors.Is(runErr, dockerc.ErrRuntimeNotDocker):
+						return short + " changed=false"
 					}
-					return short + " changed=false"
+					return short + " changed=unknown"
 				},
 			}, nil
 		},

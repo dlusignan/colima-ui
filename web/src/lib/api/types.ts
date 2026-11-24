@@ -184,6 +184,8 @@ export interface ContainerPort {
 
 export interface Container {
   id: string
+  /** The full 64 character id the container action routes need (3.36); empty when unknown. */
+  fullId: string
   name: string
   image: string
   state: string

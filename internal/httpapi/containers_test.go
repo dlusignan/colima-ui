@@ -385,3 +385,27 @@ func (f *fakeDockerClient) StopContainer(context.Context, string) (bool, error) 
 func (f *fakeDockerClient) RestartContainer(context.Context, string) (bool, error) {
 	return false, nil
 }
+
+func TestContainersCarryTheFullID(t *testing.T) {
+	full := strings.Repeat("ab", 32)
+	fc := &fakeDockerClient{list: []dockerc.Container{
+		{ID: full[:12], FullID: full, Name: "x", State: "exited"},
+		{ID: "short", Name: "y", State: "exited"},
+	}}
+	rec := call(t, containersServer(&fakeGate{status: "running"}, &fakeProvider{client: fc}),
+		"GET", "/api/profiles/default/containers", "")
+	m := decodeMap(t, rec)["containers"].([]any)
+	var gotFull, gotEmpty bool
+	for _, c := range m {
+		c := c.(map[string]any)
+		if c["id"] == full[:12] && c["fullId"] == full {
+			gotFull = true
+		}
+		if c["id"] == "short" && c["fullId"] == "" {
+			gotEmpty = true
+		}
+	}
+	if !gotFull || !gotEmpty {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}

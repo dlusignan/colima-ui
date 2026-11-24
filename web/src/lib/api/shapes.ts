@@ -211,6 +211,7 @@ export const containerPortShape = {
 
 export const containerShape = {
   id: 'string',
+  fullId: 'string',
   name: 'string',
   image: 'string',
   state: 'string',

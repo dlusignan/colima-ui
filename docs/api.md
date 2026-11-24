@@ -426,6 +426,7 @@ Response `200`:
   "containers": [
     {
       "id": "3f9a1c0b7d2e",
+      "fullId": "3f9a1c0b7d2e5a46c8d1f0b92e7a3c5d8f1b4e6a07c9d2e5f8a1b3c6d9e0f247",
       "name": "web",
       "image": "nginx:1.27",
       "state": "running",
@@ -443,7 +444,8 @@ Response `200`:
 }
 ```
 
-- `id` is the value used as `scope` in the metrics route and in `metric` events.
+- `id` is the value used as `scope` in the metrics route and in `metric` events, and in the logs route (3.16). It is the first 12 characters of the container id.
+- `fullId` is the full 64 character lowercase hex id, the only id the container action routes (3.36) accept. It is an empty string if Docker reported an id of another shape.
 - `state` is the Docker state string (`running`, `exited`, `paused`, and so on).
 - `status` is Docker's human readable status text, for example `Up 2 hours` or `Exited (0) 3 days ago`. Never null.
 - `createdAt` is the creation time as RFC 3339 in UTC.
@@ -1397,7 +1399,7 @@ Order of checks: body shape (400), confirmation (422), then the job is submitted
 Token: yes. Starts, stops or restarts one container. It follows the Docker write rules in 1.3 (profile, busy check, body, validation, one fixed Docker call, action log row) with these specifics.
 
 1. **No body.** The request carries no data. An empty body is the only accepted one: a body of any kind, `{}` included, is `400 bad_request`, and the retry is the same request.
-2. **The id.** `{id}` is a container id of 12 to 64 lowercase hex characters, as the `id` field of 3.10 (12 characters) or the full id. A container name, anything uppercase, anything shorter or longer, and any character that is not `0-9a-f` is `422 invalid_request` with `details.fields.id`, before Docker is contacted. The request text is never echoed. A short id is a prefix on Docker's side. Docker's `404` (nothing matches) and `400` (no single container is meant, for example an ambiguous prefix) are both `404 not_found` here.
+2. **The id.** `{id}` is the full container id: exactly 64 lowercase hex characters, the `fullId` field of 3.10. Anything else is `422 invalid_request` with `details.fields.id` before Docker is contacted: a container name, a 12 character short id (the `id` field), any other prefix, uppercase, and any character that is not `0-9a-f`. The request text is never echoed. Only a full id is accepted because Docker resolves a full id first, so a container whose name looks like an id cannot take the place of another one, and no request can be ambiguous.
 3. **The call.** `POST /containers/{id}/start`, `/stop` or `/restart` on the pinned API v1.41, with no query: stop and restart send no `t` parameter, so Docker applies the container's own stop timeout, 10 seconds unless the container sets another. The route has a 60 second budget. The client cannot change the grace period.
 4. **The answer.** Docker's `204` means it did the work and Docker's `304` means the container was already in that state (start on a running container, stop on a stopped one). Restart has no already-state, so a successful restart is always `changed: true`.
 
@@ -1413,14 +1415,14 @@ Errors, on top of the shared ones of 1.3:
 
 | Status | `code` | When |
 | --- | --- | --- |
-| `404` | `not_found` | Docker does not know the id (`details.name` is the validated id), including an id that matches more than one container |
-| `409` | `conflict` | Docker refused because of the container's state, for example start on a paused container (`details.name` is the validated id) |
+| `404` | `not_found` | Docker does not know the id (`details.name` is the validated id) |
+| `409` | `conflict` | Docker refused to act on the container as it is: a paused container, one marked for removal, or a start whose resource limits no longer fit the host (Docker's `409` and `400`). The message is fixed text, `Docker refused to change this container in its current state.`; Docker's own text is dropped (`details.name` is the validated id) |
 | `409` | `invalid_state` | The VM is not running (`details.status`), or the profile does not use Docker (`details.runtime`) |
 | `409` | `profile_busy` | A start, stop or restart job is running on the profile (advisory, see 1.3) |
 | `422` | `invalid_request` | The id is not a container id (`details.fields.id`) |
 | `502` | `docker_unavailable` | The socket is missing or not answering, Docker answered with an error, or it did not answer in time |
 
-Docker's error text is never returned. One action log row is written per request that reaches Docker, with the action `docker.container.start`, `docker.container.stop` or `docker.container.restart`, and as `detail` the first 12 characters of the id followed by `changed=true` or `changed=false`. The `304` case is a `success` row with `changed=false`; a failure of any kind is a `failed` row with `changed=false`, which as in 1.3 does not prove that nothing happened after a timeout or a dropped socket. A refused request (steps 1 to 4 of 1.3, a body, an invalid id) writes no row.
+Docker's error text is never returned. One action log row is written per request that reaches Docker, with the action `docker.container.start`, `docker.container.stop` or `docker.container.restart`, and as `detail` the first 12 characters of the id followed by `changed=true`, `changed=false` or `changed=unknown`. The `304` case is a `success` row with `changed=false`. A `failed` row says `changed=false` when Docker refused (`404`, `409`, or the VM not running) and `changed=unknown` when the outcome is not known (the socket failed, Docker answered `5xx`, or the call timed out), because the container may have changed. A refused request (steps 1 to 4 of 1.3, a body, an invalid id) writes no row.
 
 ## 4. Routes that do not exist
 

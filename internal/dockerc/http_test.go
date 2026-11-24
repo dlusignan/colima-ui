@@ -29,7 +29,7 @@ func TestContainers(t *testing.T) {
 		t.Fatalf("request = %s?%s", gotPath, gotQuery)
 	}
 	want := []Container{
-		{ID: "aaaaaaaaaaaa", Name: "synthetic-web", Image: "synthetic/web:1", State: "running",
+		{ID: "aaaaaaaaaaaa", FullID: "aaaaaaaaaaaa1111111111111111111111111111111111111111111111111111", Name: "synthetic-web", Image: "synthetic/web:1", State: "running",
 			Status: "Up 2 hours", Created: time.Unix(1700000000, 0).UTC(),
 			Ports: []Port{
 				{ContainerPort: 80, Protocol: "tcp"},

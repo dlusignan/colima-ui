@@ -44,6 +44,7 @@ const metrics = (points: MetricPoint[]): Metrics => ({
 })
 const container = (over: Partial<Container> = {}): Container => ({
   id: 'c1',
+  fullId: '',
   name: 'synthetic-web',
   image: 'synthetic:1',
   state: 'running',

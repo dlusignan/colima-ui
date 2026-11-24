@@ -24,9 +24,11 @@ func containerTarget(id string, verb fixedPath) (target, error) {
 // containerAction posts one lifecycle verb. Docker answers 204 when it did the
 // work and 304 when the container was already in that state; 304 is a success
 // that changed nothing. No query is sent, so stop and restart use the
-// container's own stop timeout (Docker's default grace period). Docker's 400
-// (a prefix that is ambiguous or not an id) is reported as not found, like 404:
-// no single container is meant.
+// container's own stop timeout (Docker's default grace period). Docker's 400 on
+// an existing container means it refuses the container as it is (start answers
+// 400 when its resource limits no longer fit the host), so it is an
+// ErrConflict, like 409. The id is always a full id, so there is no ambiguity
+// that could make a 400 mean "not found".
 func (c *httpClient) containerAction(ctx context.Context, id string, verb fixedPath, alreadyOK bool) (bool, error) {
 	t, err := containerTarget(id, verb)
 	if err != nil {
@@ -39,7 +41,7 @@ func (c *httpClient) containerAction(ctx context.Context, id string, verb fixedP
 	status, err := c.postStatus(ctx, containerActionTimeout, t, nil, ok...)
 	if err != nil {
 		if errors.Is(err, ErrInvalidRequest) {
-			return false, ErrObjectNotFound
+			return false, ErrConflict
 		}
 		return false, err
 	}

@@ -24,6 +24,7 @@ var (
 // containerJSON is one entry of the containers response.
 type containerJSON struct {
 	ID          string     `json:"id"`
+	FullID      string     `json:"fullId"`
 	Name        string     `json:"name"`
 	Image       string     `json:"image"`
 	State       string     `json:"state"`
@@ -154,7 +155,7 @@ func (c *containerRoutes) list(w http.ResponseWriter, r *http.Request) error {
 	for _, ct := range list {
 		u := usage[ct.ID] // a container that vanished mid-request keeps zeros
 		out = append(out, containerJSON{
-			ID: ct.ID, Name: ct.Name, Image: ct.Image, State: ct.State,
+			ID: ct.ID, FullID: ct.FullID, Name: ct.Name, Image: ct.Image, State: ct.State,
 			CPUPercent: u.CPUPercent, MemoryBytes: u.MemoryBytes,
 			Status: ct.Status, CreatedAt: ct.Created.UTC().Format(time.RFC3339),
 			Ports: portsJSON(ct.Ports),

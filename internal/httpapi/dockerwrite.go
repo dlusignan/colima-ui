@@ -114,6 +114,10 @@ type writeSpec struct {
 	// busy check and writes no action log row. Everything else, including the
 	// profile lookup, the body rules and the error mapping, is unchanged.
 	ReadOnly bool
+	// ConflictMessage, when set, replaces the shared text of a 409 conflict
+	// ("The Docker object is in use or protected.") for a route where that text
+	// would mislead. It must be fixed text.
+	ConflictMessage string
 	// EmptyBodyOnly makes a route without Body keys refuse {} as well: only an
 	// empty (or all-whitespace) body is accepted, anything else is 400. It is
 	// for routes whose request carries no data at all (container actions).
@@ -246,7 +250,11 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 		d.record(r.Context(), name, spec.Action, detail, err)
 	}
 	if err != nil {
-		return dockerWriteError(spec.Action, plan.Object, err)
+		out := dockerWriteError(spec.Action, plan.Object, err)
+		if ae, ok := out.(*APIError); ok && spec.ConflictMessage != "" && ae.Code == "conflict" {
+			ae.Message = spec.ConflictMessage
+		}
+		return out
 	}
 	switch {
 	case plan.Result != nil:

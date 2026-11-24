@@ -15,7 +15,7 @@ const (
 )
 
 func TestValidContainerID(t *testing.T) {
-	good := []string{synthID12, synthID64, "abcdefabcdef", "000000000000", synthID64[:40]}
+	good := []string{synthID64, strings.Repeat("a", 64), strings.Repeat("0", 64)}
 	for _, id := range good {
 		if !ValidContainerID(id) {
 			t.Errorf("%q refused", id)
@@ -25,7 +25,14 @@ func TestValidContainerID(t *testing.T) {
 		"empty":        "",
 		"name":         "synthetic-web",
 		"hex name":     "synthetic-web1",
+		"64 non hex":   strings.Repeat("g", 64),
+		"64 upper":     strings.ToUpper(synthID64),
+		"64 slash":     synthID64[:63] + "/",
+		"64 newline":   synthID64[:63] + "\n",
 		"short prefix": "0123456789a",
+		"12 chars":     synthID12,
+		"63 chars":     synthID64[:63],
+		"40 chars":     synthID64[:40],
 		"too long":     synthID64 + "0",
 		"uppercase":    "0123456789AB",
 		"mixed case":   "0123456789aB",
@@ -74,7 +81,7 @@ func TestContainerActionsRefuseHostileIDsBeforeTheSocket(t *testing.T) {
 	}))
 	c := newHTTPClient(sock)
 	hostile := []string{
-		"", "synthetic-web", "0123456789a", synthID64 + "0", "0123456789AB", "0123456789ab/stop",
+		"", "synthetic-web", "0123456789a", synthID12, synthID64[:63], synthID64 + "0", synthID64[:63] + "?x=1", synthID64[:62] + "%2f", strings.Repeat("a", 12) + "/stop", "0123456789AB", "0123456789ab/stop",
 		"../../volumes/x", "0123456789a?force=1", "0123456789a#", "0123456789%2fab", "0123456789a\n",
 		"0123456789a\x00", "0123456789a​", "0123456789a‮", "0123456789a b", "0123456789a\\",
 		synthID12 + "/../..",
@@ -94,7 +101,7 @@ func TestContainerActionsRefuseHostileIDsBeforeTheSocket(t *testing.T) {
 
 func TestContainerActionRequestShape(t *testing.T) {
 	for _, call := range containerCalls {
-		for _, id := range []string{synthID12, synthID64} {
+		for _, id := range []string{synthID64} {
 			c, last, _ := recordingDocker(t, 204, "")
 			changed, err := call.run(c, id)
 			if err != nil || !changed {
@@ -117,8 +124,8 @@ func TestContainerActionStatusMapping(t *testing.T) {
 	}{
 		{204, true, nil},
 		{404, false, ErrObjectNotFound},
-		{400, false, ErrObjectNotFound}, // ambiguous prefix: no single container
-		{409, false, ErrConflict},       // paused, restarting, ...
+		{400, false, ErrConflict}, // limits no longer fit the host, and the like
+		{409, false, ErrConflict}, // paused, restarting, ...
 		{403, false, ErrConflict},
 		{500, false, ErrDaemon},
 		{503, false, ErrDaemon},
@@ -128,7 +135,7 @@ func TestContainerActionStatusMapping(t *testing.T) {
 	for _, call := range containerCalls {
 		for _, tc := range tests {
 			c, _, _ := recordingDocker(t, tc.status, "Error: secret /home/user/.colima/synthetic")
-			changed, err := call.run(c, synthID12)
+			changed, err := call.run(c, synthID64)
 			if tc.want == nil {
 				if err != nil || changed != tc.changed {
 					t.Errorf("%s %d: changed=%v err=%v", call.name, tc.status, changed, err)
@@ -149,7 +156,7 @@ func TestContainerActionStatusMapping(t *testing.T) {
 func TestContainerAction304IsUnchangedForStartAndStopOnly(t *testing.T) {
 	for _, call := range containerCalls {
 		c, _, _ := recordingDocker(t, 304, "")
-		changed, err := call.run(c, synthID12)
+		changed, err := call.run(c, synthID64)
 		if call.name == "restart" {
 			// Docker never answers 304 to a restart: it is not a success here.
 			if !errors.Is(err, ErrDaemon) || changed {
@@ -166,7 +173,7 @@ func TestContainerAction304IsUnchangedForStartAndStopOnly(t *testing.T) {
 func TestContainerActionUnreachableDocker(t *testing.T) {
 	c := newHTTPClient(t.TempDir() + "/missing.sock")
 	for _, call := range containerCalls {
-		changed, err := call.run(c, synthID12)
+		changed, err := call.run(c, synthID64)
 		if !errors.Is(err, ErrDockerUnavailable) || changed {
 			t.Errorf("%s: changed=%v err=%v", call.name, changed, err)
 		}
