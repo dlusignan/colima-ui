@@ -150,6 +150,7 @@ const mapped: Record<string, Mapping> = {
   '3.25#0': { shape: s.pruneNetworksRequestShape },
   '3.25#1': { shape: s.networkPruneResultShape },
   '3.25#2': { shape: s.networkPruneResultShape },
+  '3.31#0': { shape: s.sshConfigShape },
   '3.17#0': { shape: s.createProfileRequestShape, partial: true },
   '3.17#1': { shape: s.profileCreatedShape },
   '3.17#2': { shape: s.apiErrorShape },

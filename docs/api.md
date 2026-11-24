@@ -101,6 +101,7 @@ Error codes in use:
 | `404` | `not_found` | Unknown path (token present), or a Docker object a write route names does not exist (1.3) | `{}`, or `{"name":"pgdata"}` |
 | `405` | `method_not_allowed` | Known path, wrong method (`Allow` header set) | `{}` |
 | `409` | `profile_busy` | A job is running on that profile | `{"jobId":"<running job>"}` |
+| `409` | `profile_not_running` | The SSH config route on a profile that is not running and that Colima refuses to describe (3.31) | `{"status":"stopped"}` |
 | `409` | `job_not_running` | Cancel on a job that already finished | `{"jobId":"...","state":"succeeded"}` |
 | `409` | `conflict` | A Docker object is in use or protected (1.3) | `{"name":"pgdata"}` |
 | `409` | `invalid_state` | Start on a running profile, stop on a stopped one, container list on a stopped VM, engine route on a running profile that does not use Docker | `{"status":"running"}` |
@@ -117,7 +118,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 32 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 33 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -153,6 +154,7 @@ There are 32 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
+| `GET` | `/api/profiles/{name}/ssh-config` | SSH settings of a profile's VM (3.31) |
 | `GET` | `/api/events` | Server Sent Events stream |
 
 ### 3.1 `GET /healthz`
@@ -1201,6 +1203,36 @@ Errors (before the job exists): the shared ones of 1.3, plus:
 - `400` `bad_request`: the body rules above.
 - `409` `conflict`: the profile already runs 2 pulls (`details.limit` is `2`), or the same reference is already being pulled on it (`details.name` is the reference).
 - `503` `shutting_down`: the backend is stopping and accepts no new jobs.
+
+### 3.31 `GET /api/profiles/{name}/ssh-config`
+
+Token: yes. Request body: none. Shows the SSH settings `colima ssh-config -p <profile>` prints, for IDE remote access or `scp`. It is a read: no busy check, no action log row, and the UI fetches it once when its dialog opens and never polls.
+
+Response `200`:
+
+```json
+{
+  "raw": "Host colima-synthetic\n  HostName 127.0.0.1\n  Port 60022\n  User synthetic-user\n  IdentityFile \"/home/user/.colima/_lima/_config/user\"\n",
+  "entries": [
+    { "key": "Host", "value": "colima-synthetic" },
+    { "key": "HostName", "value": "127.0.0.1" },
+    { "key": "Port", "value": "60022" },
+    { "key": "User", "value": "synthetic-user" },
+    { "key": "IdentityFile", "value": "/home/user/.colima/_lima/_config/user" }
+  ]
+}
+```
+
+1. `raw` is Colima's text unchanged. It contains the path of the identity file, because showing it is the purpose of the route. It holds no key material, only the path.
+2. `entries` lists every key and value line in the order Colima printed it, `Host` included. Comments and blank lines are skipped, `Key=value` and `Key value` forms are both read, and one pair of double quotes around a value is removed. A key may repeat (for example two `IdentityFile` lines). Clients must tolerate keys they do not know.
+3. The profile name is checked first: an unknown or malformed name is `404` and never reaches a process.
+4. A profile that is not running is not rejected up front. Colima answers whatever it answers; if it refuses, the route returns `409` `profile_not_running` with `details.status`.
+
+Errors:
+
+1. `404` `profile_not_found`.
+2. `409` `profile_not_running`: Colima refused to print a config and the profile is not running (`details.status`).
+3. `502` `colima_failed`: Colima could not be run, failed on a running profile, or printed text that is not an SSH config. The output is logged on the server only.
 
 ## 4. Routes that do not exist
 
