@@ -111,8 +111,13 @@ func parseLabels(raw json.RawMessage) (map[string]string, error) {
 		if err != nil || !ok {
 			return nil, bad
 		}
+		// A string only: Decode into a string would take null as "".
+		var rawV json.RawMessage
+		if err := dec.Decode(&rawV); err != nil || len(rawV) == 0 || rawV[0] != '"' {
+			return nil, bad
+		}
 		var v string
-		if err := dec.Decode(&v); err != nil {
+		if err := json.Unmarshal(rawV, &v); err != nil {
 			return nil, bad
 		}
 		if _, dup := out[k]; dup || len(out) >= dockerc.MaxLabels {
