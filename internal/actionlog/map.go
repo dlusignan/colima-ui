@@ -47,10 +47,27 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 	default:
 		return e, false
 	}
+	if s.Action.IsKubernetes() {
+		detail = kubernetesDetail(s.Action, s.State, detail)
+	}
 	if detail != "" {
 		e.Detail = &detail
 	}
 	return e, true
+}
+
+// kubernetesDetail names the verb in the row ("kubernetes reset: ...") and
+// warns that a cancelled reset or delete may have left the cluster half done.
+func kubernetesDetail(a operations.Action, st operations.State, detail string) string {
+	verb := "kubernetes " + strings.TrimPrefix(string(a), "kubernetes-")
+	if detail != "" {
+		verb += ": " + detail
+	}
+	destructive := a == operations.ActionKubernetesReset || a == operations.ActionKubernetesDelete
+	if st == operations.StateCancelled && destructive {
+		verb += "; the cluster may be partly changed"
+	}
+	return verb
 }
 
 var configFieldOrder = []string{"cpu", "memory", "disk"}

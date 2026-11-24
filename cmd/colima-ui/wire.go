@@ -168,7 +168,7 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 	// One set of host caps for the config PUT (its default) and for creation.
 	lim := config.DefaultLimits()
 	a.mgr = operations.New(operations.Options{
-		Launcher: operations.ColimaLauncher{S: runner, Limits: colimaLimits(lim)},
+		Launcher: operations.ColimaLauncher{S: runner, R: runner, Limits: colimaLimits(lim)},
 		// Called in order from the job's pump, none of them blocks: the action
 		// log queues, the hub never blocks, and Refresh only signals. The
 		// sampler is built below, so it is read lazily like a.mgr above.
@@ -267,6 +267,9 @@ func (a *app) handler() http.Handler {
 	// #138 ssh-config (a read through the colima adapter: no busy check, no action log)
 	opts = append(opts, httpapi.WithSSHConfig(a.gate, sshConfigSource{r: a.runner}))
 
+	// #141 kubernetes (jobs on the manager; the probe reads `colima status`)
+	opts = append(opts, httpapi.WithKubernetes(a.mgr, a.gate, kubernetesProbe{r: a.runner}))
+
 	// #39 actions
 	opts = append(opts, httpapi.WithActions(a.store, a.gate))
 
@@ -347,4 +350,20 @@ func (s sshConfigSource) SSHConfig(ctx context.Context, name string) (httpapi.SS
 		doc.Entries = append(doc.Entries, httpapi.SSHConfigEntry{Key: e.Key, Value: e.Value})
 	}
 	return doc, nil
+}
+
+// kubernetesProbe adapts the colima adapter to httpapi.KubernetesProbe. It
+// reads the live `colima status` answer, never the profile's YAML file.
+type kubernetesProbe struct{ r colima.Runner }
+
+func (p kubernetesProbe) KubernetesEnabled(ctx context.Context, name string) (bool, error) {
+	d, err := colima.Status(ctx, p.r, name)
+	var exit *colima.ExitError
+	switch {
+	case errors.As(err, &exit):
+		return false, httpapi.ErrKubernetesProbeRefused
+	case err != nil:
+		return false, err
+	}
+	return d.Kubernetes, nil
 }

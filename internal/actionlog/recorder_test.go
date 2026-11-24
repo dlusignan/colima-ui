@@ -479,3 +479,34 @@ func TestImagePullRunningWritesNothing(t *testing.T) {
 		t.Fatal("row written for a running pull")
 	}
 }
+
+func TestKubernetesJobsRecordTheVerb(t *testing.T) {
+	cases := []struct {
+		action operations.Action
+		state  operations.State
+		code   *int
+		detail string
+	}{
+		{operations.ActionKubernetesStart, operations.StateSucceeded, intp(0), "kubernetes start"},
+		{operations.ActionKubernetesStop, operations.StateFailed, intp(2), "kubernetes stop: colima exited with status 2"},
+		{operations.ActionKubernetesStart, operations.StateCancelled, nil, "kubernetes start: cancelled before it finished"},
+		{operations.ActionKubernetesReset, operations.StateSucceeded, intp(0), "kubernetes reset"},
+		{operations.ActionKubernetesReset, operations.StateCancelled, nil, "kubernetes reset: cancelled before it finished; the cluster may be partly changed"},
+		{operations.ActionKubernetesDelete, operations.StateCancelled, nil, "kubernetes delete: cancelled before it finished; the cluster may be partly changed"},
+		{operations.ActionKubernetesDelete, operations.StateFailed, nil, "kubernetes delete: colima did not exit normally"},
+	}
+	for _, c := range cases {
+		t.Run(c.detail, func(t *testing.T) {
+			fs := &fakeSink{}
+			r := New(fs)
+			r.JobFinished(summary(c.action, c.state, c.code))
+			if err := r.Close(ctxT(t)); err != nil {
+				t.Fatal(err)
+			}
+			rows := fs.snapshot()
+			if len(rows) != 1 || rows[0].Action != string(c.action) || rows[0].Detail == nil || *rows[0].Detail != c.detail {
+				t.Fatalf("rows = %+v", rows)
+			}
+		})
+	}
+}

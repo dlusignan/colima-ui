@@ -33,9 +33,12 @@ type fakeRunner struct {
 	mu      sync.Mutex
 	list    string
 	listErr error
-	streams [][]string
-	procs   []*fakeProc
-	runs    int
+	// status, when set, is what `colima status` prints (the list otherwise).
+	status    string
+	statusErr error
+	streams   [][]string
+	procs     []*fakeProc
+	runs      int
 	// script, when set, makes Stream return a process that emits these lines
 	// and then exits with exit (instead of waiting to be cancelled).
 	script []string
@@ -55,7 +58,16 @@ func (f *fakeRunner) Run(_ context.Context, args []string) (colima.Result, error
 	f.mu.Lock()
 	f.runs++
 	list, listErr := f.list, f.listErr
+	status, statusErr := f.status, f.statusErr
 	f.mu.Unlock()
+	if len(args) > 0 && args[0] == "status" {
+		if statusErr != nil {
+			return colima.Result{}, statusErr
+		}
+		if status != "" {
+			return colima.Result{Stdout: []byte(status)}, nil
+		}
+	}
 	if listErr != nil {
 		return colima.Result{}, listErr
 	}
@@ -505,7 +517,10 @@ func nextJobEvent(t *testing.T, ch <-chan sseEvent) sseEvent {
 	}
 }
 
-type actionRow struct{ Action, Outcome string }
+type actionRow struct {
+	Action, Outcome string
+	Detail          *string
+}
 
 func (ts *testServer) actions(t *testing.T, profile string) []actionRow {
 	t.Helper()
