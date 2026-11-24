@@ -6,6 +6,10 @@ import type {
   CreateNetworkRequest,
   CreateVolumeRequest,
   DockerNetwork,
+  ImageDetail,
+  ImagePruneResult,
+  ImageRemoveResult,
+  TagImageRequest,
   DockerVolume,
   ConfigUpdateResult,
   ContainerList,
@@ -35,6 +39,9 @@ export const PRUNE_VOLUMES_CONFIRMATION = 'delete-unused-volumes'
 
 /** The fixed text `POST .../networks/prune` requires in `confirm` (docs/api.md 3.25). */
 export const PRUNE_NETWORKS_CONFIRMATION = 'delete-unused-networks'
+
+/** The fixed text `POST .../images/prune` requires in `confirm` (docs/api.md 3.29). */
+export const PRUNE_IMAGES_CONFIRMATION = 'delete-unused-images'
 
 function withQuery(
   path: string,
@@ -88,6 +95,30 @@ export const api = {
     request<EngineInfo>('GET', `/api/profiles/${enc(name)}/engine`, { signal }),
   getImages: (name: string, signal?: AbortSignal) =>
     request<ImageList>('GET', `/api/profiles/${enc(name)}/images`, { signal }),
+  /** Adds a tag. 204 on success; 409 when the tag is already on another image. */
+  tagImage: (name: string, image: string, body: TagImageRequest) =>
+    request<void>('POST', `/api/profiles/${enc(name)}/images/${enc(image)}/tag`, {
+      body,
+      expectEmpty: true,
+    }),
+  /** A read: ask for it when the user opens an image, do not poll it. */
+  getImage: (name: string, image: string, signal?: AbortSignal) =>
+    request<ImageDetail>('GET', `/api/profiles/${enc(name)}/images/${enc(image)}`, { signal }),
+  /**
+   * Never forced. An id removes the image and all its tags; a tag reference
+   * untags. An image used by any container answers 409 (`details.containers`).
+   */
+  removeImage: (name: string, image: string) =>
+    request<ImageRemoveResult>('DELETE', `/api/profiles/${enc(name)}/images/${enc(image)}`),
+  /**
+   * Irreversible. `all` false removes dangling images only, true every unused
+   * image. The server requires the confirmation text, which is sent here so no
+   * caller can forget it: call this only after the user has confirmed.
+   */
+  pruneImages: (name: string, all = false) =>
+    request<ImagePruneResult>('POST', `/api/profiles/${enc(name)}/images/prune`, {
+      body: { confirm: PRUNE_IMAGES_CONFIRMATION, all },
+    }),
   getVolumes: (name: string, signal?: AbortSignal) =>
     request<VolumeList>('GET', `/api/profiles/${enc(name)}/volumes`, { signal }),
   createVolume: (name: string, body: CreateVolumeRequest) =>

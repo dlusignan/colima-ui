@@ -13,6 +13,12 @@ import type {
   ContainerList,
   DnsHost,
   DockerImage,
+  TagImageRequest,
+  ImageLayer,
+  ImageDetail,
+  ImageRemoveResult,
+  PruneImagesRequest,
+  ImagePruneResult,
   DockerNetwork,
   DockerVolume,
   EngineContainers,
@@ -60,6 +66,7 @@ export type Kind =
   | 'string|null'
   | 'number|null'
   | 'string[]'
+  | 'number[]'
   | 'record'
   | { readonly arrayOf: Shape }
   /** Like arrayOf, but the key may be absent. */
@@ -215,6 +222,54 @@ export const dockerImageShape = {
   createdAt: 'string',
   containers: 'number',
 } as const satisfies Record<keyof DockerImage, Kind>
+
+export const tagImageRequestShape = {
+  repository: 'string',
+  tag: 'string',
+} as const satisfies Record<keyof TagImageRequest, Kind>
+
+export const imageLayerShape = {
+  createdAt: 'string|null',
+  sizeBytes: 'number',
+} as const satisfies Record<keyof ImageLayer, Kind>
+
+export const imageDetailShape = {
+  id: 'string',
+  tags: 'string[]',
+  digests: 'string[]',
+  sizeBytes: 'number',
+  createdAt: 'string|null',
+  architecture: 'string',
+  os: 'string',
+  exposedPorts: 'number[]',
+  containers: 'number',
+  containerNames: 'string[]',
+  layers: { arrayOf: imageLayerShape },
+  layerCount: 'number',
+} as const satisfies Record<keyof ImageDetail, Kind>
+
+export const imageRemoveResultShape = {
+  untagged: 'string[]',
+  deleted: 'string[]',
+  removedCount: 'number|null',
+  truncated: 'boolean',
+  resultComplete: 'boolean',
+} as const satisfies Record<keyof ImageRemoveResult, Kind>
+
+export const pruneImagesRequestShape = {
+  confirm: 'string',
+  all: 'boolean',
+} as const satisfies Record<keyof PruneImagesRequest, Kind>
+
+export const imagePruneResultShape = {
+  untagged: 'string[]',
+  deleted: 'string[]',
+  removedCount: 'number|null',
+  truncated: 'boolean',
+  reclaimedBytes: 'number|null',
+  all: 'boolean',
+  resultComplete: 'boolean',
+} as const satisfies Record<keyof ImagePruneResult, Kind>
 
 export const imageListShape = {
   images: { arrayOf: dockerImageShape },

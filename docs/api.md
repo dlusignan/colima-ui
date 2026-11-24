@@ -113,11 +113,11 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`; the network routes (3.22 to 3.25) use `name`, `subnet`, `network` (the path parameter) and `confirm`. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
+For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`; the network routes (3.22 to 3.25) use `name`, `subnet`, `network` (the path parameter) and `confirm`; the image routes (3.26 to 3.29) use `image` (the path parameter), `repository`, `tag` and `confirm`. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
 
 ## 3. Routes
 
-There are 27 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 31 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -135,6 +135,10 @@ There are 27 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/metrics` | Metric history |
 | `GET` | `/api/profiles/{name}/containers` | Containers with current usage |
 | `GET` | `/api/profiles/{name}/images` | Docker images |
+| `POST` | `/api/profiles/{name}/images/{image}/tag` | Add a tag to an image (3.26) |
+| `GET` | `/api/profiles/{name}/images/{image}` | Inspect one image (3.27) |
+| `DELETE` | `/api/profiles/{name}/images/{image}` | Remove an image or untag one reference, never forced (3.28) |
+| `POST` | `/api/profiles/{name}/images/prune` | Remove unused images (dangling only, or all); needs a confirmation text (3.29) |
 | `GET` | `/api/profiles/{name}/volumes` | Docker volumes |
 | `POST` | `/api/profiles/{name}/volumes` | Create a volume (3.18) |
 | `GET` | `/api/profiles/{name}/volumes/{volume}` | Inspect one volume (3.19) |
@@ -505,7 +509,7 @@ Response `200`:
 - The list is sorted by first tag (untagged images last), then by `id`.
 - A running VM with no images returns `{"images":[]}`. So does a running profile whose runtime is not Docker.
 
-This route only reads. There is no image delete, pull or prune.
+This route only reads. Tag, inspect, remove and prune are 3.26 to 3.29; there is no pull yet.
 
 Errors:
 
@@ -991,9 +995,162 @@ Response `200`:
 
 Errors: the shared ones of 1.3, plus the `422` and `400` above.
 
+### 3.26 `POST /api/profiles/{name}/images/{image}/tag`
+
+Token: yes. Adds a tag to an image. It follows the Docker write rules in 1.3 (profile, busy check, strict body, validation, Docker calls, action log row `docker.image.tag` with the image text as `detail`). The body is at most 4 KiB.
+
+`{image}` is the image's short (12 characters) or full (64 characters) lowercase hex id, or a reference the image carries (3.27 explains how it is matched). A reference containing `/` or `:` must be sent URL-escaped (`team%2Fapp%3Av1`).
+
+Request:
+
+```json
+{
+  "repository": "registry.example.com:5000/team/app",
+  "tag": "v2"
+}
+```
+
+- `repository` and `tag` are both required (no default `latest`). A missing or `null` value is `422 invalid_request` with `details.fields` naming each rejected key; the answer never repeats a value.
+- `repository` is the name part of a reference: lowercase path components separated by `/`, optionally preceded by a registry host with an optional port (`localhost:5000/app`, `ghcr.io/owner/app`; the host may use uppercase letters, IPv6 hosts are refused). No tag, no digest, no `@`, no whitespace, no control or format characters. A single 64 character hex name is refused (Docker refuses it too: it reads like an image id). The text is passed to Docker as given and Docker applies its own defaults (an unqualified name means Docker Hub); no registry is contacted.
+- `tag` is 1 to 128 characters of `[a-zA-Z0-9_.-]`, not starting with `.` or `-`.
+- Repository, `:` and tag together are at most 255 characters.
+
+Response `204` with no body (read the image list, 3.12, for the new tag list).
+
+What the backend does, in order: looks the image up (3.27 rules, `404` when unknown); looks `repository:tag` up; and only then sends the tag request, to the image's **full id**, never to the URL text. Docker's own tag call silently moves a tag that already exists from the image that holds it to the new one, which would leave the old image untagged. The backend refuses that: a `repository:tag` that is already on **another** image is `409 conflict` and no tag request is sent (untag it first with 3.28). A tag that is already on this very image succeeds without a request. If the lookup of the target cannot be answered, nothing is sent (fail closed). The two steps are not atomic: a tag created by someone else in between can still be moved by Docker.
+
+Errors: the shared ones of 1.3, plus `404 not_found` (`details.name` is the image text), `409 conflict`, `422 invalid_request` (`details.fields` with `image`, `repository` and or `tag`) and `400 bad_request` (unknown key such as `force`, wrong type, trailing data).
+
+### 3.27 `GET /api/profiles/{name}/images/{image}`
+
+Token: yes. Request body: none. Inspects one image. It follows the profile, body, validation and error rules of 1.3 but it is a read: it does not check the busy state and it writes no action log row. Clients must not poll it; ask for it when the user opens an image.
+
+How `{image}` is matched, for this route and for 3.26 and 3.28. A 12 or 64 character lowercase hex text is an image id: the image Docker finds must have an id starting with it. Any other text must be a valid image reference and must equal, exactly, one of the tags or digests of the image Docker found (or equal one of them once `:latest` is added, when the text has no tag and no digest). Docker itself also resolves id prefixes of any length and normalises registry names (`docker.io/library/...`); neither is accepted, so the image acted on is always the one the text names. Consequences: use the tag or digest exactly as the image list shows it; a repository literally named like a 12 character hex id is read as an id and cannot be addressed by name; an ambiguous id prefix (Docker answers `400`) is `404`.
+
+Response `200`:
+
+```json
+{
+  "id": "3f9a1c0b7d2e",
+  "tags": ["app:v1", "app:v2"],
+  "digests": ["app@sha256:9b2f5d1c0a7e4b3d8c6f2a1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c"],
+  "sizeBytes": 192000000,
+  "createdAt": "2026-05-02T09:41:07Z",
+  "architecture": "amd64",
+  "os": "linux",
+  "exposedPorts": [80, 443],
+  "containers": 1,
+  "containerNames": ["web"],
+  "layers": [
+    { "createdAt": "2026-05-02T09:41:07Z", "sizeBytes": 4096 },
+    { "createdAt": null, "sizeBytes": 0 }
+  ],
+  "layerCount": 2
+}
+```
+
+- `id` is the first 12 characters of the image id. `tags` and `digests` list the references the image carries (only well-formed ones; sorted; `[]` for none).
+- `createdAt` is RFC 3339 in UTC, or `null` when Docker's value could not be read. `architecture` and `os` are plain tokens (`amd64`, `linux`) or `""`.
+- `exposedPorts` are port numbers only, sorted and without duplicates (the protocol is dropped), at most 100.
+- `containers` is the number of containers, in any state, whose image id is this image, and `containerNames` lists their names (sorted; a name that is not a plain name shows the container's short id).
+- `layers` is the history as creation time and size only, newest first, at most 200 entries; `layerCount` is the real number of layers.
+- **What is never returned.** The command that built each layer (`CreatedBy`: it can hold secrets from `ARG` and `ENV` lines), a layer's comment, tags or author, the image's environment variables, labels, command, entrypoint, user, working directory, volumes, the graph driver paths and the layer digests. They are not decoded from Docker's answer at all, so no later code change can leak them by accident. A test feeds an answer with secrets in every one of those fields and checks that none appears.
+
+Errors: the shared ones of 1.3, plus `404 not_found` (`details.name`) and `422 invalid_request` (`details.fields.image`).
+
+### 3.28 `DELETE /api/profiles/{name}/images/{image}`
+
+Token: yes. Request body: none. Removes an image, or one reference of it. Action log row `docker.image.remove` with the image text as `detail`. It has a 2 minute budget.
+
+The removal is never forced: no `force` parameter exists and the backend never sends one. It sends `noprune=1`, so Docker keeps untagged parent images (only what the caller named is touched; leftover dangling parents are removed by a prune, 3.29). The text is matched as in 3.27 and the delete requests go to the **exact reference Docker reported**, or the image's full id, never to the URL text.
+
+1. **By id** (12 or 64 hex characters): the image and all its tags and digests are removed, but only when no container uses it. Docker refuses a delete by id when the image has more than one reference unless forced, so the backend removes each reference on its own (tags first, then digests, each a separate unforced delete); the last one deletes the image. An image with no reference is deleted by its full id. If a reference exists that the backend cannot name safely (not a well-formed reference), nothing is removed and the answer is `409 conflict`. The steps are not atomic: if one fails part-way, the references removed before it stay removed (the row says `failed` and the answer is the error).
+2. **By tag or digest reference**: only that reference is removed (untag). Docker deletes the image when it was its last reference.
+
+In use. Before any delete the backend asks Docker for all containers, running, stopped or created, and counts those whose image id is this image. If there is at least one, no delete is sent and the answer is `409 conflict` with `details.name` and `details.containers` (a count, no names). This also applies to an untag of one of several tags: the rule is deliberately simple and conservative. If a container starts using the image after that check, Docker refuses itself and the answer is the same `409` without `details.containers`.
+
+Response `200`:
+
+```json
+{
+  "untagged": ["app:v1"],
+  "deleted": ["3f9a1c0b7d2e"],
+  "removedCount": 2,
+  "truncated": false,
+  "resultComplete": true
+}
+```
+
+- `untagged` lists the references Docker removed and `deleted` the images it deleted (12 character ids). Both are sorted, at most 1000 entries each, and contain only validated strings: anything else is never listed or echoed.
+- `removedCount` is the number of entries Docker reported (untagged plus deleted). `truncated` is `true` when the lists hold fewer entries than `removedCount`.
+- `resultComplete` is `false` when Docker answered `200` (it acted) but an answer could not be read in full. The route still answers `200`, writes a `success` row and reports `removedCount` as `null`; the lists may be short. A client must show this as "the removal ran, the details are unknown", never as a failure:
+
+```json
+{
+  "untagged": [],
+  "deleted": [],
+  "removedCount": null,
+  "truncated": false,
+  "resultComplete": false
+}
+```
+
+Errors: the shared ones of 1.3, plus `404 not_found` (`details.name`), `409 conflict` as above and `422 invalid_request` (`details.fields.image`). An image reference literally named `prune` is removed with this route like any other (the prune route is `POST`).
+
+### 3.29 `POST /api/profiles/{name}/images/prune`
+
+Token: yes. Removes unused images. **This cannot be undone.** The request must carry a fixed confirmation text. Action log row `docker.image.prune` with no detail. It has a 2 minute budget. An image counts as used when any container, in any state, was created from it (Docker's rule; the backend does not second-guess it).
+
+Request:
+
+```json
+{
+  "confirm": "delete-unused-images",
+  "all": false
+}
+```
+
+- `confirm` must be exactly `delete-unused-images`. An empty body, `{}`, a missing or `null` key and any other string (including the volume and network prune texts) answer `422 invalid_request` with `details.fields` holding `confirm`; Docker is not reached and no log row is written. Any other key (including a filter or `until`), a repeated key, a wrong type, trailing data and a non-object body are `400 bad_request`. The body is at most 1 KiB.
+- `all` is optional (absent and `null` mean `false`). `false` removes **dangling** images only (untagged and unused). `true` removes **every** image that no container uses, **tagged images included**.
+- The Docker request carries one query value, `filters`, built from fixed text: `{"dangling":["true"]}` for `all: false` and `{"dangling":["false"]}` for `all: true`. The filter is always sent explicitly, never left to Docker's default. No other filter exists.
+
+How the filter was verified. The published Docker Engine API v1.41 description of `POST /images/prune` says for `dangling=<boolean>`: "When set to `true` (or `1`), prune only unused *and* untagged images. When set to `false` (or `0`), all unused images are pruned." The backend pins `/v1.41`. The check was made against the published description only (`https://docs.docker.com/reference/api/engine/version/v1.41.yaml`); nothing was pruned on any engine. A unit test checks the exact query of both modes.
+
+Response `200`:
+
+```json
+{
+  "untagged": ["app@sha256:9b2f5d1c0a7e4b3d8c6f2a1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c"],
+  "deleted": ["3f9a1c0b7d2e"],
+  "removedCount": 2,
+  "truncated": false,
+  "reclaimedBytes": 104857600,
+  "all": false,
+  "resultComplete": true
+}
+```
+
+- `untagged`, `deleted`, `removedCount` and `truncated` mean what they mean in 3.28 (sorted, at most 1000 validated entries each, nothing dropped without `truncated`).
+- `reclaimedBytes` is the space Docker says it freed, at least `0`. `all` echoes the mode that ran.
+- `resultComplete` is `false` when Docker ran the prune (it answered `200`) but its answer could not be read in full: the body was too large or not the expected JSON, or `SpaceReclaimed` does not fit a 64-bit integer. The images are already gone, so the route still answers `200` and writes a `success` row; what it does not know is `null` (`removedCount` and or `reclaimedBytes`) and the lists may be empty or short. A client must show this as "the prune ran, the figures are unknown":
+
+```json
+{
+  "untagged": [],
+  "deleted": [],
+  "removedCount": null,
+  "truncated": false,
+  "reclaimedBytes": null,
+  "all": true,
+  "resultComplete": false
+}
+```
+
+Errors: the shared ones of 1.3, plus the `422` and `400` above.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed and pruned (3.26 to 3.29), but pull, push, save, load, import, build and registry login are not available (pull is planned). A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

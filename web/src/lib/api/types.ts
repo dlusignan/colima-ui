@@ -182,6 +182,75 @@ export interface ImageList {
   images: DockerImage[]
 }
 
+/** Body of `POST /api/profiles/{name}/images/{image}/tag`. Both fields are required. */
+export interface TagImageRequest {
+  /** No tag, no digest; a registry host and path are allowed (docs/api.md 3.26). */
+  repository: string
+  tag: string
+}
+
+/** One layer of an image: time and size only, never the build command. */
+export interface ImageLayer {
+  createdAt: string | null
+  sizeBytes: number
+}
+
+/** Answer of `GET /api/profiles/{name}/images/{image}`. No environment, labels or commands. */
+export interface ImageDetail {
+  id: string
+  tags: string[]
+  digests: string[]
+  sizeBytes: number
+  createdAt: string | null
+  architecture: string
+  os: string
+  /** Port numbers only, sorted. */
+  exposedPorts: number[]
+  containers: number
+  containerNames: string[]
+  /** At most 200 layers, newest first. */
+  layers: ImageLayer[]
+  layerCount: number
+}
+
+/**
+ * Answer of `DELETE /api/profiles/{name}/images/{image}`. When Docker acted but
+ * its answer was unreadable, `resultComplete` is false and `removedCount` is
+ * null. `truncated` is true when the lists hold fewer entries than
+ * `removedCount`.
+ */
+export interface ImageRemoveResult {
+  untagged: string[]
+  /** 12-character image ids. */
+  deleted: string[]
+  removedCount: number | null
+  truncated: boolean
+  resultComplete: boolean
+}
+
+/** Body of `POST /api/profiles/{name}/images/prune`. */
+export interface PruneImagesRequest {
+  confirm: string
+  /** false (the default): dangling images only. true: every unused image, tagged ones included. */
+  all?: boolean
+}
+
+/**
+ * Answer of `POST /api/profiles/{name}/images/prune`. Irreversible. When Docker
+ * ran the prune but its answer was unreadable, `resultComplete` is false and
+ * `removedCount` and `reclaimedBytes` may be null: the images are gone, only
+ * the figures are unknown.
+ */
+export interface ImagePruneResult {
+  untagged: string[]
+  deleted: string[]
+  removedCount: number | null
+  truncated: boolean
+  reclaimedBytes: number | null
+  all: boolean
+  resultComplete: boolean
+}
+
 export interface ContainerLogs {
   /** Oldest first, each line starts with Docker's timestamp. Plain text only. */
   lines: string[]

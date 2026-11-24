@@ -147,6 +147,54 @@ describe('request', () => {
     expect(init.body).toBe('{"confirm":"delete-unused-networks"}')
   })
 
+  it('builds the image write requests', async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    await expect(
+      api.tagImage('dev', 'team/app:v1', { repository: 'app', tag: 'v2' }),
+    ).resolves.toBeUndefined()
+    let [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/profiles/dev/images/team%2Fapp%3Av1/tag')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{"repository":"app","tag":"v2"}')
+
+    fetchMock.mockResolvedValue(jsonResponse(200, { id: 'a' }))
+    await api.getImage('dev', '0123456789ab')
+    ;[url, init] = fetchMock.mock.calls[1]
+    expect(url).toBe('/api/profiles/dev/images/0123456789ab')
+    expect(init.method).toBe('GET')
+
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { untagged: [], deleted: [], removedCount: 0, truncated: false, resultComplete: true }),
+    )
+    await api.removeImage('dev', 'app:v1')
+    ;[url, init] = fetchMock.mock.calls[2]
+    expect(url).toBe('/api/profiles/dev/images/app%3Av1')
+    expect(init.method).toBe('DELETE')
+    expect(init.body).toBeUndefined()
+    expect(url).not.toContain('force')
+
+    fetchMock.mockResolvedValue(jsonResponse(200, { untagged: [], deleted: [] }))
+    await api.pruneImages('dev')
+    ;[url, init] = fetchMock.mock.calls[3]
+    expect(url).toBe('/api/profiles/dev/images/prune')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{"confirm":"delete-unused-images","all":false}')
+    fetchMock.mockResolvedValue(jsonResponse(200, { untagged: [], deleted: [] }))
+    await api.pruneImages('dev', true)
+    expect(fetchMock.mock.calls[4][1].body).toBe('{"confirm":"delete-unused-images","all":true}')
+  })
+
+  it('decodes the in-use conflict of an image removal', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        error: { code: 'conflict', message: 'm', details: { name: 'app:v1', containers: 2 } },
+      }),
+    )
+    const e = await failure(api.removeImage('dev', 'app:v1'))
+    expect(e.status).toBe(409)
+    expect(e.details.containers).toBe(2)
+  })
+
   it('decodes the in-use conflict of a network removal', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(409, {
