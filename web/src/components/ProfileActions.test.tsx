@@ -14,7 +14,7 @@ describe('ProfileActions', () => {
         profile={profileFixture({ name: 'dev', status: 'stopped' })}
         busy={false}
         unavailable={false}
-        onAction={onAction}
+        onAction={onAction} onDelete={vi.fn()}
       />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Start dev' }))
@@ -24,7 +24,7 @@ describe('ProfileActions', () => {
   it('stop confirms first', async () => {
     const onAction = vi.fn()
     render(
-      <ProfileActions profile={profileFixture({ name: 'dev' })} busy={false} unavailable={false} onAction={onAction} />,
+      <ProfileActions profile={profileFixture({ name: 'dev' })} busy={false} unavailable={false} onAction={onAction} onDelete={vi.fn()} />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Stop dev' }))
     expect(onAction).not.toHaveBeenCalled()
@@ -35,9 +35,9 @@ describe('ProfileActions', () => {
   it('disables everything when busy or unavailable', () => {
     for (const props of [{ busy: true, unavailable: false }, { busy: false, unavailable: true }]) {
       const { unmount } = render(
-        <ProfileActions profile={profileFixture({ name: 'dev', status: 'unknown' })} {...props} onAction={vi.fn()} />,
+        <ProfileActions profile={profileFixture({ name: 'dev', status: 'unknown' })} {...props} onAction={vi.fn()} onDelete={vi.fn()} />,
       )
-      expect([off('Start dev'), off('Stop dev'), off('Restart dev')]).toEqual([true, true, true])
+      expect([off('Start dev'), off('Stop dev'), off('Restart dev'), off('Delete dev')]).toEqual([true, true, true, true])
       unmount()
     }
   })
@@ -45,22 +45,22 @@ describe('ProfileActions', () => {
   it('update runtime shows only when asked, is enabled only when running and confirms first', async () => {
     const onAction = vi.fn()
     const { rerender } = render(
-      <ProfileActions profile={profileFixture({ name: 'dev' })} busy={false} unavailable={false} onAction={onAction} />,
+      <ProfileActions profile={profileFixture({ name: 'dev' })} busy={false} unavailable={false} onAction={onAction} onDelete={vi.fn()} />,
     )
     expect(screen.queryByRole('button', { name: 'Update runtime dev' })).toBeNull()
 
     rerender(
-      <ProfileActions profile={profileFixture({ name: 'dev', status: 'stopped' })} busy={false} unavailable={false} onAction={onAction} showUpdate />,
+      <ProfileActions profile={profileFixture({ name: 'dev', status: 'stopped' })} busy={false} unavailable={false} onAction={onAction} onDelete={vi.fn()} showUpdate />,
     )
     expect(off('Update runtime dev')).toBe(true)
 
     rerender(
-      <ProfileActions profile={profileFixture({ name: 'dev', status: 'running' })} busy unavailable={false} onAction={onAction} showUpdate />,
+      <ProfileActions profile={profileFixture({ name: 'dev', status: 'running' })} busy unavailable={false} onAction={onAction} onDelete={vi.fn()} showUpdate />,
     )
     expect(off('Update runtime dev')).toBe(true)
 
     rerender(
-      <ProfileActions profile={profileFixture({ name: 'dev', status: 'running' })} busy={false} unavailable={false} onAction={onAction} showUpdate />,
+      <ProfileActions profile={profileFixture({ name: 'dev', status: 'running' })} busy={false} unavailable={false} onAction={onAction} onDelete={vi.fn()} showUpdate />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Update runtime dev' }))
     expect(onAction).not.toHaveBeenCalled()
@@ -68,5 +68,13 @@ describe('ProfileActions', () => {
     expect(dialog).toHaveTextContent('containers may restart briefly')
     await userEvent.click(screen.getByRole('button', { name: 'Update runtime' }))
     expect(onAction).toHaveBeenCalledWith('update')
+  })
+
+  it('puts Delete right after Restart', () => {
+    render(
+      <ProfileActions profile={profileFixture({ name: 'dev' })} busy={false} unavailable={false} onAction={vi.fn()} onDelete={vi.fn()} />,
+    )
+    const names = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
+    expect(names).toEqual(['Start dev', 'Stop dev', 'Restart dev', 'Delete dev'])
   })
 })

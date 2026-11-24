@@ -43,9 +43,10 @@ interface ProfileRowProps {
   pending: boolean
   unavailable: boolean
   onAction: (action: ProfileAction) => void
+  onDelete: (deleteData: boolean) => void
 }
 
-export function ProfileRow({ profile, job, pending, unavailable, onAction }: ProfileRowProps) {
+export function ProfileRow({ profile, job, pending, unavailable, onAction, onDelete }: ProfileRowProps) {
   const running = job?.state === 'running'
   const busy = pending || running || profile.activeJobId != null
   const label = running && job ? PROGRESS[job.action] : undefined
@@ -87,7 +88,7 @@ export function ProfileRow({ profile, job, pending, unavailable, onAction }: Pro
       </td>
       <td className="px-3 py-2">
         <div className="flex items-center gap-2">
-          <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={onAction} />
+          <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={onAction} onDelete={onDelete} />
           {(job || profile.activeJobId) && (
             <Link
               className="text-xs underline underline-offset-4"

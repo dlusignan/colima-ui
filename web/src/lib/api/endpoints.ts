@@ -20,6 +20,7 @@ import type {
   EngineInfo,
   KubernetesConfirmRequest,
   KubernetesStatus,
+  ProfileContents,
   SshConfig,
   ImageList,
   Job,
@@ -145,6 +146,8 @@ export const api = {
       withQuery(`/api/profiles/${enc(name)}/containers/${enc(id)}/logs`, { tail }),
       { signal },
     ),
+  getContents: (name: string, signal?: AbortSignal) =>
+    request<ProfileContents>('GET', `/api/profiles/${enc(name)}/contents`, { signal }),
   getSshConfig: (name: string, signal?: AbortSignal) =>
     request<SshConfig>('GET', `/api/profiles/${enc(name)}/ssh-config`, { signal }),
   getEngine: (name: string, signal?: AbortSignal) =>
