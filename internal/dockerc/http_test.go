@@ -585,3 +585,7 @@ func (f *fakeClient) PruneImages(context.Context, bool) (ImagePruneResult, error
 }
 
 func (f *fakeClient) PullImage(context.Context, string, func(string)) error { return nil }
+
+func (f *fakeClient) StartContainer(context.Context, string) (bool, error)   { return false, nil }
+func (f *fakeClient) StopContainer(context.Context, string) (bool, error)    { return false, nil }
+func (f *fakeClient) RestartContainer(context.Context, string) (bool, error) { return false, nil }

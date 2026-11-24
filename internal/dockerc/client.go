@@ -178,6 +178,18 @@ type Client interface {
 	// reported is a *PullError whose Message is safe to show; cancelling ctx
 	// stops the HTTP stream and returns an error wrapping ctx.Err().
 	PullImage(ctx context.Context, ref string, emit func(line string)) error
+
+	// StartContainer, StopContainer and RestartContainer act on one container
+	// by id (ValidContainerID: 12 to 64 lowercase hex characters; a name or
+	// anything else gives ErrBadName before any request). They report whether
+	// anything changed: false when Docker answered 304 because the container
+	// was already running (start) or already stopped (stop). Stop and restart
+	// send no timeout, so Docker's default grace period applies. An unknown
+	// or ambiguous id gives ErrObjectNotFound and a state Docker refuses (for
+	// example start on a paused container) ErrConflict.
+	StartContainer(ctx context.Context, id string) (changed bool, err error)
+	StopContainer(ctx context.Context, id string) (changed bool, err error)
+	RestartContainer(ctx context.Context, id string) (changed bool, err error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,
