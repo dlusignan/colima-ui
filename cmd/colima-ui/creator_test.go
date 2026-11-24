@@ -365,7 +365,7 @@ func TestCreatorAdvancedValidationNamesFieldsAndLaunchesNothing(t *testing.T) {
 
 func TestCreatorAdvancedGoodEdgeValues(t *testing.T) {
 	for _, p := range []httpapi.NewProfile{
-		{Name: "dev", VZRosetta: true},
+		{Name: "dev", Arch: "aarch64", VZRosetta: true},
 		{Name: "dev", VMType: "vz", Arch: "aarch64", VZRosetta: true},
 		{Name: "dev", VMType: "qemu", CPUType: "max"},
 		{Name: "dev", NetworkMode: "shared"},

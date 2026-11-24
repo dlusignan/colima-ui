@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/netip"
 	"regexp"
+	"runtime"
 	"strconv"
 )
 
@@ -214,12 +215,32 @@ func (o StartOptions) validateAdvanced() error {
 	if o.CPUType != "" && !cpuTypeRE.MatchString(o.CPUType) {
 		return bad("cpu-type", "not a CPU model name")
 	}
-	// An empty vm type or arch is Colima's default, vz and aarch64 per
-	// `colima start --help`.
-	if o.VZRosetta && ((o.VMType != "" && o.VMType != VMTypeVZ) || (o.Arch != "" && o.Arch != ArchAarch64)) {
+	// An empty vm type is Colima's default (vz, per `colima start --help`) and
+	// an empty arch is the host's.
+	arch := o.Arch
+	if arch == "" {
+		arch = defaultArch()
+	}
+	if o.VZRosetta && ((o.VMType != "" && o.VMType != VMTypeVZ) || arch != ArchAarch64) {
 		return bad("vz-rosetta", "needs vm type vz and arch aarch64")
 	}
 	return nil
+}
+
+// hostArch is the host's Go architecture. Colima's default arch follows it, so
+// it decides what a left-out arch means. Tests replace it.
+var hostArch = runtime.GOARCH
+
+// defaultArch is the arch Colima picks when none is given: aarch64 on an arm64
+// host, x86_64 on an amd64 host, "" (unknown) elsewhere.
+func defaultArch() Arch {
+	switch hostArch {
+	case "arm64":
+		return ArchAarch64
+	case "amd64":
+		return ArchX8664
+	}
+	return ""
 }
 
 // canonicalAddr parses one IPv4 or IPv6 address without a zone and returns its

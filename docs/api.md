@@ -662,10 +662,10 @@ Request body: a JSON object with a required `name` and these optional settings. 
 5. Colima saves the settings to the new profile's YAML file, so later starts reuse them.
 6. The advanced settings are all optional, and each one becomes exactly one Colima flag (an array becomes the flag repeated, once per element). Every value is checked against the rule below before anything starts. A rejected value is answered on its key (for an array element on `dns[0]`, `dnsHosts[1].name` or `dnsHosts[1].address`) and nothing is launched. `false` and an empty value mean the same as leaving the key out.
    1. `hostname` (`--hostname`): one DNS label, 1 to 63 letters, digits or hyphens, starting and ending with a letter or digit.
-   2. `dns` (`--dns`, repeated): an array of at most 8 IPv4 or IPv6 addresses. A zone (`fe80::1%en0`), a port, a prefix or a host name is rejected. Repeated addresses are passed on as given.
+   2. `dns` (`--dns`, repeated): an array of at most 8 IPv4 or IPv6 addresses. IPv4-mapped IPv6 addresses (`::ffff:192.0.2.1`) are accepted. A zone (`fe80::1%en0`), a port, a prefix or a host name is rejected. Repeated addresses are passed on as given.
    3. `dnsHosts` (`--dns-host name=address`, repeated): an array of at most 16 objects with exactly the keys `name` and `address`. `name` is a host name of dot-separated labels (letters, digits and hyphens, each label at most 63 characters, at most 253 in all, no trailing dot); `address` is an IPv4 or IPv6 address. A null element, an unknown or repeated key, or a value that is not a string is a `400`.
    4. `sshAgent` (`--ssh-agent`): boolean, forwards the SSH agent into the VM.
-   5. `vzRosetta` (`--vz-rosetta`): boolean, enables Rosetta for amd64 emulation. Accepted only with `vmType` `vz` and `arch` `aarch64`; a left-out `vmType` or `arch` counts as Colima's default (`vz`, `aarch64`). Otherwise `422` on `vzRosetta`.
+   5. `vzRosetta` (`--vz-rosetta`): boolean, enables Rosetta for amd64 emulation. Accepted only with `vmType` `vz` and `arch` `aarch64`; a left-out `vmType` or `arch` counts as Colima's default for this machine (`vz` and, on Apple Silicon, `aarch64`; on an Intel Mac a left-out `arch` is `x86_64`, so Rosetta then needs `arch` set to `aarch64` explicitly). Otherwise `422` on `vzRosetta`.
    6. `portForwarder` (`--port-forwarder`): `ssh`, `grpc` or `none`.
    7. `mountInotify` (`--mount-inotify`): boolean, propagates inotify file events to the VM.
    8. `networkAddress` (`--network-address`): boolean, assigns a reachable IP address to the VM.

@@ -6,6 +6,28 @@ import (
 	"testing"
 )
 
+// Tests run as if on an arm64 host unless they say otherwise.
+func init() { hostArch = "arm64" }
+
+func TestRosettaDefaultArchFollowsTheHost(t *testing.T) {
+	old := hostArch
+	t.Cleanup(func() { hostArch = old })
+	for _, c := range []struct {
+		goarch, arch string
+		ok           bool
+	}{
+		{"arm64", "", true}, {"arm64", "aarch64", true}, {"arm64", "x86_64", false},
+		{"amd64", "", false}, {"amd64", "aarch64", true}, {"amd64", "x86_64", false},
+		{"riscv64", "", false}, {"riscv64", "aarch64", true},
+	} {
+		hostArch = c.goarch
+		got := advFields(&Profile{Arch: c.arch}, NewAdvanced{VZRosetta: true})
+		if (len(got) == 0) != c.ok {
+			t.Errorf("host %s arch %q: %v", c.goarch, c.arch, got)
+		}
+	}
+}
+
 func advFields(p *Profile, a NewAdvanced) map[string]string {
 	if p == nil {
 		p = &Profile{}

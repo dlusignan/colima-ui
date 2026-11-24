@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"runtime"
 )
 
 // Bounds and patterns for the advanced creation settings. Every pattern starts
@@ -24,6 +25,22 @@ var (
 	// A feature list (host,+x2apic) is not accepted.
 	cpuTypeRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 )
+
+// hostArch is the host's Go architecture. Colima's default arch follows it, so
+// it decides what a left-out arch means. Tests replace it.
+var hostArch = runtime.GOARCH
+
+// defaultArch is the arch Colima picks when none is given: aarch64 on an arm64
+// host, x86_64 on an amd64 host, "" (unknown) elsewhere.
+func defaultArch() string {
+	switch hostArch {
+	case "arm64":
+		return "aarch64"
+	case "amd64":
+		return "x86_64"
+	}
+	return ""
+}
 
 // DNSHost is one custom DNS name given to the VM's resolver.
 type DNSHost struct {
@@ -75,8 +92,8 @@ func validHostName(s string) bool {
 
 // validateAdvanced returns field errors named with the creation body's keys
 // (the creator passes them through unchanged). vmType and arch come from the
-// profile being created: an empty one means Colima's default, which `colima
-// start --help` documents as vz and aarch64.
+// profile being created: an empty vmType means Colima's default (vz, per `colima start
+// --help`) and an empty arch means the host's (see defaultArch).
 //
 // Cross-field rules kept, with where each comes from:
 //   - vzRosetta needs vmType vz and arch aarch64: the flag is "enable Rosetta
@@ -133,7 +150,10 @@ func validateAdvanced(a NewAdvanced, vmType, arch string) []FieldError {
 	if a.CPUType != "" && !cpuTypeRE.MatchString(a.CPUType) {
 		add("cpuType", "must be a CPU model name of letters, digits, dots, underscores and hyphens, at most 64 characters")
 	}
-	if a.VZRosetta && ((vmType != "" && vmType != "vz") || (arch != "" && arch != "aarch64")) {
+	if arch == "" {
+		arch = defaultArch()
+	}
+	if a.VZRosetta && ((vmType != "" && vmType != "vz") || arch != "aarch64") {
 		add("vzRosetta", "requires vmType vz and arch aarch64")
 	}
 	return errs

@@ -3,11 +3,40 @@ package colima
 import (
 	"errors"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/dlusignan/colima-ui/internal/config"
 )
+
+// Tests run as if on an arm64 host unless they say otherwise.
+func init() { hostArch = "arm64" }
+
+func withHostArch(t *testing.T, goarch string) {
+	t.Helper()
+	old := hostArch
+	hostArch = goarch
+	t.Cleanup(func() { hostArch = old })
+}
+
+func TestRosettaDefaultArchFollowsTheHost(t *testing.T) {
+	for _, c := range []struct {
+		goarch string
+		arch   Arch
+		ok     bool
+	}{
+		{"arm64", "", true}, {"arm64", ArchAarch64, true}, {"arm64", ArchX8664, false},
+		{"amd64", "", false}, {"amd64", ArchAarch64, true}, {"amd64", ArchX8664, false},
+		{"riscv64", "", false}, {"riscv64", ArchAarch64, true},
+	} {
+		withHostArch(t, c.goarch)
+		err := StartOptions{VZRosetta: true, Arch: c.arch}.Validate(testLimits)
+		if (err == nil) != c.ok {
+			t.Errorf("host %s arch %q: %v", c.goarch, c.arch, err)
+		}
+	}
+}
 
 func TestAdvancedFlagTable(t *testing.T) {
 	cases := []struct {
@@ -271,7 +300,9 @@ func TestAdvancedValidatorsAgreeWithConfig(t *testing.T) {
 		check("network mode", v, StartOptions{NetworkMode: NetworkMode(v)}.Validate(testLimits) == nil,
 			cfg(config.NewAdvanced{NetworkMode: v}))
 	}
-	// Cross-field rules and count caps.
+	// Cross-field rules and count caps. The config package reads the real host
+	// architecture, so the adapter must too for this comparison.
+	withHostArch(t, runtime.GOARCH)
 	for _, vt := range []string{"", "vz", "qemu", "krunkit"} {
 		for _, ar := range []string{"", "aarch64", "x86_64"} {
 			ours := StartOptions{VZRosetta: true, VMType: VMType(vt), Arch: Arch(ar)}.Validate(testLimits) == nil
