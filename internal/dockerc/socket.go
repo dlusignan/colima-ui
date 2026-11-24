@@ -50,14 +50,14 @@ func NewColimaResolver(r colima.Runner) SocketResolver {
 		if inst == nil || inst.Status != colima.StatusRunning {
 			return "", ErrVMNotRunning
 		}
-		if inst.Runtime != "docker" {
+		if !strings.EqualFold(inst.Runtime, "docker") {
 			return "", ErrRuntimeNotDocker
 		}
 		d, err := colima.Status(ctx, r, profile)
 		if err != nil {
 			return "", fmt.Errorf("dockerc: reading status: %w", err)
 		}
-		if d.Runtime != "docker" {
+		if !strings.EqualFold(d.Runtime, "docker") {
 			return "", ErrRuntimeNotDocker
 		}
 		sock := strings.TrimPrefix(d.DockerSocket, "unix://")
