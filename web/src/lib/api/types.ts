@@ -46,6 +46,24 @@ export interface CreateProfileRequest {
   mountType?: string
   kubernetes?: boolean
   kubernetesVersion?: string
+  // Advanced settings, all optional.
+  hostname?: string
+  dns?: string[]
+  dnsHosts?: DnsHost[]
+  sshAgent?: boolean
+  vzRosetta?: boolean
+  portForwarder?: 'ssh' | 'grpc' | 'none'
+  mountInotify?: boolean
+  networkAddress?: boolean
+  networkMode?: 'shared' | 'bridged'
+  networkInterface?: string
+  cpuType?: string
+}
+
+/** One custom DNS name for the VM's resolver (`dnsHosts` in POST /api/profiles). */
+export interface DnsHost {
+  name: string
+  address: string
 }
 
 export interface ProfileCreated {

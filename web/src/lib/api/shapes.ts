@@ -11,6 +11,7 @@ import type {
   ContainerLogs,
   ContainerPort,
   ContainerList,
+  DnsHost,
   DockerImage,
   DockerNetwork,
   DockerVolume,
@@ -80,6 +81,11 @@ export const jobRefShape = {
   jobId: 'string',
 } as const satisfies Record<keyof JobRef, Kind>
 
+export const dnsHostShape = {
+  name: 'string',
+  address: 'string',
+} as const satisfies Record<keyof DnsHost, Kind>
+
 export const createProfileRequestShape = {
   name: 'string',
   cpus: 'number',
@@ -92,6 +98,17 @@ export const createProfileRequestShape = {
   mountType: 'string',
   kubernetes: 'boolean',
   kubernetesVersion: 'string',
+  hostname: 'string',
+  dns: 'string[]',
+  dnsHosts: { arrayOf: dnsHostShape },
+  sshAgent: 'boolean',
+  vzRosetta: 'boolean',
+  portForwarder: 'string',
+  mountInotify: 'boolean',
+  networkAddress: 'boolean',
+  networkMode: 'string',
+  networkInterface: 'string',
+  cpuType: 'string',
 } as const satisfies Record<keyof CreateProfileRequest, Kind>
 
 export const profileCreatedShape = {

@@ -110,15 +110,20 @@ func Validate(p *Profile, lim Limits, current *Profile) []FieldError {
 //
 //  1. A Kubernetes version without Kubernetes enabled: the flag would go out
 //     alone and mean nothing.
+//  2. The advanced settings (NewAdvanced): value formats and the two
+//     cross-field rules documented on validateAdvanced.
 //
 // The combinations Colima itself refuses (Kubernetes with incus, 9p with vz)
 // could not be confirmed from `colima start --help`, so they surface as a
 // failed job with its output.
-func ValidateNew(p *Profile, lim Limits) []FieldError {
+func ValidateNew(p *Profile, adv NewAdvanced, lim Limits) []FieldError {
 	errs := Validate(p, lim, nil)
 	if p != nil && p.Kubernetes.Version != "" && (p.Kubernetes.Enabled == nil || !*p.Kubernetes.Enabled) &&
 		!hasField(errs, "kubernetes.version") {
 		errs = append(errs, FieldError{Field: "kubernetes.version", Message: "requires kubernetes to be enabled"})
+	}
+	if p != nil {
+		errs = append(errs, validateAdvanced(adv, p.VMType, p.Arch)...)
 	}
 	return errs
 }

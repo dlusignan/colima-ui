@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -59,7 +60,8 @@ func TestCreateNameOnlyLeavesDefaults(t *testing.T) {
 		}
 		p := f.calls[0]
 		if p.CPUs != nil || p.MemoryGiB != nil || p.DiskGiB != nil || p.RootDiskGiB != nil || p.Runtime != "" ||
-			p.VMType != "" || p.Arch != "" || p.MountType != "" || p.Kubernetes || p.KubernetesVersion != "" {
+			p.VMType != "" || p.Arch != "" || p.MountType != "" || p.Kubernetes || p.KubernetesVersion != "" ||
+			!reflect.DeepEqual(p, NewProfile{Name: "dev"}) {
 			t.Fatalf("%s: %+v", body, p)
 		}
 	}
@@ -68,7 +70,7 @@ func TestCreateNameOnlyLeavesDefaults(t *testing.T) {
 func TestCreateBadBodyNeverReachesCreator(t *testing.T) {
 	big := `{"name":"dev","kubernetesVersion":"` + strings.Repeat("a", 65<<10) + `"}`
 	bodies := map[string]string{
-		"unknown key":       `{"name":"dev","hostname":"x"}`,
+		"unknown key":       `{"name":"dev","bogus":"x"}`,
 		"cpu not cpus":      `{"name":"dev","cpu":2}`,
 		"memory not gib":    `{"name":"dev","memory":2}`,
 		"upper case key":    `{"Name":"dev"}`,
@@ -105,7 +107,7 @@ func TestCreateBadBodyNeverReachesCreator(t *testing.T) {
 			if len(f.calls) != 0 {
 				t.Fatal("creator reached with a bad body")
 			}
-			if strings.Contains(rec.Body.String(), "hostname") {
+			if strings.Contains(rec.Body.String(), "bogus") {
 				t.Fatalf("request text echoed: %s", rec.Body)
 			}
 		})
@@ -173,5 +175,93 @@ func TestCreateRouteShape(t *testing.T) {
 		if rec := cfgReq(t, h, m, "/api/profiles", `{"name":"dev"}`); rec.Code != 405 && rec.Code != 404 {
 			t.Fatalf("%s: %d", m, rec.Code)
 		}
+	}
+}
+
+func TestCreateAcceptsEveryAdvancedField(t *testing.T) {
+	f := &fakeCreator{id: "3.4"}
+	body := `{"name":"dev","hostname":"vm-1","dns":["1.1.1.1","2001:db8::1"],
+	"dnsHosts":[{"name":"example.com","address":"192.0.2.10"},{"address":"192.0.2.11","name":"b.test"}],
+	"sshAgent":true,"vzRosetta":true,"portForwarder":"grpc","mountInotify":true,"networkAddress":true,
+	"networkMode":"bridged","networkInterface":"en0","cpuType":"max"}`
+	if rec := cfgReq(t, createAPI(f), "POST", "/api/profiles", body); rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	want := NewProfile{Name: "dev", Hostname: "vm-1", DNS: []string{"1.1.1.1", "2001:db8::1"},
+		DNSHosts: []DNSHost{{Name: "example.com", Address: "192.0.2.10"}, {Name: "b.test", Address: "192.0.2.11"}},
+		SSHAgent: true, VZRosetta: true, PortForwarder: "grpc", MountInotify: true, NetworkAddress: true,
+		NetworkMode: "bridged", NetworkInterface: "en0", CPUType: "max"}
+	if !reflect.DeepEqual(f.calls[0], want) {
+		t.Fatalf("decoded %+v", f.calls[0])
+	}
+}
+
+func TestCreateAdvancedNullsCountAsAbsent(t *testing.T) {
+	f := &fakeCreator{id: "1"}
+	body := `{"name":"dev","hostname":null,"dns":null,"dnsHosts":null,"sshAgent":null,"networkMode":null}`
+	if rec := cfgReq(t, createAPI(f), "POST", "/api/profiles", body); rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if !reflect.DeepEqual(f.calls[0], NewProfile{Name: "dev"}) {
+		t.Fatalf("%+v", f.calls[0])
+	}
+}
+
+func TestCreateAdvancedWrongShapesAre400(t *testing.T) {
+	bodies := map[string]string{
+		"hostname number":      `{"name":"dev","hostname":5}`,
+		"hostname array":       `{"name":"dev","hostname":["a"]}`,
+		"dns string":           `{"name":"dev","dns":"1.1.1.1"}`,
+		"dns object":           `{"name":"dev","dns":{"a":"1.1.1.1"}}`,
+		"dns number element":   `{"name":"dev","dns":[1]}`,
+		"dns nested array":     `{"name":"dev","dns":[["1.1.1.1"]]}`,
+		"dnsHosts string":      `{"name":"dev","dnsHosts":"a=1.1.1.1"}`,
+		"dnsHosts string elem": `{"name":"dev","dnsHosts":["a=1.1.1.1"]}`,
+		"dnsHosts object":      `{"name":"dev","dnsHosts":{"name":"a","address":"1.1.1.1"}}`,
+		"dnsHosts null elem":   `{"name":"dev","dnsHosts":[null]}`,
+		"dnsHosts unknown key": `{"name":"dev","dnsHosts":[{"name":"a","address":"1.1.1.1","x":1}]}`,
+		"dnsHosts case key":    `{"name":"dev","dnsHosts":[{"Name":"a","address":"1.1.1.1"}]}`,
+		"dnsHosts repeat key":  `{"name":"dev","dnsHosts":[{"name":"a","name":"b","address":"1.1.1.1"}]}`,
+		"dnsHosts name num":    `{"name":"dev","dnsHosts":[{"name":1,"address":"1.1.1.1"}]}`,
+		"dnsHosts name null":   `{"name":"dev","dnsHosts":[{"name":null,"address":"1.1.1.1"}]}`,
+		"dnsHosts addr array":  `{"name":"dev","dnsHosts":[{"name":"a","address":["1.1.1.1"]}]}`,
+		"dnsHosts array elem":  `{"name":"dev","dnsHosts":[["a","1.1.1.1"]]}`,
+		"sshAgent string":      `{"name":"dev","sshAgent":"true"}`,
+		"sshAgent number":      `{"name":"dev","sshAgent":1}`,
+		"vzRosetta string":     `{"name":"dev","vzRosetta":"yes"}`,
+		"mountInotify array":   `{"name":"dev","mountInotify":[true]}`,
+		"networkAddress num":   `{"name":"dev","networkAddress":1}`,
+		"portForwarder bool":   `{"name":"dev","portForwarder":true}`,
+		"networkMode number":   `{"name":"dev","networkMode":1}`,
+		"networkInterface obj": `{"name":"dev","networkInterface":{}}`,
+		"cpuType array":        `{"name":"dev","cpuType":["max"]}`,
+		"repeated dns":         `{"name":"dev","dns":["1.1.1.1"],"dns":["8.8.8.8"]}`,
+		"case Hostname":        `{"name":"dev","Hostname":"x"}`,
+		"snake case":           `{"name":"dev","ssh_agent":true}`,
+		"flag name":            `{"name":"dev","ssh-agent":true}`,
+	}
+	for name, body := range bodies {
+		t.Run(name, func(t *testing.T) {
+			f := &fakeCreator{id: "1"}
+			rec := cfgReq(t, createAPI(f), "POST", "/api/profiles", body)
+			if rec.Code != 400 || errCode(t, rec) != "bad_request" {
+				t.Fatalf("%d %s", rec.Code, rec.Body)
+			}
+			if len(f.calls) != 0 {
+				t.Fatal("creator reached with a bad body")
+			}
+		})
+	}
+}
+
+func TestCreateHugeArraysReachTheValidatorWithinTheBodyCap(t *testing.T) {
+	// The count caps live in the creator; the route only bounds the body.
+	f := &fakeCreator{id: "1"}
+	body := `{"name":"dev","dns":[` + strings.TrimSuffix(strings.Repeat(`"1.1.1.1",`, 3000), ",") + `]}`
+	if rec := cfgReq(t, createAPI(f), "POST", "/api/profiles", body); rec.Code != 202 {
+		t.Fatalf("%d", rec.Code)
+	}
+	if len(f.calls[0].DNS) != 3000 {
+		t.Fatalf("dns %d", len(f.calls[0].DNS))
 	}
 }

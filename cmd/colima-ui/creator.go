@@ -73,7 +73,18 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 		Arch: p.Arch, Runtime: p.Runtime, VMType: p.VMType, MountType: p.MountType,
 		Kubernetes: config.Kubernetes{Enabled: &p.Kubernetes, Version: p.KubernetesVersion},
 	}
-	for _, fe := range config.ValidateNew(prof, c.limits) {
+	adv := config.NewAdvanced{
+		Hostname: p.Hostname, DNS: p.DNS, SSHAgent: p.SSHAgent, VZRosetta: p.VZRosetta,
+		PortForwarder: p.PortForwarder, MountInotify: p.MountInotify, NetworkAddress: p.NetworkAddress,
+		NetworkMode: p.NetworkMode, NetworkInterface: p.NetworkInterface, CPUType: p.CPUType,
+	}
+	var hosts []colima.DNSHost
+	for _, h := range p.DNSHosts {
+		adv.DNSHosts = append(adv.DNSHosts, config.DNSHost{Name: h.Name, Address: h.Address})
+		hosts = append(hosts, colima.DNSHost{Name: h.Name, Address: h.Address})
+	}
+	// ValidateNew names the advanced fields with the creation body's keys.
+	for _, fe := range config.ValidateNew(prof, adv, c.limits) {
 		key := fe.Field
 		if w, ok := creationFieldNames[key]; ok {
 			key = w
@@ -103,6 +114,10 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 			Runtime: colima.Runtime(p.Runtime), VMType: colima.VMType(p.VMType),
 			Arch: colima.Arch(p.Arch), MountType: colima.MountType(p.MountType),
 			Kubernetes: p.Kubernetes, KubernetesVersion: p.KubernetesVersion,
+			Hostname: p.Hostname, DNS: p.DNS, DNSHosts: hosts, SSHAgent: p.SSHAgent, VZRosetta: p.VZRosetta,
+			PortForwarder: colima.PortForwarder(p.PortForwarder), MountInotify: p.MountInotify,
+			NetworkAddress: p.NetworkAddress, NetworkMode: colima.NetworkMode(p.NetworkMode),
+			NetworkInterface: p.NetworkInterface, CPUType: p.CPUType,
 		},
 	})
 	if err != nil {
