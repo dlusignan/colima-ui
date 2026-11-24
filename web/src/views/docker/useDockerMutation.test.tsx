@@ -12,7 +12,10 @@ import { useDockerMutation } from './useDockerMutation'
 beforeEach(() => vi.useFakeTimers({ shouldAdvanceTime: true }))
 afterEach(() => vi.useRealTimers())
 
-function setup(mutationFn: (v: string) => Promise<string>) {
+function setup(
+  mutationFn: (v: string) => Promise<string>,
+  extra: { onSuccess?: (d: string, v: string) => void; handleError?: (e: unknown, v: string) => boolean } = {},
+) {
   const client = createTestClient()
   const invalidate = vi.spyOn(client, 'invalidateQueries')
   const Query = wrapperFor(client)
@@ -33,6 +36,7 @@ function setup(mutationFn: (v: string) => Promise<string>) {
         mutationFn,
         successTitle: (_d, v) => `Removed ${v}`,
         errorTitle: (v) => `Could not remove ${v}`,
+        ...extra,
       }),
     { wrapper },
   )
@@ -87,6 +91,31 @@ describe('useDockerMutation', () => {
     await run(() => result.current.run('vol-1'))
     expect(screen.getAllByText('Could not remove vol-1').length).toBeGreaterThan(0)
     expect(screen.queryByText('boom')).not.toBeInTheDocument()
+  })
+})
+
+describe('useDockerMutation callbacks', () => {
+  it('calls onSuccess after the toast', async () => {
+    const onSuccess = vi.fn()
+    const { result } = setup(() => Promise.resolve('ok'), { onSuccess })
+    await run(() => result.current.run('vol-1'))
+    expect(onSuccess).toHaveBeenCalledWith('ok', 'vol-1')
+    expect(screen.getAllByText('Removed vol-1')).toHaveLength(1)
+  })
+
+  it('shows no error toast when handleError takes the error, and still refetches', async () => {
+    const handleError = vi.fn(() => true)
+    const { result, invalidate } = setup(() => Promise.reject(new ApiError(409, 'conflict', 'x')), { handleError })
+    await run(() => result.current.run('vol-1'))
+    expect(handleError).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('Could not remove vol-1')).not.toBeInTheDocument()
+    expect(invalidate).toHaveBeenCalled()
+  })
+
+  it('still toasts when handleError returns false', async () => {
+    const { result } = setup(() => Promise.reject(new ApiError(500, 'internal', 'x')), { handleError: () => false })
+    await run(() => result.current.run('vol-1'))
+    expect(screen.getAllByText('Could not remove vol-1').length).toBeGreaterThan(0)
   })
 })
 
