@@ -113,7 +113,7 @@ func TestJobFinishedMapping(t *testing.T) {
 		{"failed no code", operations.StateFailed, nil, "failed", "colima did not exit normally"},
 		{"cancelled", operations.StateCancelled, nil, "cancelled", "cancelled before it finished"},
 	}
-	for _, action := range []operations.Action{operations.ActionStart, operations.ActionStop, operations.ActionRestart, operations.ActionUpdate} {
+	for _, action := range []operations.Action{operations.ActionStart, operations.ActionStop, operations.ActionRestart, operations.ActionUpdate, operations.ActionDelete} {
 		for _, c := range cases {
 			t.Run(string(action)+"/"+c.name, func(t *testing.T) {
 				fs := &fakeSink{}

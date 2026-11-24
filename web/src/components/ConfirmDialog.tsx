@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type ReactElement } from 'react'
+import { useId, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,6 +36,8 @@ interface ConfirmDialogProps {
    * exactly this text (case and spacing count). The input clears on close.
    */
   requireText?: string
+  /** Extra content between the description and the type-to-confirm field (an option checkbox). */
+  children?: ReactNode
   onConfirm: () => void
 }
 
@@ -55,6 +57,7 @@ export function ConfirmDialog({
   destructive = false,
   items,
   requireText,
+  children,
   onConfirm,
 }: ConfirmDialogProps) {
   const [inner, setInner] = useState(false)
@@ -84,6 +87,7 @@ export function ConfirmDialog({
             ))}
           </ul>
         )}
+        {children}
         {requireText !== undefined && (
           <div className="flex flex-col gap-1.5 text-sm">
             <label htmlFor={inputId}>

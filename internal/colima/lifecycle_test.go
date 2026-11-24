@@ -215,3 +215,37 @@ func collectFake(p Process) []string {
 	}
 	return out
 }
+
+func TestDeleteArgv(t *testing.T) {
+	for _, c := range []struct {
+		data bool
+		want string
+	}{
+		{false, "delete -p synthetic-a --force"},
+		{true, "delete -p synthetic-a --force --data"},
+	} {
+		f := &fakeStreamer{proc: newFakeProcess(nil, Exit{}, nil)}
+		if _, err := Delete(context.Background(), f, "synthetic-a", c.data); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.argv(t); got != c.want {
+			t.Fatalf("argv = %s, want %s", got, c.want)
+		}
+	}
+}
+
+func TestDeleteRejectsHostileNamesAndNilStreamer(t *testing.T) {
+	for _, name := range []string{"", "../x", "a b", "-p", "--force", "a;b", "$(x)", "a\nb"} {
+		f := &fakeStreamer{proc: newFakeProcess(nil, Exit{}, nil)}
+		var ipe *InvalidProfileError
+		if _, err := Delete(context.Background(), f, name, true); !errors.As(err, &ipe) {
+			t.Errorf("Delete(%q): got %v", name, err)
+		}
+		if len(f.calls) != 0 {
+			t.Errorf("Delete(%q) reached the streamer", name)
+		}
+	}
+	if _, err := Delete(context.Background(), nil, "ok", false); err == nil {
+		t.Error("nil streamer: want error")
+	}
+}

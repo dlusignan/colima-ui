@@ -216,6 +216,30 @@ func (s *Service) ProfileFolderExists(name string) (bool, error) {
 	return false, nil
 }
 
+// ProfileDirExists reports whether the base folder holds a real directory
+// (not a file and not a symlink) named like name, ignoring case. A delete uses
+// it to decide that a profile exists, so a stray file such as ssh_config never
+// counts. The name must pass ValidateProfileName. A missing base folder means no.
+func (s *Service) ProfileDirExists(name string) (bool, error) {
+	if err := ValidateProfileName(name); err != nil {
+		return false, err
+	}
+	entries, err := os.ReadDir(s.base)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, &ReadError{Err: stripPath(err)}
+	}
+	for _, e := range entries {
+		// DirEntry.Type comes from lstat: a symlink to a folder is not IsDir.
+		if strings.EqualFold(e.Name(), name) && e.Type().IsDir() {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ListProfiles returns the sorted names of profile folders that hold a
 // colima.yaml. Names starting with "_" (_templates, _lima, _store), names that
 // fail validation, non-folders and escaping symlinks are skipped. A missing base

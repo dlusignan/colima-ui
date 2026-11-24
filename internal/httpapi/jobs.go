@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -32,6 +34,15 @@ type ProfileGate interface {
 	ProfileStatus(ctx context.Context, name string) (status string, err error)
 }
 
+// DeleteGate is an optional extension of ProfileGate. A gate that implements it
+// is used by the delete route instead of ProfileStatus, so that delete can be
+// stricter than the other routes: it answers ErrProfileNotFound unless the
+// profile is listed by Colima or has an entry in Colima's folder (the
+// `default` profile is not special).
+type DeleteGate interface {
+	ProfileStatusForDelete(ctx context.Context, name string) (status string, err error)
+}
+
 // JobsDeps is the operation manager as the job routes see it.
 // *operations.Manager satisfies it.
 type JobsDeps interface {
@@ -55,6 +66,7 @@ var jobIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // WithJobs registers the operation routes:
 //
 //	POST /api/profiles/{name}/start|stop|restart|update
+//	POST /api/profiles/{name}/delete
 //	GET  /api/jobs/{id}
 //	POST /api/jobs/{id}/cancel
 func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
@@ -64,6 +76,7 @@ func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
 		rt.Handle("POST /api/profiles/{name}/stop", j.action(operations.ActionStop))
 		rt.Handle("POST /api/profiles/{name}/restart", j.action(operations.ActionRestart))
 		rt.Handle("POST /api/profiles/{name}/update", j.action(operations.ActionUpdate))
+		rt.Handle("POST /api/profiles/{name}/delete", j.delete)
 		rt.Handle("GET /api/jobs/{id}", j.get)
 		rt.Handle("POST /api/jobs/{id}/cancel", j.cancel)
 	}
@@ -120,6 +133,83 @@ func (j *jobRoutes) action(act operations.Action) apiHandler {
 		writeJSON(w, http.StatusAccepted, map[string]string{"jobId": sum.ID})
 		return nil
 	}
+}
+
+// deleteBodyLimit bounds the delete body: one name (at most 64 bytes) and a flag.
+const deleteBodyLimit = 1 << 10
+
+// delete serves POST /api/profiles/{name}/delete. The order: the body shape
+// (400), Busy (409 profile_busy, before the slow status read), the gate (it
+// validates the name before anything else sees it, 404), the confirmation (422,
+// must equal the path name exactly), the status allowlist (409 invalid_state
+// unless stopped or broken: the user stops the VM first), then Submit, which
+// stays authoritative for the slot and whose launcher re-checks the status. Nothing starts before every check has passed, and
+// the launcher always passes --force, so the process never waits on a prompt.
+func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Confirm    *string
+		DeleteData *bool
+	}
+	// An empty body means {}, so a missing confirm is the route's own 422.
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, deleteBodyLimit))
+	if err != nil {
+		return errBadRequest("Request body is not valid.")
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		raw = []byte("{}")
+	}
+	r.Body = io.NopCloser(bytes.NewReader(raw))
+	if err := decodeStrictObject(w, r, deleteBodyLimit, map[string]any{
+		"confirm": &in.Confirm, "deleteData": &in.DeleteData,
+	}); err != nil {
+		return err
+	}
+	name := r.PathValue("name")
+
+	// Busy first: the status read below is a slow `colima list`, and a start
+	// that began before it must be seen, not raced. The launcher re-checks the
+	// status inside the slot, and Submit stays authoritative for the slot.
+	if id, running := j.mgr.Busy(name); running {
+		return busyError(name, id)
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), gateTimeout)
+	defer cancel()
+	statusOf := j.gate.ProfileStatus
+	if dg, ok := j.gate.(DeleteGate); ok {
+		statusOf = dg.ProfileStatusForDelete
+	}
+	status, err := statusOf(ctx, name)
+	switch {
+	case errors.Is(err, ErrInvalidProfileName):
+		return profileNotFound("")
+	case errors.Is(err, ErrProfileNotFound):
+		return profileNotFound(name)
+	case err != nil:
+		slog.Error("profile lookup failed", "action", operations.ActionDelete, "error", err)
+		return errColimaFailed()
+	}
+
+	if in.Confirm == nil || *in.Confirm != name {
+		return newAPIError(http.StatusUnprocessableEntity, "confirmation_required",
+			"Send the profile name in confirm to delete it.", map[string]any{})
+	}
+	// Allowlist: only a stopped or broken VM can be deleted. A running, starting
+	// or unknown state is refused with its status.
+	if st := strings.ToLower(status); st != "stopped" && st != "broken" {
+		return newAPIError(http.StatusConflict, "invalid_state",
+			"Stop the profile before deleting it.", map[string]any{"status": st})
+	}
+
+	sum, err := j.mgr.Submit(operations.Request{
+		Action: operations.ActionDelete, Profile: name,
+		DeleteData: in.DeleteData != nil && *in.DeleteData,
+	})
+	if err != nil {
+		return submitError(name, operations.ActionDelete, err)
+	}
+	writeJSON(w, http.StatusAccepted, map[string]string{"jobId": sum.ID})
+	return nil
 }
 
 func profileNotFound(name string) *APIError {

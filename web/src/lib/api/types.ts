@@ -88,7 +88,7 @@ export type ProfileAction = 'start' | 'stop' | 'restart' | 'update'
  * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's
  * start/stop slot, and its output is progress text rather than process output).
  */
-export type JobAction = ProfileAction | 'create' | 'image-pull'
+export type JobAction = ProfileAction | 'delete' | 'create' | 'image-pull'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {
@@ -190,6 +190,16 @@ export interface ImageList {
 export interface PullImageRequest {
   /** A reference with a tag or a digest, such as `postgres:18-alpine`; public registries only. */
   reference: string
+}
+
+/**
+ * Body of `POST /api/profiles/{name}/delete` (docs/api.md 3.32). `confirm` must
+ * equal the profile name exactly; `deleteData` also removes the container
+ * runtime data and defaults to false.
+ */
+export interface DeleteProfileRequest {
+  confirm: string
+  deleteData?: boolean
 }
 
 /** The 202 answer of an image pull: a job to follow like start and stop. */

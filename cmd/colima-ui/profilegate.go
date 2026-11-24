@@ -30,6 +30,12 @@ type folderChecker interface {
 	ProfileFolderExists(name string) (bool, error)
 }
 
+// dirChecker reports whether the Colima folder holds a real directory (no file,
+// no symlink) for a name in any letter case. *config.Service satisfies it.
+type dirChecker interface {
+	ProfileDirExists(name string) (bool, error)
+}
+
 // ProfileExists reports whether a creation must treat name as taken: it is in
 // `colima list`, or the Colima folder holds an entry for it, in either case
 // comparing names ignoring letter case (the default macOS filesystem does).
@@ -91,6 +97,55 @@ func (g profileGate) ProfileStatus(ctx context.Context, name string) (string, er
 	}
 	if name == colima.DefaultProfile {
 		return "stopped", nil
+	}
+	return "", httpapi.ErrProfileNotFound
+}
+
+// ProfileStatusForDelete implements httpapi.DeleteGate. A delete is the one
+// action that must not guess: the name has to be listed by `colima list` or
+// have an entry in Colima's folder, and "default" gets no special treatment.
+// Names are compared ignoring letter case, because on the default macOS
+// filesystem `-p Dev` addresses the folder of `dev`; a listed profile that
+// differs only in case reports its own status, so a running VM is never
+// mistaken for a stopped one.
+func (g profileGate) ProfileStatusForDelete(ctx context.Context, name string) (string, error) {
+	if colima.ValidateProfile(name) != nil || config.ValidateProfileName(name) != nil {
+		return "", httpapi.ErrInvalidProfileName
+	}
+	list, err := colima.List(ctx, g.runner)
+	if err != nil {
+		return "", fmt.Errorf("list profiles: %w", err)
+	}
+	for _, in := range list {
+		if in.Name == name {
+			return strings.ToLower(in.Status), nil
+		}
+	}
+	for _, in := range list {
+		if strings.EqualFold(in.Name, name) {
+			return strings.ToLower(in.Status), nil
+		}
+	}
+	if g.files != nil {
+		names, err := g.files.ListProfiles()
+		if err != nil {
+			return "", fmt.Errorf("list profile files: %w", err)
+		}
+		for _, n := range names {
+			if strings.EqualFold(n, name) {
+				return "stopped", nil
+			}
+		}
+	}
+	// Only a real directory counts (a file named like a profile does not).
+	if dc, ok := g.folders.(dirChecker); ok {
+		found, err := dc.ProfileDirExists(name)
+		if err != nil {
+			return "", fmt.Errorf("scan profile folders: %w", err)
+		}
+		if found {
+			return "stopped", nil
+		}
 	}
 	return "", httpapi.ErrProfileNotFound
 }

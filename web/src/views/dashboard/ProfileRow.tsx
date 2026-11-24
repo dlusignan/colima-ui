@@ -10,6 +10,7 @@ const PROGRESS: Record<JobAction, string> = {
   start: 'starting',
   stop: 'stopping',
   restart: 'restarting',
+  delete: 'deleting',
   update: 'updating',
   create: 'creating',
   'image-pull': 'pulling',

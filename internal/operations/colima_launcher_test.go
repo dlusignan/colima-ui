@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 )
@@ -39,7 +41,7 @@ func TestColimaLauncherMapsActionsToAdapterCalls(t *testing.T) {
 func TestColimaLauncherRejectsUnknownActionAndBadProfile(t *testing.T) {
 	s := &argsStreamer{}
 	l := ColimaLauncher{S: s}
-	if _, err := l.Launch(context.Background(), Request{Action: "delete", Profile: "dev"}); !errors.Is(err, ErrUnknownAction) {
+	if _, err := l.Launch(context.Background(), Request{Action: "bogus", Profile: "dev"}); !errors.Is(err, ErrUnknownAction) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := l.Launch(context.Background(), Request{Action: ActionStart, Profile: "../x"}); err == nil {
@@ -105,5 +107,99 @@ func TestColimaLauncherCreateBackstopRejectsBadOptions(t *testing.T) {
 	one := 1
 	if _, err := (ColimaLauncher{S: s}).Launch(context.Background(), Request{Action: ActionCreate, Profile: "dev", Options: colima.StartOptions{CPUs: &one}}); err == nil {
 		t.Error("zero limits must reject a resource flag")
+	}
+}
+
+func TestColimaLauncherDeleteArgv(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s}
+	for _, data := range []bool{false, true} {
+		if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev", DeleteData: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := [][]string{
+		{"delete", "-p", "dev", "--force"},
+		{"delete", "-p", "dev", "--force", "--data"},
+	}
+	if !reflect.DeepEqual(s.args, want) {
+		t.Fatalf("args = %v, want %v", s.args, want)
+	}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "../x"}); err == nil {
+		t.Fatal("want invalid profile error")
+	}
+	if len(s.args) != 2 {
+		t.Fatalf("streamer called for a hostile name: %v", s.args)
+	}
+}
+
+func TestColimaLauncherDeleteRechecksStatusInsideTheSlot(t *testing.T) {
+	for _, c := range []struct {
+		status string
+		runs   bool
+	}{
+		{"stopped", true}, {"Broken", true},
+		{"running", false}, {"Running", false}, {"starting", false}, {"unknown", false}, {"", false},
+	} {
+		s := &argsStreamer{}
+		l := ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return c.status, nil }}
+		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev", DeleteData: true})
+		if err != nil {
+			t.Fatalf("%q: %v", c.status, err)
+		}
+		if (len(s.args) == 1) != c.runs {
+			t.Fatalf("%q: streamer calls %v, want run=%v", c.status, s.args, c.runs)
+		}
+		if !c.runs {
+			var lines []string
+			for l := range p.Lines() {
+				lines = append(lines, l)
+			}
+			exit, werr := p.Wait()
+			if len(lines) != 1 || !strings.Contains(lines[0], "not stopped") || exit.ExitCode != 1 || werr != nil {
+				t.Fatalf("%q: lines %v exit %+v %v", c.status, lines, exit, werr)
+			}
+			p.Cancel()
+		}
+	}
+}
+
+func TestColimaLauncherDeleteStatusErrorStartsNothing(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return "", errors.New("boom") }}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"}); err == nil {
+		t.Fatal("want error")
+	}
+	if len(s.args) != 0 {
+		t.Fatalf("streamer called: %v", s.args)
+	}
+}
+
+// A refused delete ends as a failed job through the manager, and its slot is
+// released, so the user can stop the profile and try again.
+func TestRefusedDeleteIsAFailedJob(t *testing.T) {
+	s := &argsStreamer{}
+	m := New(Options{Launcher: ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return "running", nil }}})
+	sum, err := m.Submit(Request{Action: ActionDelete, Profile: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		got, _ := m.Get(sum.ID)
+		if got.State == StateFailed {
+			if len(got.Output) != 1 || len(s.args) != 0 || !got.NotRun {
+				t.Fatalf("output %v args %v", got.Output, s.args)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("state %s", got.State)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, running := m.Busy("dev"); running {
+		t.Fatal("slot still held")
 	}
 }

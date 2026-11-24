@@ -23,6 +23,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
+	"github.com/dlusignan/colima-ui/internal/config"
 	"github.com/dlusignan/colima-ui/internal/events"
 	"github.com/dlusignan/colima-ui/internal/httpapi"
 	"github.com/dlusignan/colima-ui/internal/store"
@@ -30,8 +31,10 @@ import (
 
 // fakeRunner stands in for the colima adapter. It never runs a binary.
 type fakeRunner struct {
-	mu      sync.Mutex
-	list    string
+	mu   sync.Mutex
+	list string
+	// lists, when set, are served one per `colima list` call; the last repeats.
+	lists   []string
 	listErr error
 	streams [][]string
 	procs   []*fakeProc
@@ -55,6 +58,12 @@ func (f *fakeRunner) Run(_ context.Context, args []string) (colima.Result, error
 	f.mu.Lock()
 	f.runs++
 	list, listErr := f.list, f.listErr
+	if len(f.lists) > 0 {
+		list = f.lists[0]
+		if len(f.lists) > 1 {
+			f.lists = f.lists[1:]
+		}
+	}
 	f.mu.Unlock()
 	if listErr != nil {
 		return colima.Result{}, listErr
@@ -1198,5 +1207,119 @@ func TestAppCreateAfterShutdownIs503(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != 503 || r.streamCount() != 0 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestProfileStatusForDelete(t *testing.T) {
+	runner := &fakeRunner{list: listJSON}
+	g := profileGate{runner: runner, files: fakeFiles{names: []string{"fileonly"}}}
+	for name, want := range map[string]string{"default": "running", "dev": "stopped", "odd": "broken", "fileonly": "stopped", "DEV": "stopped", "DEFAULT": "running"} {
+		got, err := g.ProfileStatusForDelete(t.Context(), name)
+		if err != nil || got != want {
+			t.Fatalf("%s: %q %v, want %q", name, got, err, want)
+		}
+	}
+	// "default" gets no special case: unlisted and without a file it is unknown.
+	empty := profileGate{runner: &fakeRunner{list: ""}, files: fakeFiles{}}
+	if _, err := empty.ProfileStatusForDelete(t.Context(), "default"); !errors.Is(err, httpapi.ErrProfileNotFound) {
+		t.Fatalf("default on an empty machine: %v", err)
+	}
+	// A folder without a listing or a YAML file counts, in any letter case.
+	folders := profileGate{runner: &fakeRunner{list: ""}, folders: fakeFolders{names: []string{"GHOST"}}}
+	if got, err := folders.ProfileStatusForDelete(t.Context(), "ghost"); err != nil || got != "stopped" {
+		t.Fatalf("folder only: %q %v", got, err)
+	}
+	for _, name := range []string{"ghost", "dev2"} {
+		if _, err := g.ProfileStatusForDelete(t.Context(), name); !errors.Is(err, httpapi.ErrProfileNotFound) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "../x", "-x", "a b", "a;b"} {
+		bad := profileGate{runner: &fakeRunner{listErr: errors.New("must not run")}}
+		if _, err := bad.ProfileStatusForDelete(t.Context(), name); !errors.Is(err, httpapi.ErrInvalidProfileName) {
+			t.Fatalf("%q: %v", name, err)
+		}
+	}
+	if _, err := (profileGate{runner: &fakeRunner{listErr: errors.New("boom")}}).ProfileStatusForDelete(t.Context(), "dev"); err == nil || errors.Is(err, httpapi.ErrProfileNotFound) {
+		t.Fatalf("list failure: %v", err)
+	}
+}
+
+const (
+	devStoppedJSON = `{"name":"dev","status":"Stopped","runtime":"docker"}` + "\n"
+	devRunningJSON = `{"name":"dev","status":"Running","runtime":"docker"}` + "\n"
+)
+
+func postJSON(t *testing.T, h http.Handler, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", target, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// Production wiring must re-read the status inside the slot: here the VM is
+// stopped for the route's read and running for the launcher's, so no delete
+// argument vector may reach the runner and the job must fail.
+func TestDeleteRechecksStatusInsideTheSlotInProduction(t *testing.T) {
+	r := &fakeRunner{lists: []string{devStoppedJSON, devRunningJSON}}
+	a := testApp(t, r)
+	sub, err := a.hub.Subscribe("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	rec := postJSON(t, a.handler(), "/api/profiles/dev/delete", `{"confirm":"dev","deleteData":true}`)
+	if rec.Code != 202 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	waitFinished(t, sub)
+	if n := r.streamCount(); n != 0 {
+		t.Fatalf("colima was run %d times: %v", n, r.streams)
+	}
+}
+
+// And with a VM that stays stopped, the delete argument vector is streamed.
+func TestDeleteRunsWhenStillStopped(t *testing.T) {
+	r := &fakeRunner{list: devStoppedJSON, script: []string{"done"}}
+	a := testApp(t, r)
+	sub, err := a.hub.Subscribe("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sub.Close()
+	if rec := postJSON(t, a.handler(), "/api/profiles/dev/delete", `{"confirm":"dev"}`); rec.Code != 202 {
+		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
+	}
+	waitFinished(t, sub)
+	if got := r.streams; len(got) != 1 || strings.Join(got[0], " ") != "delete -p dev --force" {
+		t.Fatalf("streams %v", got)
+	}
+}
+
+func TestDeleteGateIgnoresStrayFilesAndSymlinks(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, "ssh_config"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(base, "realdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "realdir"), filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	svc, err := config.New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := profileGate{runner: &fakeRunner{}, files: svc, folders: svc}
+	for name, want := range map[string]bool{"ssh_config": false, "SSH_CONFIG": false, "link": false, "realdir": true, "REALDIR": true, "ghost": false} {
+		got, err := g.ProfileStatusForDelete(t.Context(), name)
+		if want && (err != nil || got != "stopped") {
+			t.Errorf("%s: %q %v", name, got, err)
+		}
+		if !want && !errors.Is(err, httpapi.ErrProfileNotFound) {
+			t.Errorf("%s: %q %v", name, got, err)
+		}
 	}
 }

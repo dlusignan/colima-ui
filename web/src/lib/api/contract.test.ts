@@ -132,6 +132,8 @@ const mapped: Record<string, Mapping> = {
   '3.29#0': { shape: s.pruneImagesRequestShape },
   '3.29#1': { shape: s.imagePruneResultShape },
   '3.29#2': { shape: s.imagePruneResultShape },
+  '3.32#0': { shape: s.deleteProfileRequestShape, partial: true },
+  '3.32#1': { shape: s.jobRefShape },
   '3.30#0': { shape: s.pullImageRequestShape },
   '3.30#1': { shape: s.pullImageAcceptedShape },
   '3.13#0': { shape: s.volumeListShape },
