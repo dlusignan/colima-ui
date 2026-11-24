@@ -12,9 +12,10 @@ import (
 	"github.com/dlusignan/colima-ui/internal/operations"
 )
 
-// createBodyLimit bounds the POST /api/profiles body. The route takes a handful
-// of short values, so it is far below the default limit.
-const createBodyLimit int64 = 64 << 10
+// createBodyLimit bounds the POST /api/profiles body. The largest legitimate
+// body is 16 mount paths of 4096 bytes plus 32 variables of 128 + 4096 bytes
+// (about 200 KiB before JSON escaping), so the cap is 256 KiB.
+const createBodyLimit int64 = 256 << 10
 
 // ErrExistsCheckFailed wraps a failure of the existence check (`colima list` or
 // the folder scan), so it is logged apart from a launch failure. It answers 502.
@@ -57,6 +58,178 @@ type NewProfile struct {
 	NetworkMode      string
 	NetworkInterface string
 	CPUType          string
+
+	// Mounts and Env, both optional. Env is in the order the keys appeared.
+	Mounts MountList
+	Env    EnvVars
+}
+
+// Decoding stops building elements one past the caps in internal/config (16
+// mounts, 32 variables): that is enough for the validator to answer "too many"
+// on the field alone, and the rest of the array or object is only checked for
+// JSON syntax, so a body at the size cap cannot cost tens of megabytes of
+// garbage.
+const (
+	decodeMountsMax = 17
+	decodeEnvMax    = 33
+)
+
+// MountList is the decoded mounts array, cut off at decodeMountsMax elements.
+type MountList []Mount
+
+// UnmarshalJSON implements json.Unmarshaler. null counts as absent.
+func (l *MountList) UnmarshalJSON(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	t, err := dec.Token()
+	if err != nil {
+		return errors.New("bad array")
+	}
+	if t == nil {
+		*l = nil
+		return nil
+	}
+	if t != json.Delim('[') {
+		return errors.New("not an array")
+	}
+	var out MountList
+	for dec.More() {
+		if len(out) >= decodeMountsMax {
+			if err := skipValue(dec); err != nil {
+				return err
+			}
+			continue
+		}
+		var m Mount
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil || m.UnmarshalJSON(raw) != nil {
+			return errors.New("bad mount")
+		}
+		out = append(out, m)
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim(']') {
+		return errors.New("not an array")
+	}
+	*l = out
+	return nil
+}
+
+// skipValue consumes one JSON value without building it.
+func skipValue(dec *json.Decoder) error {
+	depth := 0
+	for {
+		t, err := dec.Token()
+		if err != nil {
+			return errors.New("bad value")
+		}
+		if d, ok := t.(json.Delim); ok {
+			if d == '{' || d == '[' {
+				depth++
+			} else {
+				depth--
+			}
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
+}
+
+// Mount is one mounts entry. It decodes only exactly cased "path" (string) and
+// "writable" (boolean) keys, each once; null, an unknown key or a repeated key
+// is a malformed body.
+type Mount struct {
+	Path     string
+	Writable bool
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (m *Mount) UnmarshalJSON(b []byte) error {
+	var out Mount
+	err := decodeFlatObject(b, func(key string, raw json.RawMessage) error {
+		switch key {
+		case "path":
+			return unmarshalNonNull(raw, &out.Path)
+		case "writable":
+			return unmarshalNonNull(raw, &out.Writable)
+		}
+		return errors.New("unknown key")
+	})
+	if err != nil {
+		return err
+	}
+	*m = out
+	return nil
+}
+
+// EnvVar is one environment variable.
+type EnvVar struct{ Key, Value string }
+
+// EnvVars is the decoded env object: a JSON object of string values. A key may
+// appear once (keys that differ only in case are different variables), a value
+// must be a string, and null counts as absent. The order is the order in the
+// body.
+type EnvVars []EnvVar
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (e *EnvVars) UnmarshalJSON(b []byte) error {
+	if string(bytes.TrimSpace(b)) == "null" {
+		*e = nil
+		return nil
+	}
+	var out EnvVars
+	err := decodeFlatObject(b, func(key string, raw json.RawMessage) error {
+		if len(out) >= decodeEnvMax {
+			return nil // counted as "too many" by the validator
+		}
+		var v string
+		if err := unmarshalNonNull(raw, &v); err != nil {
+			return err
+		}
+		out = append(out, EnvVar{Key: key, Value: v})
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	*e = out
+	return nil
+}
+
+func unmarshalNonNull(raw json.RawMessage, dst any) error {
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return errors.New("null value")
+	}
+	return json.Unmarshal(raw, dst)
+}
+
+// decodeFlatObject walks one JSON object, rejecting a repeated key, and calls
+// each for every member. It exists because encoding/json takes the last of a
+// repeated key and matches struct keys without regard to case.
+func decodeFlatObject(b []byte, each func(key string, raw json.RawMessage) error) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return errors.New("not an object")
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		key, ok := t.(string)
+		if err != nil || !ok || seen[key] {
+			return errors.New("bad key")
+		}
+		seen[key] = true
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return errors.New("bad value")
+		}
+		if err := each(key, raw); err != nil {
+			return errors.New("bad value")
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return errors.New("not an object")
+	}
+	return nil
 }
 
 // DNSHost is one dnsHosts entry. It decodes only exactly cased "name" and
@@ -140,6 +313,7 @@ func (c *createRoutes) post(w http.ResponseWriter, r *http.Request) error {
 		"vzRosetta": &p.VZRosetta, "portForwarder": &p.PortForwarder, "mountInotify": &p.MountInotify,
 		"networkAddress": &p.NetworkAddress, "networkMode": &p.NetworkMode,
 		"networkInterface": &p.NetworkInterface, "cpuType": &p.CPUType,
+		"mounts": &p.Mounts, "env": &p.Env,
 	})
 	if err != nil {
 		return err

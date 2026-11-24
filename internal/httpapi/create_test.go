@@ -68,7 +68,7 @@ func TestCreateNameOnlyLeavesDefaults(t *testing.T) {
 }
 
 func TestCreateBadBodyNeverReachesCreator(t *testing.T) {
-	big := `{"name":"dev","kubernetesVersion":"` + strings.Repeat("a", 65<<10) + `"}`
+	big := `{"name":"dev","kubernetesVersion":"` + strings.Repeat("a", int(createBodyLimit)+1) + `"}`
 	bodies := map[string]string{
 		"unknown key":       `{"name":"dev","bogus":"x"}`,
 		"cpu not cpus":      `{"name":"dev","cpu":2}`,
@@ -95,7 +95,7 @@ func TestCreateBadBodyNeverReachesCreator(t *testing.T) {
 		"malformed":         `{"name":`,
 		"empty body":        ``,
 		"not json":          `name=dev`,
-		"over 64 KiB":       big,
+		"over the body cap": big,
 	}
 	for name, body := range bodies {
 		t.Run(name, func(t *testing.T) {
@@ -114,7 +114,7 @@ func TestCreateBadBodyNeverReachesCreator(t *testing.T) {
 	}
 }
 
-func TestCreateBodyLimitIsExactlyThe64KiBCap(t *testing.T) {
+func TestCreateBodyLimitIsExactlyTheCap(t *testing.T) {
 	pad := func(n int) string { // a body of exactly n bytes
 		prefix, suffix := `{"name":"dev","kubernetesVersion":"`, `"}`
 		return prefix + strings.Repeat("a", n-len(prefix)-len(suffix)) + suffix

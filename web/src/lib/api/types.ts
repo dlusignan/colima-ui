@@ -58,6 +58,16 @@ export interface CreateProfileRequest {
   networkMode?: 'shared' | 'bridged'
   networkInterface?: string
   cpuType?: string
+  /** Host folders shared into the VM. At most 16; every folder is visible to every container. */
+  mounts?: Mount[]
+  /** Environment variables for the VM. At most 32; values are never echoed back by the server. */
+  env?: Record<string, string>
+}
+
+/** One host folder to mount (`mounts` in POST /api/profiles). Read-only unless `writable` is true. */
+export interface Mount {
+  path: string
+  writable?: boolean
 }
 
 /** One custom DNS name for the VM's resolver (`dnsHosts` in POST /api/profiles). */

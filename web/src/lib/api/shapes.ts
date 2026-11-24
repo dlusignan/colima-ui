@@ -31,6 +31,7 @@ import type {
   JobOutputLine,
   JobRef,
   MetricEvent,
+  Mount,
   MetricPoint,
   Metrics,
   Profile,
@@ -86,6 +87,11 @@ export const dnsHostShape = {
   address: 'string',
 } as const satisfies Record<keyof DnsHost, Kind>
 
+export const mountShape = {
+  path: 'string',
+  writable: 'boolean',
+} as const satisfies Record<keyof Mount, Kind>
+
 export const createProfileRequestShape = {
   name: 'string',
   cpus: 'number',
@@ -109,6 +115,8 @@ export const createProfileRequestShape = {
   networkMode: 'string',
   networkInterface: 'string',
   cpuType: 'string',
+  mounts: { arrayOf: mountShape },
+  env: 'record',
 } as const satisfies Record<keyof CreateProfileRequest, Kind>
 
 export const profileCreatedShape = {

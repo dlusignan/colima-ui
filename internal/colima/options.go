@@ -135,6 +135,12 @@ type StartOptions struct {
 	NetworkMode      NetworkMode   // --network-mode
 	NetworkInterface string        // --network-interface, only with network mode bridged
 	CPUType          string        // --cpu-type
+
+	// Host folders and VM environment. Mounts become repeated --mount path or
+	// path:w, Env repeated --env KEY=value, in slice order. At most 16 and 32.
+	// Giving --mount may replace Colima's default home mount (see docs/api.md).
+	Mounts []Mount
+	Env    []EnvVar
 }
 
 func bad(field, reason string) error { return &InvalidOptionError{Field: field, Reason: reason} }
@@ -172,7 +178,10 @@ func (o StartOptions) Validate(lim Limits) error {
 	if v := o.KubernetesVersion; v != "" && (len(v) > maxK8sVersionLen || !k8sVersionRE.MatchString(v)) {
 		return bad("kubernetes-version", "unrecognised version format")
 	}
-	return o.validateAdvanced()
+	if err := o.validateAdvanced(); err != nil {
+		return err
+	}
+	return o.validateMountsEnv()
 }
 
 func (o StartOptions) validateAdvanced() error {
@@ -354,5 +363,5 @@ func (o StartOptions) args() []string {
 	if o.CPUType != "" {
 		a = append(a, "--cpu-type", o.CPUType)
 	}
-	return a
+	return append(a, o.mountEnvArgs()...)
 }
