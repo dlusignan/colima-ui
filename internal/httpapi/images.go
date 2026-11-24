@@ -144,7 +144,7 @@ func (i *imageRoutes) tag(w http.ResponseWriter, r *http.Request) error {
 				return writePlan{}, errInvalidRequest(fields)
 			}
 			repo, tag := in.Repository, in.Tag
-			return writePlan{Object: ref, Run: func(ctx context.Context, c dockerc.Client) error {
+			return writePlan{Object: ref, AuditDetail: ref + " -> " + repo + ":" + tag, Run: func(ctx context.Context, c dockerc.Client) error {
 				return c.TagImage(ctx, ref, repo, tag)
 			}}, nil
 		},

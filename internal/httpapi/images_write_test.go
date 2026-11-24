@@ -57,7 +57,7 @@ func TestImageTagSuccess(t *testing.T) {
 		t.Fatalf("calls = %+v", c)
 	}
 	rows := e.audit.Rows()
-	if len(rows) != 1 || rows[0].Action != "docker.image.tag" || rows[0].Outcome != "success" || *rows[0].Detail != "0123456789ab" {
+	if len(rows) != 1 || rows[0].Action != "docker.image.tag" || rows[0].Outcome != "success" || *rows[0].Detail != "0123456789ab -> registry.example.com:5000/team/app:v2" {
 		t.Fatalf("rows = %+v", rows)
 	}
 	e = newImgEnv()
@@ -432,5 +432,55 @@ func TestImageRoutesNeedToken(t *testing.T) {
 	}
 	if len(e.fake.Calls()) != 0 {
 		t.Fatal("docker reached without a token")
+	}
+}
+
+// A removal that stopped part-way answers with the error and says what was
+// already removed (validated strings only).
+func TestImageRemovePartialFailureReportsWhatWasRemoved(t *testing.T) {
+	secret := "/home/user/.colima/synthetic"
+	for name, tc := range map[string]struct {
+		err    error
+		status int
+		code   string
+	}{
+		"conflict": {dockerc.ErrConflict, 409, "conflict"},
+		"daemon":   {fmt.Errorf("%w %s", dockerc.ErrDaemon, secret), 502, "docker_unavailable"},
+	} {
+		e := newImgEnv()
+		e.fake.FailWith("RemoveImage", &dockerc.PartialRemovalError{
+			Removal: dockerc.ImageRemoval{Untagged: []string{"app:v1"}, Deleted: nil}, Err: tc.err,
+		})
+		rec := e.do(t, "DELETE", imgBase+"/0123456789ab", "")
+		wantErr(t, rec, tc.status, tc.code)
+		d := decodeMap(t, rec)["error"].(map[string]any)["details"].(map[string]any)
+		if u, _ := d["untagged"].([]any); len(u) != 1 || u[0] != "app:v1" {
+			t.Fatalf("%s: details = %v", name, d)
+		}
+		if dl, ok := d["deleted"].([]any); !ok || len(dl) != 0 {
+			t.Fatalf("%s: details = %v", name, d)
+		}
+		if strings.Contains(rec.Body.String(), secret) {
+			t.Fatalf("%s: leaked", name)
+		}
+		if rows := e.audit.Rows(); len(rows) != 1 || rows[0].Outcome != "failed" {
+			t.Fatalf("%s: rows = %+v", name, rows)
+		}
+	}
+	// A plain error carries no such keys.
+	e := newImgEnv()
+	e.fake.FailWith("RemoveImage", dockerc.ErrConflict)
+	d := decodeMap(t, e.do(t, "DELETE", imgBase+"/a", ""))["error"].(map[string]any)["details"].(map[string]any)
+	if _, has := d["untagged"]; has {
+		t.Fatalf("details = %v", d)
+	}
+}
+
+func TestImageTagRefusesTheSha256Repository(t *testing.T) {
+	e := newImgEnv()
+	rec := e.do(t, "POST", imgBase+"/a/tag", `{"repository":"sha256","tag":"`+strings.Repeat("a", 64)+`"}`)
+	wantErr(t, rec, 422, "invalid_request")
+	if !e.untouched() {
+		t.Fatal("reached Docker")
 	}
 }

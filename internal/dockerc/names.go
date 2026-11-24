@@ -110,7 +110,8 @@ func ValidImageTag(tag string) bool { return refTag.MatchString(tag) }
 // ValidImageRepository reports whether repo can be the repository part of a
 // new tag: a ValidImageRef with no tag and no digest, optionally qualified
 // with a registry host ("localhost:5000/app", "ghcr.io/owner/app"). The host is
-// kept as given and Docker applies its own defaulting. A single 64 character
+// kept as given and Docker applies its own defaulting. The name "sha256" is
+// refused, and so is a single 64 character
 // hex component is refused (Docker refuses it too: it would read like an
 // image ID).
 func ValidImageRepository(repo string) bool {
@@ -120,7 +121,8 @@ func ValidImageRepository(repo string) bool {
 	if strings.LastIndexByte(repo, ':') > strings.LastIndexByte(repo, '/') {
 		return false // a tag, or a port with no path
 	}
-	return !(len(repo) == 64 && isHexID(repo))
+	// "sha256" alone would make sha256:<hex> read like an image ID.
+	return repo != "sha256" && !(len(repo) == 64 && isHexID(repo))
 }
 
 // ValidImageTarget reports whether repository and tag together make a valid

@@ -118,6 +118,15 @@ func (d *imgDocker) only(method string) []string {
 	return out
 }
 
+func containsReq(reqs []string, want string) bool {
+	for _, r := range reqs {
+		if r == want {
+			return true
+		}
+	}
+	return false
+}
+
 func newImgClient(t *testing.T, d *imgDocker) *httpClient {
 	t.Helper()
 	return newHTTPClient(startFakeDocker(t, d.handler()))
@@ -163,6 +172,16 @@ func TestInspectImageCarriesNoSecretsAndIsBounded(t *testing.T) {
 			continue
 		}
 		t.Fatalf("inspect sent a write: %s", r)
+	}
+	// Containers of every state are listed (all=1), or stopped ones would be missed.
+	if !containsReq(d.requests(), "GET /v1.41/containers/json?all=1") {
+		t.Fatalf("requests = %v", d.requests())
+	}
+	// Architecture and OS go through plainToken.
+	d.inspect["app:v1"] = strings.Replace(strings.Replace(imgInspectSecrets, `"amd64"`, `"amd64\n<b>"`, 1), `"linux"`, `"`+strings.Repeat("l", 40)+`"`, 1)
+	got, err = c.InspectImage(context.Background(), "app:v1")
+	if err != nil || got.Architecture != "" || got.OS != "" {
+		t.Fatalf("%v arch=%q os=%q", err, got.Architecture, got.OS)
 	}
 }
 
@@ -286,6 +305,10 @@ func TestRemoveImageInUseSendsNoDelete(t *testing.T) {
 		if dels := d.only("DELETE"); len(dels) != 0 {
 			t.Fatalf("%s: deletes = %v", name, dels)
 		}
+		// Every state is asked for: the container list must carry all=1.
+		if !containsReq(d.requests(), "GET /v1.41/containers/json?all=1") {
+			t.Fatalf("%s: requests = %v", name, d.requests())
+		}
 	}
 	// A container of another image does not block.
 	d := &imgDocker{inspect: inspectAll("app:v1"), list: `[{"Id":"c1","Names":["/a"],"ImageID":"sha256:` + imgOther + `"}]`}
@@ -295,7 +318,12 @@ func TestRemoveImageInUseSendsNoDelete(t *testing.T) {
 }
 
 func TestRemoveImageByIDRemovesEveryReferenceOneByOne(t *testing.T) {
-	d := &imgDocker{inspect: map[string]string{imgShort: strings.Replace(imgInspectSecrets, `,"bad TAG:x"`, ``, 1)}, delBody: map[string]string{
+	dg := "app@sha256:" + "aa" + strings.Repeat("bb", 31)
+	d := &imgDocker{inspect: map[string]string{
+		imgShort: strings.Replace(imgInspectSecrets, `,"bad TAG:x"`, ``, 1),
+		// After the tags the image is read again by its full ID; here only a digest is left.
+		imgFull: `{"Id":"sha256:` + imgFull + `","RepoTags":[],"RepoDigests":["` + dg + `"]}`,
+	}, delBody: map[string]string{
 		"app:v1": `[{"Untagged":"app:v1"}]`, "app:v2": `[{"Untagged":"app:v2"}]`,
 		"app@sha256:" + "aa" + strings.Repeat("bb", 31): `[{"Untagged":"app@sha256:x"},{"Deleted":"sha256:` + imgFull + `"}]`,
 	}}
@@ -306,7 +334,7 @@ func TestRemoveImageByIDRemovesEveryReferenceOneByOne(t *testing.T) {
 	dels := d.only("DELETE")
 	want := []string{
 		"DELETE /v1.41/images/app:v1?noprune=1", "DELETE /v1.41/images/app:v2?noprune=1",
-		"DELETE /v1.41/images/app@sha256:" + "aa" + strings.Repeat("bb", 31) + "?noprune=1",
+		"DELETE /v1.41/images/" + dg + "?noprune=1",
 	}
 	if fmt.Sprint(dels) != fmt.Sprint(want) {
 		t.Fatalf("deletes = %v", dels)
@@ -474,6 +502,10 @@ func TestTagImageFailsClosedAndMapsAnswers(t *testing.T) {
 	if err := newImgClient(t, d).TagImage(ctx, "app:v1", "app", "v2"); !errors.Is(err, ErrInvalidRequest) || len(d.only("POST")) != 0 {
 		t.Fatalf("400: %v", err)
 	}
+	d = &imgDocker{inspect: inspectAll("app:v1"), status: map[string]int{"app:v2": 409}}
+	if err := newImgClient(t, d).TagImage(ctx, "app:v1", "app", "v2"); !errors.Is(err, ErrConflict) || len(d.only("POST")) != 0 {
+		t.Fatalf("409: %v", err)
+	}
 	d = &imgDocker{inspect: map[string]string{"app:v1": imgInspectSecrets, "app:v2": `junk`}}
 	if err := newImgClient(t, d).TagImage(ctx, "app:v1", "app", "v2"); !errors.Is(err, ErrDockerUnavailable) || len(d.only("POST")) != 0 {
 		t.Fatalf("junk: %v", err)
@@ -539,6 +571,9 @@ func TestImageNamesAndTagGrammar(t *testing.T) {
 		if !ValidImageRepository(r) {
 			t.Errorf("repo %q refused", r)
 		}
+	}
+	if ValidImageRepository("sha256") || !ValidImageRepository("sha256x") {
+		t.Error("sha256 repository rule")
 	}
 	for _, tg := range []string{"v1", "latest", "_x", "1.2.3-rc.1", strings.Repeat("a", 128)} {
 		if !ValidImageTag(tg) {

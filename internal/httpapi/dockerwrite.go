@@ -125,6 +125,9 @@ type writePlan struct {
 	// answer, so it must already have passed ValidObjectName or
 	// ValidImageRef. Empty when the call has no single object.
 	Object string
+	// AuditDetail, when set, replaces Object as the detail of the action log row
+	// (the answer still echoes Object). Built only from validated parts.
+	AuditDetail string
 	// Run makes the Docker call, normally one typed dockerc.Client method.
 	Run func(ctx context.Context, c dockerc.Client) error
 	// Status is the success status (default 200 with Result, 204 without).
@@ -191,7 +194,8 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 	}
 	// A plan that breaks its own contract is a bug, not user input: stop
 	// before Docker, and keep the value out of the log row and the answer.
-	if plan.Run == nil || (plan.Object != "" && !dockerc.ValidObjectName(plan.Object) && !dockerc.ValidImageRef(plan.Object)) {
+	if plan.Run == nil || (plan.Object != "" && !dockerc.ValidObjectName(plan.Object) && !dockerc.ValidImageRef(plan.Object)) ||
+		len(plan.AuditDetail) > 1024 || strings.ContainsFunc(plan.AuditDetail, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
 		slog.Error("docker write plan is invalid", "action", spec.Action)
 		return errInternal()
 	}
@@ -207,7 +211,11 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 		err = plan.Run(rctx, client)
 	}
 	if !spec.ReadOnly {
-		d.record(r.Context(), name, spec.Action, plan.Object, err)
+		detail := plan.Object
+		if plan.AuditDetail != "" {
+			detail = plan.AuditDetail
+		}
+		d.record(r.Context(), name, spec.Action, detail, err)
 	}
 	if err != nil {
 		return dockerWriteError(spec.Action, plan.Object, err)
@@ -254,6 +262,21 @@ func (d *dockerWriter) record(parent context.Context, profile, action, object st
 // where it is unexpected and never returned; the answer carries only fixed
 // text and the validated object name.
 func dockerWriteError(action, object string, err error) error {
+	out := dockerWriteErrorBase(action, object, err)
+	// An image removal that stopped part-way says what it had already done:
+	// validated references and short ids only.
+	var pr *dockerc.PartialRemovalError
+	if ae, ok := out.(*APIError); ok && errors.As(err, &pr) {
+		if ae.Details == nil {
+			ae.Details = map[string]any{}
+		}
+		ae.Details["untagged"] = nonNilStrings(pr.Removal.Untagged)
+		ae.Details["deleted"] = nonNilStrings(pr.Removal.Deleted)
+	}
+	return out
+}
+
+func dockerWriteErrorBase(action, object string, err error) error {
 	details := map[string]any{}
 	if object != "" {
 		details["name"] = object

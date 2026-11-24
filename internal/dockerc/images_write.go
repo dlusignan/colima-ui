@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -302,6 +303,14 @@ func (c *httpClient) TagImage(ctx context.Context, ref, repository, tag string) 
 	if !ValidImageRef(ref) || !ValidImageTarget(repository, tag) {
 		return ErrBadName
 	}
+	// One tag at a time per engine through this backend: the check and the
+	// tag request below are not atomic at Docker, so two requests for the same
+	// target could each pass the check and the second would move the tag.
+	unlock, err := tagLocks.lock(ctx, c.lockKey)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	raw, _, err := c.imageLookup(ctx, ref)
 	if err != nil {
 		return err
@@ -310,7 +319,8 @@ func (c *httpClient) TagImage(ctx context.Context, ref, repository, tag string) 
 	if err != nil {
 		return err
 	}
-	resp, callCtx, cancel, err := c.do(ctx, c.listTimeout, tp+"/json", nil, map[int]error{400: ErrInvalidRequest})
+	// Only a 404 means the target is free; a 409 or anything else fails closed.
+	resp, callCtx, cancel, err := c.do(ctx, c.listTimeout, tp+"/json", nil, map[int]error{400: ErrInvalidRequest, 409: ErrConflict})
 	switch {
 	case err == nil:
 		defer cancel()
@@ -339,6 +349,30 @@ func (c *httpClient) TagImage(ctx context.Context, ref, repository, tag string) 
 		return err
 	}
 	return c.post(ctx, writeTimeout, t, url.Values{"repo": {repository}, "tag": {tag}}, nil, nil, 201)
+}
+
+// keyedLocks is a set of mutexes by key whose lock gives up with the context.
+type keyedLocks struct {
+	mu sync.Mutex
+	m  map[string]chan struct{}
+}
+
+var tagLocks = &keyedLocks{m: map[string]chan struct{}{}}
+
+func (k *keyedLocks) lock(ctx context.Context, key string) (func(), error) {
+	k.mu.Lock()
+	ch, ok := k.m[key]
+	if !ok {
+		ch = make(chan struct{}, 1)
+		k.m[key] = ch
+	}
+	k.mu.Unlock()
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
 
 // removalFrom folds Docker's list of deleted items into an ImageRemoval part.
@@ -390,25 +424,65 @@ func (a *removalAcc) result() ImageRemoval {
 	return out
 }
 
-// RemoveImage removes an image or one tag of it and never forces. noprune is
-// sent (Docker keeps untagged parent images), so only what the caller named is
-// touched; dangling parents can be removed by a prune.
+// PartialRemovalError is returned by RemoveImage when at least one delete
+// request succeeded and a later one failed. Removal carries what Docker had
+// already untagged or deleted, so the caller can say so. It unwraps to the
+// failure of the later request.
+type PartialRemovalError struct {
+	Removal ImageRemoval
+	Err     error
+}
+
+func (e *PartialRemovalError) Error() string {
+	return fmt.Sprintf("dockerc: image removal stopped part-way: %v", e.Err)
+}
+func (e *PartialRemovalError) Unwrap() error { return e.Err }
+
+// imageRefs splits an image's references into valid tags and valid digests.
+// ok is false when a reference exists that cannot be named safely.
+func imageRefs(raw rawImage) (tags, digests []string, ok bool) {
+	for _, group := range []struct {
+		in  []string
+		out *[]string
+	}{{raw.RepoTags, &tags}, {raw.RepoDigests, &digests}} {
+		for _, e := range group.in {
+			if e == "<none>:<none>" || e == "<none>@<none>" {
+				continue
+			}
+			if !ValidImageRef(e) {
+				return nil, nil, false
+			}
+			*group.out = append(*group.out, e)
+		}
+	}
+	return tags, digests, true
+}
+
+// RemoveImage removes an image or one reference of it and never forces.
+// noprune is sent (Docker keeps untagged parent images), so only what the
+// caller named is touched; dangling parents can be removed by a prune.
 //
 //  1. ref is looked up strictly (imageLookup). An image used by any container,
 //     running, stopped or created, gives *InUseError without a DELETE; if a
 //     container appears later, Docker's own 409 gives ErrConflict.
 //  2. A reference (a tag or digest) untags exactly the reference Docker
 //     reported. Docker deletes the image when that was its last reference.
-//  3. An ID removes the image and all its references: Docker refuses a
+//  3. An ID removes the image and all its references. Docker refuses a
 //     removal by ID when the image has more than one reference unless forced,
-//     so each reference (tags, then digests) is removed on its own, never
-//     forced; the last one deletes the image. A failure part-way leaves the
-//     earlier references removed. An image with no reference is removed by
-//     its full ID. An image with a reference this client cannot name safely
-//     gives ErrConflict before anything is removed.
+//     so the references are removed on their own, never forced. Tags go first;
+//     Docker drops a repository's digest references itself when that
+//     repository's last tag goes, and may delete the image with the last
+//     reference, so a later request can find its target already gone. The
+//     client therefore skips targets Docker has already listed as untagged,
+//     re-reads the image by its full ID after the tags (not found means it is
+//     gone), removes what is left from that fresh answer (or the image by its
+//     full ID once no reference remains), and counts a not-found answer after
+//     the first success as "already removed". An image with a reference this
+//     client cannot name safely gives ErrConflict before anything is removed.
 //
 // A 200 means Docker acted; an unreadable answer then is a success with
-// Complete false.
+// Complete false. If a request fails after an earlier one succeeded, the error
+// is a *PartialRemovalError carrying what was already removed.
 func (c *httpClient) RemoveImage(ctx context.Context, ref string) (ImageRemoval, error) {
 	if !ValidImageRef(ref) {
 		return ImageRemoval{}, ErrBadName
@@ -424,50 +498,98 @@ func (c *httpClient) RemoveImage(ctx context.Context, ref string) (ImageRemoval,
 	if len(users) > 0 {
 		return ImageRemoval{}, &InUseError{Containers: len(users)}
 	}
-	var targets []target
+	acc := &removalAcc{}
+	untagged := map[string]bool{}
+	acted := false
+	fail := func(err error) (ImageRemoval, error) {
+		if acted {
+			return ImageRemoval{}, &PartialRemovalError{Removal: acc.result(), Err: err}
+		}
+		return ImageRemoval{}, err
+	}
+	del := func(t target) error {
+		var items []rawDeleteItem
+		err := c.delete(ctx, writeTimeout, t, url.Values{"noprune": {"1"}}, &items, 200)
+		switch {
+		case errors.Is(err, errUnusableAnswer):
+			acc.unknown, acted = true, true
+		case errors.Is(err, ErrObjectNotFound) && acted:
+			// Docker already removed this one together with an earlier target.
+		case err != nil:
+			return err
+		default:
+			acted = true
+			acc.add(items)
+			for _, it := range items {
+				if it.Untagged != "" {
+					untagged[it.Untagged] = true
+				}
+			}
+		}
+		return nil
+	}
 	if matched != "" {
 		t, err := refTarget("/images", matched)
 		if err != nil {
 			return ImageRemoval{}, err
 		}
-		targets = append(targets, t)
-	} else {
-		var refs []string
-		for _, e := range append(append([]string{}, raw.RepoTags...), raw.RepoDigests...) {
-			if e == "<none>:<none>" || e == "<none>@<none>" {
-				continue
-			}
-			if !ValidImageRef(e) {
-				return ImageRemoval{}, ErrConflict
-			}
-			refs = append(refs, e)
+		if err := del(t); err != nil {
+			return ImageRemoval{}, err
 		}
-		if len(refs) == 0 {
-			t, err := objectTarget("/images", raw.ID)
-			if err != nil {
-				return ImageRemoval{}, err
-			}
-			targets = append(targets, t)
+		return acc.result(), nil
+	}
+	tags, digests, ok := imageRefs(raw)
+	if !ok {
+		return ImageRemoval{}, ErrConflict
+	}
+	for _, e := range tags {
+		if untagged[e] {
+			continue
 		}
-		for _, e := range refs {
-			t, err := refTarget("/images", e)
-			if err != nil {
-				return ImageRemoval{}, err
-			}
-			targets = append(targets, t)
+		t, err := refTarget("/images", e)
+		if err != nil {
+			return ImageRemoval{}, err
+		}
+		if err := del(t); err != nil {
+			return fail(err)
 		}
 	}
-	acc := &removalAcc{}
-	for _, t := range targets {
-		var items []rawDeleteItem
-		err := c.delete(ctx, writeTimeout, t, url.Values{"noprune": {"1"}}, &items, 200)
-		switch {
-		case errors.Is(err, errUnusableAnswer):
-			acc.unknown = true
-		case err != nil:
+	if acted {
+		// Docker may have deleted the image with the last tag, or dropped
+		// digests with their repository's last tag: read what is left.
+		fresh, _, err := c.imageLookup(ctx, raw.ID)
+		if errors.Is(err, ErrObjectNotFound) {
+			return acc.result(), nil
+		}
+		if err != nil {
+			return fail(err)
+		}
+		if tags, digests, ok = imageRefs(fresh); !ok {
+			return fail(ErrConflict)
+		}
+	}
+	rest := []string{}
+	for _, e := range append(append([]string{}, tags...), digests...) {
+		if !untagged[e] {
+			rest = append(rest, e)
+		}
+	}
+	if len(tags)+len(digests) == 0 {
+		t, err := objectTarget("/images", raw.ID)
+		if err != nil {
 			return ImageRemoval{}, err
-		default:
-			acc.add(items)
+		}
+		if err := del(t); err != nil {
+			return fail(err)
+		}
+	}
+	for _, e := range rest {
+		t, err := refTarget("/images", e)
+		if err != nil {
+			return fail(err)
+		}
+		if err := del(t); err != nil {
+			return fail(err)
 		}
 	}
 	return acc.result(), nil

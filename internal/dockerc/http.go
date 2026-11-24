@@ -33,6 +33,8 @@ type httpClient struct {
 	statsTimeout     time.Duration
 	diskUsageTimeout time.Duration
 	logsTimeout      time.Duration
+	// lockKey identifies the engine (its socket) for tagLocks.
+	lockKey string
 }
 
 var _ Client = (*httpClient)(nil)
@@ -60,6 +62,7 @@ func newHTTPClient(socket string) *httpClient {
 		statsTimeout:     statsTimeout,
 		diskUsageTimeout: diskUsageTimeout,
 		logsTimeout:      logsTimeout,
+		lockKey:          socket,
 	}
 }
 
