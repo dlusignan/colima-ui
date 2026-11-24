@@ -39,6 +39,9 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 		if s.NotRun {
 			// Colima never started, so its exit status would be a lie.
 			detail = "not run: profile was not stopped"
+			if s.Action.IsKubernetes() {
+				detail = "not run: profile was not running or Kubernetes is not enabled"
+			}
 		} else if s.ExitCode != nil {
 			detail = fmt.Sprintf("colima exited with status %d", *s.ExitCode)
 		} else {
@@ -50,6 +53,9 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 	default:
 		return e, false
 	}
+	if s.Action.IsKubernetes() {
+		detail = kubernetesDetail(s.Action, s.State, s.NotRun, detail)
+	}
 	if s.Action == operations.ActionDelete && s.DeleteData {
 		if detail != "" {
 			detail += "; "
@@ -60,6 +66,20 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 		e.Detail = &detail
 	}
 	return e, true
+}
+
+// kubernetesDetail names the verb in the row ("kubernetes reset: ...") and
+// warns that a cancelled or failed reset or delete (one that ran) may have left the cluster half done.
+func kubernetesDetail(a operations.Action, st operations.State, notRun bool, detail string) string {
+	verb := "kubernetes " + strings.TrimPrefix(string(a), "kubernetes-")
+	if detail != "" {
+		verb += ": " + detail
+	}
+	destructive := a == operations.ActionKubernetesReset || a == operations.ActionKubernetesDelete
+	if (st == operations.StateCancelled || st == operations.StateFailed) && destructive && !notRun {
+		verb += "; the cluster may be partly changed"
+	}
+	return verb
 }
 
 var configFieldOrder = []string{"cpu", "memory", "disk"}

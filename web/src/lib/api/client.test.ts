@@ -346,3 +346,26 @@ describe('request', () => {
     expect(getAuthStatus()).toBe('ok')
   })
 })
+
+describe('kubernetes endpoints', () => {
+  it('start and stop send no body; reset and delete send their own confirmation text', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(202, { jobId: 'j_1' })))
+    await api.kubernetesStart('dev')
+    await api.kubernetesStop('dev')
+    await api.kubernetesReset('dev')
+    await api.kubernetesDelete('dev')
+    const calls = fetchMock.mock.calls.map(([url, init]) => [url, init.method, init.body])
+    expect(calls).toEqual([
+      ['/api/profiles/dev/kubernetes/start', 'POST', undefined],
+      ['/api/profiles/dev/kubernetes/stop', 'POST', undefined],
+      ['/api/profiles/dev/kubernetes/reset', 'POST', JSON.stringify({ confirm: 'reset-kubernetes' })],
+      ['/api/profiles/dev/kubernetes/delete', 'POST', JSON.stringify({ confirm: 'delete-kubernetes' })],
+    ])
+  })
+
+  it('encodes the profile name in the path', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { enabled: true }))
+    await api.getKubernetes('a/b')
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/profiles/a%2Fb/kubernetes')
+  })
+})

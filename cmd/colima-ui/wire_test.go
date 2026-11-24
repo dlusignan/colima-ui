@@ -234,6 +234,15 @@ func testAppAt(t *testing.T, r *fakeRunner) (*app, string) {
 	if err := os.WriteFile(filepath.Join(home, "fileonly", "colima.yaml"), []byte("cpu: 2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// k8son has Kubernetes enabled in its configuration, k8soff has it disabled.
+	for name, yaml := range map[string]string{"k8son": "kubernetes:\n  enabled: true\n", "k8soff": "kubernetes:\n  enabled: false\n", "k8sbad": "kubernetes: [unclosed\n"} {
+		if err := os.MkdirAll(filepath.Join(home, name), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(home, name, "colima.yaml"), []byte(yaml), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cfg := t.TempDir()
 	env := map[string]string{"COLIMA_HOME": home}
 	a, err := newAppWith(r, func(k string) string { return env[k] },
@@ -514,7 +523,10 @@ func nextJobEvent(t *testing.T, ch <-chan sseEvent) sseEvent {
 	}
 }
 
-type actionRow struct{ Action, Outcome string }
+type actionRow struct {
+	Action, Outcome string
+	Detail          *string
+}
 
 func (ts *testServer) actions(t *testing.T, profile string) []actionRow {
 	t.Helper()

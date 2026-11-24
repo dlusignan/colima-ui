@@ -7,7 +7,13 @@ import { useToast } from '@/lib/toast/useToast'
 import { logPath } from '@/views/log/logPath'
 
 /** Names that read better than the API's action keys. */
-const ACTION_LABEL: Record<string, string> = { 'image-pull': 'image pull' }
+const ACTION_LABEL: Record<string, string> = {
+  'image-pull': 'image pull',
+  'kubernetes-start': 'kubernetes start',
+  'kubernetes-stop': 'kubernetes stop',
+  'kubernetes-reset': 'kubernetes reset',
+  'kubernetes-delete': 'kubernetes delete',
+}
 
 /** `default: stop succeeded`, `default: start failed (exit 1)`. The action is unknown when the lookup fails. */
 function outcomeTitle(event: JobFinishedEvent, action: string | undefined): string {

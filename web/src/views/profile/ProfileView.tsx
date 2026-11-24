@@ -6,11 +6,13 @@ import { StatusDot } from '@/components/StatusDot'
 import { WarningBanners } from '@/components/WarningBanners'
 import { Button } from '@/components/ui/button'
 import { ApiError } from '@/lib/api/client'
+import { useKubernetes } from '@/lib/api/useKubernetes'
 import { useProfiles } from '@/lib/api/useProfiles'
 import type { JobAction } from '@/lib/api/types'
 import { queryKeys } from '@/lib/api/keys'
 import { describeActionError } from '@/lib/jobs/describeActionError'
 import { useDeleteProfile } from '@/lib/jobs/useDeleteProfile'
+import { useKubernetesAction } from '@/lib/jobs/useKubernetesAction'
 import { useJobTracker } from '@/lib/jobs/useJobTracker'
 import { useProfileActionRunner } from '@/lib/jobs/useProfileActionRunner'
 import { useToast } from '@/lib/toast/useToast'
@@ -18,6 +20,7 @@ import { logPath } from '@/views/log/logPath'
 import { ActionsPanel } from './ActionsPanel'
 import { ContainersPanel } from './ContainersPanel'
 import { DeleteProfileDialog } from './DeleteProfileDialog'
+import { KubernetesActions } from './KubernetesActions'
 import { ProfileSummary } from './ProfileSummary'
 import { SshConfigDialog } from './SshConfigDialog'
 
@@ -26,6 +29,10 @@ const PROGRESS: Record<JobAction, string> = {
   stop: 'stopping',
   restart: 'restarting',
   delete: 'deleting',
+  'kubernetes-start': 'starting Kubernetes',
+  'kubernetes-stop': 'stopping Kubernetes',
+  'kubernetes-reset': 'resetting Kubernetes',
+  'kubernetes-delete': 'deleting Kubernetes',
   update: 'updating',
   create: 'creating',
   'image-pull': 'pulling',
@@ -59,6 +66,19 @@ export function ProfileView() {
   useEffect(() => {
     if (deleted) navigate('/', { replace: true })
   }, [deleted, navigate])
+
+  const k8sRunner = useKubernetesAction(name, tracker, (message) =>
+    toast.error({ title: message, key: `action-error:${message}` }),
+  )
+  const profileIsRunning = list?.find((p) => p.name === name)?.status === 'running'
+  const kubernetes = useKubernetes(name, profileIsRunning)
+
+  // Read the flag again when a Kubernetes job reaches a final state.
+  const k8sJobFinished =
+    deleteJob?.action.startsWith('kubernetes-') === true && deleteJob.state !== 'running' ? deleteJob.jobId : null
+  useEffect(() => {
+    if (k8sJobFinished) void queryClient.invalidateQueries({ queryKey: queryKeys.kubernetes(name) })
+  }, [k8sJobFinished, name, queryClient])
 
   const requestDelete = (deleteData: boolean) => {
     if (deletion.isPending) return
@@ -108,7 +128,7 @@ export function ProfileView() {
 
   const job = tracker.jobs.get(name)
   const running = job?.state === 'running'
-  const busy = runner.pending || deletion.isPending || running || profile.activeJobId != null
+  const busy = runner.pending || k8sRunner.pending || deletion.isPending || running || profile.activeJobId != null
   const unavailable = (profile.warnings ?? []).some((w) => w.code === 'colima_unavailable')
   const logJobId = job?.jobId ?? profile.activeJobId
 
@@ -128,6 +148,14 @@ export function ProfileView() {
           <StatusDot status={profile.status} label={running && job ? PROGRESS[job.action] : undefined} />
           <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={runner.run} showUpdate />
           <SshConfigDialog profile={name} />
+          {kubernetes.data?.enabled === true && (
+            <KubernetesActions
+              profile={name}
+              running={profile.status === 'running'}
+              busy={busy || unavailable}
+              onAction={k8sRunner.run}
+            />
+          )}
           {(job || profile.activeJobId) && (
             <Link className="text-sm underline underline-offset-4" to={logPath(name, logJobId)}>
               Open log

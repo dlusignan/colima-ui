@@ -117,7 +117,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 35 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 40 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -156,6 +156,11 @@ There are 35 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
 | `GET` | `/api/profiles/{name}/ssh-config` | SSH settings of a profile's VM (3.31) |
+| `GET` | `/api/profiles/{name}/kubernetes` | Whether Kubernetes is enabled in a running profile's configuration (3.33) |
+| `POST` | `/api/profiles/{name}/kubernetes/start` | Start the Kubernetes cluster as a job (3.34) |
+| `POST` | `/api/profiles/{name}/kubernetes/stop` | Stop the Kubernetes cluster as a job (3.34) |
+| `POST` | `/api/profiles/{name}/kubernetes/reset` | Reset the cluster, destroying its workloads and state; needs a confirmation text (3.34) |
+| `POST` | `/api/profiles/{name}/kubernetes/delete` | Delete the cluster, destroying its workloads and state; needs a confirmation text (3.34) |
 | `GET` | `/api/events` | Server Sent Events stream |
 
 ### 3.1 `GET /healthz`
@@ -286,7 +291,7 @@ Response `200`:
 
 Fields:
 
-- `action`: `start`, `stop`, `restart`, `update`, `delete` (3.32), `create` (3.17) or `image-pull` (3.30). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
+- `action`: `start`, `stop`, `restart`, `update`, `delete` (3.32), `create` (3.17), `image-pull` (3.30), or `kubernetes-start`, `kubernetes-stop`, `kubernetes-reset` or `kubernetes-delete` (3.34). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
 - `state`: `running`, `succeeded`, `failed` or `cancelled`.
 - `finishedAt` and `exitCode` are `null` while the job is running. `exitCode` is also `null` for a cancelled job whose process was killed.
 - `output` holds the captured lines in order. Each line has a per-job `seq` that starts at 1 and rises by 1. Lines keep their ANSI escape sequences.
@@ -480,7 +485,7 @@ Response `200`, newest first:
 }
 ```
 
-- `action` is a string such as `start`, `stop`, `restart`, `delete`, `create`, `config_change` or `docker.image.pull`. Clients must tolerate new values.
+- `action` is a string such as `start`, `stop`, `restart`, `delete`, `create`, `config_change`, `docker.image.pull` or `kubernetes-reset`. Clients must tolerate new values. The `detail` of a Kubernetes row names the verb (`kubernetes reset`, `kubernetes stop: colima exited with status 1`); a reset or delete that was cancelled or failed after colima ran adds `; the cluster may be partly changed`, and one that never ran says `not run: profile was not running or Kubernetes is not enabled`.
 - `outcome` is `success`, `failed` or `cancelled`.
 - `detail` is a short string or `null`.
 - Entries carry no job id. Finished job output is not kept across a restart (see the C4 decisions table), so there is nothing to reopen.
@@ -1275,9 +1280,69 @@ Things to know:
 3. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
 
 
+### 3.33 `GET /api/profiles/{name}/kubernetes`
+
+Token: yes. Request body: none. Tells the UI whether to show the Kubernetes actions. The answer is the profile's configured `kubernetes.enabled`, read through the config service. It is not whether the cluster is running: `colima status` reports `kubernetes: false` for a stopped cluster, which would make Start unreachable, so the status output is never used for this. A profile without a configuration file or without the key is not enabled. Because the flag is the configured one, hand-editing the YAML while the VM runs can make it drift from the real cluster: `true` while the VM booted without Kubernetes means Start may run against a VM that has none, and `false` while a cluster is running means the UI cannot stop or delete that cluster. It is a read: no busy check, no action log row.
+
+Response `200`:
+
+```json
+{ "enabled": true }
+```
+
+Errors:
+
+1. `404` `profile_not_found`.
+2. `409` `invalid_state`: the profile is not running (`details.status` is exactly what the profile list reports). The configuration is not read.
+3. `500` `internal_error`: the configuration could not be read.
+4. `502` `colima_failed`: Colima could not be queried for the profile's state.
+
+### 3.34 `POST /api/profiles/{name}/kubernetes/{start|stop|reset|delete}`
+
+Token: yes. Each route runs one fixed command, `colima kubernetes <verb> -p <profile>`, as a job with `action` `kubernetes-start`, `kubernetes-stop`, `kubernetes-reset` or `kubernetes-delete`. The job holds the profile slot, streams output, can be cancelled with `POST /api/jobs/{id}/cancel` and writes an action log row whose `detail` names the verb. The call answers `202` once the job exists: like a delete (3.32) it waits for the in-slot checks below.
+
+Request body:
+
+1. `start` and `stop`: none (an empty body or `{}`); anything else is `400`.
+2. `reset` needs the flat body `{ "confirm": "reset-kubernetes" }` and `delete` needs `{ "confirm": "delete-kubernetes" }`. The key is exactly `confirm` (case-sensitive, at most once) and the text is compared exactly. The body is at most 1 KiB. An empty body, `{}`, a missing key, `{"confirm": null}` and a different text are `422 invalid_request` with `details.fields.confirm`. Any other key, a repeated key, a wrong type, trailing data and a non-object body (a bare `null` included) are `400 bad_request`. These checks run before anything else, so a refused body never starts a process.
+
+```json
+{ "confirm": "reset-kubernetes" }
+```
+
+Response `202`:
+
+```json
+{ "jobId": "j_8f3a2c" }
+```
+
+Rules, in the order they are checked:
+
+1. The profile name is validated first; an unknown or malformed name is `404` and never reaches a process.
+2. A job already running on the profile is `409 profile_busy` (`details.jobId`), checked before the state reads.
+3. The profile must be exactly `running`, otherwise `409 invalid_state` with `details.status`. A stopped, broken or unknown profile is refused.
+4. Kubernetes must be enabled in the profile's configuration (3.33), otherwise `409 invalid_state` with `details.reason` `kubernetes_not_enabled` and `details.status` `running`. The cluster itself may be stopped: Start exists for that case. These routes never enable Kubernetes.
+5. The job repeats both checks once it holds the profile slot. If either now fails, colima is not run and the job ends as `failed` with one closing line; its action log row says `not run: ...`. The checks fail closed: a status or configuration read that fails, or a backend wired without them, means colima is not run.
+
+Things to know:
+
+1. While the in-slot checks run (at most 15 seconds), `GET /api/profiles` and a `409 profile_busy` answer can already show the job id, but `GET /api/jobs/{id}` answers `404 job_not_found` for it until the job exists. Clients should retry a `404` for an id they just received; the web app does.
+2. `reset` and `delete` destroy the cluster's workloads and state. A reset or delete that is cancelled, interrupted by a backend shutdown or fails after colima started may leave the cluster half done; the action log row says so, and the way forward is to run the action again.
+3. A configuration read that fails inside the slot surfaces as `502 colima_failed` with no job and no action log row (the same holds for a failed status read).
+
+Errors:
+
+1. `404` `profile_not_found`.
+2. `400` `bad_request`: the body is not valid for the route.
+3. `422` `invalid_request` with `details.fields.confirm`: the confirmation text is missing or wrong (`reset` and `delete`).
+4. `409` `profile_busy`, or `409` `invalid_state` (`details.status`, plus `details.reason` `kubernetes_not_enabled` when the cause is Kubernetes being off).
+5. `500` `internal_error`: the configuration could not be read.
+6. `502` `colima_failed`: Colima could not be queried or launched.
+7. `503` `shutting_down`: the backend is stopping and accepts no new jobs.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands (the Kubernetes routes of 3.34 run four fixed verbs, and none of them enables or configures Kubernetes), container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

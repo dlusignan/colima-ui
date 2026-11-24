@@ -15,6 +15,7 @@ export const queryKeys = {
   containerLogs: (name: string, id: string, tail: number) =>
     ['profiles', name, 'container-logs', id, tail] as const,
   sshConfig: (name: string) => ['profiles', name, 'ssh-config'] as const,
+  kubernetes: (name: string) => ['profiles', name, 'kubernetes'] as const,
   engine: (name: string) => ['profiles', name, 'engine'] as const,
   images: (name: string) => ['profiles', name, 'images'] as const,
   image: (name: string, image: string) => ['profiles', name, 'images', image] as const,
