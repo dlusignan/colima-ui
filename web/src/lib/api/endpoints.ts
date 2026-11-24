@@ -15,6 +15,7 @@ import type {
   ContainerList,
   ContainerLogs,
   EngineInfo,
+  SshConfig,
   ImageList,
   Job,
   JobRef,
@@ -100,6 +101,8 @@ export const api = {
       withQuery(`/api/profiles/${enc(name)}/containers/${enc(id)}/logs`, { tail }),
       { signal },
     ),
+  getSshConfig: (name: string, signal?: AbortSignal) =>
+    request<SshConfig>('GET', `/api/profiles/${enc(name)}/ssh-config`, { signal }),
   getEngine: (name: string, signal?: AbortSignal) =>
     request<EngineInfo>('GET', `/api/profiles/${enc(name)}/engine`, { signal }),
   getImages: (name: string, signal?: AbortSignal) =>

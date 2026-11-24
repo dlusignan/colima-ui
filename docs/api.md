@@ -117,7 +117,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 33 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 34 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -128,7 +128,7 @@ There are 33 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `POST` | `/api/profiles/{name}/start` | Start a profile |
 | `POST` | `/api/profiles/{name}/stop` | Stop a profile |
 | `POST` | `/api/profiles/{name}/restart` | Restart a profile |
-| `POST` | `/api/profiles/{name}/delete` | Delete a stopped profile as a job; needs the profile name as confirmation (3.31) |
+| `POST` | `/api/profiles/{name}/delete` | Delete a stopped profile as a job; needs the profile name as confirmation (3.32) |
 | `GET` | `/api/jobs/{id}` | Job status and captured output |
 | `POST` | `/api/jobs/{id}/cancel` | Cancel a running job |
 | `GET` | `/api/profiles/{name}/config` | Read configuration |
@@ -154,6 +154,7 @@ There are 33 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
+| `GET` | `/api/profiles/{name}/ssh-config` | SSH settings of a profile's VM (3.31) |
 | `GET` | `/api/events` | Server Sent Events stream |
 
 ### 3.1 `GET /healthz`
@@ -281,7 +282,7 @@ Response `200`:
 
 Fields:
 
-- `action`: `start`, `stop`, `restart`, `delete` (3.31), `create` (3.17) or `image-pull` (3.30). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
+- `action`: `start`, `stop`, `restart`, `delete` (3.32), `create` (3.17) or `image-pull` (3.30). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
 - `state`: `running`, `succeeded`, `failed` or `cancelled`.
 - `finishedAt` and `exitCode` are `null` while the job is running. `exitCode` is also `null` for a cancelled job whose process was killed.
 - `output` holds the captured lines in order. Each line has a per-job `seq` that starts at 1 and rises by 1. Lines keep their ANSI escape sequences.
@@ -754,7 +755,7 @@ Errors:
 6. `503` `shutting_down`: the backend is stopping and accepts no new jobs.
 7. `500` `internal_error`: unexpected failure.
 
-A failed creation can leave a half-created profile behind (a folder, a YAML file, a partial VM). It then shows up in the profile list as stopped. The user can remove it with the delete route (3.31). Until Colima has written the profile's folder, `GET /api/profiles/{name}/actions` answers `404` for the new name, even though the job and its action row exist.
+A failed creation can leave a half-created profile behind (a folder, a YAML file, a partial VM). It then shows up in the profile list as stopped. The user can remove it with the delete route (3.32). Until Colima has written the profile's folder, `GET /api/profiles/{name}/actions` answers `404` for the new name, even though the job and its action row exist.
 
 ### 3.18 `POST /api/profiles/{name}/volumes`
 
@@ -1203,7 +1204,37 @@ Errors (before the job exists): the shared ones of 1.3, plus:
 - `409` `conflict`: the profile already runs 2 pulls (`details.limit` is `2`), or the same reference is already being pulled on it (`details.name` is the reference).
 - `503` `shutting_down`: the backend is stopping and accepts no new jobs.
 
-### 3.31 `POST /api/profiles/{name}/delete`
+### 3.31 `GET /api/profiles/{name}/ssh-config`
+
+Token: yes. Request body: none. Shows the SSH settings `colima ssh-config -p <profile>` prints, for IDE remote access or `scp`. It is a read: no busy check, no action log row, and the UI fetches it once when its dialog opens and never polls.
+
+Response `200`:
+
+```json
+{
+  "raw": "Host colima-synthetic\n  HostName 127.0.0.1\n  Port 60022\n  User synthetic-user\n  IdentityFile \"/home/user/.colima/_lima/_config/user\"\n",
+  "entries": [
+    { "key": "Host", "value": "colima-synthetic" },
+    { "key": "HostName", "value": "127.0.0.1" },
+    { "key": "Port", "value": "60022" },
+    { "key": "User", "value": "synthetic-user" },
+    { "key": "IdentityFile", "value": "/home/user/.colima/_lima/_config/user" }
+  ]
+}
+```
+
+1. `raw` is Colima's text unchanged. It contains the path of the identity file, because showing it is the purpose of the route. It holds no key material, only the path.
+2. `entries` lists every key and value line in the order Colima printed it, `Host` included. Comments and blank lines are skipped, `Key=value` and `Key value` forms are both read, and one pair of double quotes around a value is removed. A key may repeat (for example two `IdentityFile` lines). Clients must tolerate keys they do not know.
+3. The profile name is checked first: an unknown or malformed name is `404` and never reaches a process.
+4. A profile that is not running is not rejected up front. Colima answers whatever it answers; if it refuses, the route returns `409` `invalid_state` with `details.status`.
+
+Errors:
+
+1. `404` `profile_not_found`.
+2. `409` `invalid_state`: Colima refused to print a config and the profile is not running (`details.status`).
+3. `502` `colima_failed`: Colima could not be run, failed on a running profile, or printed text that is not an SSH config. The output is logged on the server only.
+
+### 3.32 `POST /api/profiles/{name}/delete`
 
 Token: yes. Deletes the profile's VM with `colima delete -p <name> --force` as a job (action `delete`), plus `--data` when asked. `--force` is always passed so the process never waits on a prompt the UI cannot answer; the confirmation lives in this request instead. **This cannot be undone.** The call returns at once; follow the job like a start (3.4, 3.5, 3.6, section 5). The job holds the profile's slot, can be cancelled, writes an action log row (`delete`) and its output streams like a stop. When it succeeds the profile leaves the list and the sampler stops for it; its recorded history stays in the database.
 
@@ -1235,7 +1266,7 @@ Order of checks: body shape, profile lookup, confirmation, busy, running, then t
 
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.31). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

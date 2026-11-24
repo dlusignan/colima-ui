@@ -24,6 +24,8 @@ import type {
   EngineContainers,
   EngineDiskUsage,
   EngineInfo,
+  SshConfig,
+  SshConfigEntry,
   ImageList,
   NetworkList,
   VolumeList,
@@ -411,6 +413,16 @@ export const engineInfoShape = {
   images: 'number',
   diskUsage: { shape: engineDiskUsageShape },
 } as const satisfies Record<keyof EngineInfo, Kind>
+
+export const sshConfigEntryShape = {
+  key: 'string',
+  value: 'string',
+} as const satisfies Record<keyof SshConfigEntry, Kind>
+
+export const sshConfigShape = {
+  raw: 'string',
+  entries: { arrayOf: sshConfigEntryShape },
+} as const satisfies Record<keyof SshConfig, Kind>
 
 export const containerLogsShape = {
   lines: 'string[]',

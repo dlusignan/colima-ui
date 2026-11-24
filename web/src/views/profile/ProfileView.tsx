@@ -19,6 +19,7 @@ import { ActionsPanel } from './ActionsPanel'
 import { ContainersPanel } from './ContainersPanel'
 import { DeleteProfileDialog } from './DeleteProfileDialog'
 import { ProfileSummary } from './ProfileSummary'
+import { SshConfigDialog } from './SshConfigDialog'
 
 const PROGRESS: Record<JobAction, string> = {
   start: 'starting',
@@ -123,6 +124,7 @@ export function ProfileView() {
         <div className="flex flex-wrap items-center gap-4">
           <StatusDot status={profile.status} label={running && job ? PROGRESS[job.action] : undefined} />
           <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={runner.run} />
+          <SshConfigDialog profile={name} />
           {(job || profile.activeJobId) && (
             <Link className="text-sm underline underline-offset-4" to={logPath(name, logJobId)}>
               Open log
