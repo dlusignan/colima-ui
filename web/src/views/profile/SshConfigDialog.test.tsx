@@ -63,7 +63,7 @@ describe('SshConfigDialog', () => {
 
   it('says to start a stopped profile and offers no retry', async () => {
     const { get, user } = setup()
-    get.mockRejectedValue(new ApiError(409, 'profile_not_running', 'x', { status: 'stopped' }))
+    get.mockRejectedValue(new ApiError(409, 'invalid_state', 'x', { status: 'stopped' }))
     await open(user)
     expect(await screen.findByText('Start the profile to see its SSH config.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
