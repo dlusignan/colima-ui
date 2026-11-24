@@ -179,6 +179,15 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 			// status, so a stopped VM is never mistaken for a running one.
 			VMStatus:          gate.ProfileStatusForDelete,
 			KubernetesEnabled: kubernetesConfigured(svc),
+			// A delete of a running profile counts its Docker objects again
+			// inside the slot. a.containers is built in the #23 block below, so
+			// it is read lazily; a nil provider fails closed.
+			DockerContents: func(ctx context.Context, profile string) (dockerc.Contents, bool, error) {
+				if a.containers == nil {
+					return dockerc.Contents{}, false, dockerc.ErrDockerUnavailable
+				}
+				return dockerc.ProfileContents(ctx, a.containers, profile)
+			},
 		},
 		// Called in order from the job's pump, none of them blocks: the action
 		// log queues, the hub never blocks, and Refresh only signals. The
@@ -243,7 +252,9 @@ func (a *app) handler() http.Handler {
 	opts = append(opts, httpapi.WithProfiles(a.profiles))
 
 	// #17 jobs
-	opts = append(opts, httpapi.WithJobs(a.mgr, a.gate))
+	// The delete route counts a running profile's Docker objects through the
+	// same provider the Docker views use.
+	opts = append(opts, httpapi.WithJobs(a.mgr, a.gate, httpapi.WithDeleteContents(a.containers)))
 
 	// #97 create
 	opts = append(opts, httpapi.WithCreate(a.creator))
@@ -256,6 +267,9 @@ func (a *app) handler() http.Handler {
 
 	// #38 containers
 	opts = append(opts, httpapi.WithContainers(a.gate, a.containers))
+
+	// #157 contents (a read for the delete dialog: no busy check, no action log)
+	opts = append(opts, httpapi.WithContents(a.gate, a.containers))
 
 	// #79 images (#119 adds the write routes, which need the busy lookup and the action log)
 	opts = append(opts, httpapi.WithImages(a.gate, a.containers, a.mgr, a.store))
