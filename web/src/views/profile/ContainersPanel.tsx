@@ -1,5 +1,7 @@
 import { Link } from 'react-router-dom'
 import { ApiError } from '@/lib/api/client'
+import { ContainerActions } from './ContainerActions'
+import { useContainerActionRunner } from './useContainerActionRunner'
 import { ContainerLogsDialog } from './ContainerLogsDialog'
 import { useContainers } from '@/lib/api/useContainers'
 import { containerHealth, formatPorts } from '@/lib/containerStatus'
@@ -25,7 +27,23 @@ function errorText(error: unknown): string {
 }
 
 /** Containers of a running VM. Nothing is requested while the VM is not running. */
-export function ContainersPanel({ profile }: { profile: Profile }) {
+export function ContainersPanel({
+  profile,
+  busy = false,
+  unavailable = false,
+}: {
+  profile: Profile
+  /** A profile job runs or a request is in flight: container actions are disabled. */
+  busy?: boolean
+  /** Colima is unavailable: container actions are disabled. */
+  unavailable?: boolean
+}) {
+  const runner = useContainerActionRunner(profile.name)
+  const actionsOff = unavailable
+    ? 'Colima is unavailable.'
+    : busy
+      ? 'A profile job is running.'
+      : undefined
   const running = profile.status === 'running'
   const query = useContainers(profile.name, running)
   const list = query.data?.containers
@@ -56,7 +74,7 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
           <caption className="sr-only">Containers in {profile.name}</caption>
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              {['Name', 'Image', 'Status', 'Ports', 'Created', 'CPU', 'Memory', 'Logs'].map((c) => (
+              {['Name', 'Image', 'Status', 'Ports', 'Created', 'CPU', 'Memory', 'Logs', 'Actions'].map((c) => (
                 <th key={c} scope="col" className="px-3 py-2 font-medium">
                   {c}
                 </th>
@@ -96,6 +114,15 @@ export function ContainersPanel({ profile }: { profile: Profile }) {
                   <td className="px-3 py-2 font-mono">{formatBytes(c.memoryBytes)}</td>
                   <td className="px-3 py-2">
                     <ContainerLogsDialog profile={profile.name} container={c} />
+                  </td>
+                  <td className="px-3 py-2">
+                    <ContainerActions
+                      name={c.name}
+                      fullId={c.fullId}
+                      health={health}
+                      runner={runner}
+                      disabledReason={actionsOff}
+                    />
                   </td>
                 </tr>
               )

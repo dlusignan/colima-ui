@@ -4,6 +4,7 @@ import type {
   CachePruneAccepted,
   CachePruneRequest,
   ConfigUpdate,
+  ContainerActionResult,
   CreateProfileRequest,
   CreateNetworkRequest,
   CreateVolumeRequest,
@@ -135,6 +136,9 @@ export const api = {
     ),
   getContainers: (name: string, signal?: AbortSignal) =>
     request<ContainerList>('GET', `/api/profiles/${enc(name)}/containers`, { signal }),
+  /** `id` is the full 64 character `fullId`, never the short id (docs/api.md 3.36). No body. */
+  containerAction: (name: string, id: string, action: 'start' | 'stop' | 'restart') =>
+    request<ContainerActionResult>('POST', `/api/profiles/${enc(name)}/containers/${enc(id)}/${action}`),
   getContainerLogs: (name: string, id: string, tail?: number, signal?: AbortSignal) =>
     request<ContainerLogs>(
       'GET',

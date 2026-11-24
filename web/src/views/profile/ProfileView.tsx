@@ -172,7 +172,7 @@ export function ProfileView() {
           ))}
       </section>
       <ProfileSummary profile={profile} />
-      <ContainersPanel profile={profile} />
+      <ContainersPanel profile={profile} busy={busy} unavailable={unavailable} />
       <ActionsPanel profile={name} />
       <section aria-labelledby="danger-heading" className="flex flex-col gap-2">
         <h3 id="danger-heading" className="text-base font-semibold">

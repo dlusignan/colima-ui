@@ -197,6 +197,16 @@ describe('request', () => {
     expect(fetchMock.mock.calls[4][1].body).toBe('{"confirm":"delete-unused-images","all":true}')
   })
 
+  it('posts a container action to the full id with no body', async () => {
+    const full = 'a'.repeat(64)
+    fetchMock.mockResolvedValue(jsonResponse(200, { changed: true }))
+    await api.containerAction('dev', full, 'restart')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe(`/api/profiles/dev/containers/${full}/restart`)
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeUndefined()
+  })
+
   it('decodes the in-use conflict of an image removal', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(409, {

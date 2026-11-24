@@ -4,7 +4,7 @@ import { queryKeys } from '@/lib/api/keys'
 import { useToast } from '@/lib/toast/useToast'
 import { describeDockerError } from './describeDockerError'
 
-export type DockerSection = 'images' | 'volumes' | 'networks'
+export type DockerSection = 'images' | 'volumes' | 'networks' | 'containers'
 
 export interface DockerMutationOptions<TVars, TData> {
   /** Profile the call belongs to; scopes the invalidated queries and the error key. */
@@ -27,6 +27,10 @@ export interface DockerMutationOptions<TVars, TData> {
    * lists are refetched either way.
    */
   handleError?: (error: unknown, vars: TVars) => boolean
+  /** Runs once the call has finished, success or failure (release a double-submit guard). */
+  onSettled?: () => void
+  /** Replaces describeDockerError for the error toast text (an empty string shows no toast). */
+  describeError?: (error: unknown, fallback: string) => string
 }
 
 /**
@@ -55,16 +59,18 @@ export function useDockerMutation<TVars = void, TData = unknown>(
     onError: (error, vars) => {
       if (options.handleError?.(error, vars)) return
       const title = options.errorTitle(vars)
-      const description = describeDockerError(error, title)
+      const description = (options.describeError ?? describeDockerError)(error, title)
       if (description === '') return
       const code = error instanceof ApiError ? `${error.status}:${error.code}` : 'unknown'
       toast.error({ title, description, key: `docker:${profile}:${action}:${code}` })
     },
-    onSettled: () =>
-      Promise.all([
+    onSettled: () => {
+      options.onSettled?.()
+      return Promise.all([
         queryClient.invalidateQueries({ queryKey: queryKeys[section](profile) }),
         queryClient.invalidateQueries({ queryKey: queryKeys.engine(profile) }),
-      ]),
+      ])
+    },
   })
   return {
     run: (vars: TVars) => mutation.mutate(vars),
