@@ -26,9 +26,12 @@ const (
 // job ended). It can contain absolute paths: use it for logs, not for API
 // responses.
 type JobSummary struct {
-	ID           string
-	Profile      string
-	Action       Action
+	ID      string
+	Profile string
+	Action  Action
+	// Subject is what a task job works on (an image reference for a pull),
+	// validated by whoever submitted it. Empty for colima jobs.
+	Subject      string
 	State        State
 	StartedAt    time.Time
 	FinishedAt   *time.Time
@@ -43,7 +46,11 @@ type job struct {
 	id      string
 	profile string
 	action  Action
+	subject string
 	cancel  context.CancelFunc
+	// groupKey and dupKey are the task limits this job holds ("" for none).
+	groupKey string
+	dupKey   string
 
 	// cancelReq is set by Cancel and Shutdown before the context is cancelled.
 	cancelReq atomic.Bool
@@ -122,6 +129,7 @@ func (j *job) summary() JobSummary {
 		ID:           j.id,
 		Profile:      j.profile,
 		Action:       j.action,
+		Subject:      j.subject,
 		State:        j.state,
 		StartedAt:    j.startedAt,
 		Output:       j.ring.after(0),

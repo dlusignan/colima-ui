@@ -377,3 +377,5 @@ func (f *fakeDockerClient) RemoveImage(context.Context, string) (dockerc.ImageRe
 func (f *fakeDockerClient) PruneImages(context.Context, bool) (dockerc.ImagePruneResult, error) {
 	return dockerc.ImagePruneResult{}, nil
 }
+
+func (f *fakeDockerClient) PullImage(context.Context, string, func(string)) error { return nil }

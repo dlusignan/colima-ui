@@ -16,6 +16,9 @@ const (
 	// ActionCreate starts a profile that does not exist yet, with the options
 	// in Request.Options. The route that submits it checks existence.
 	ActionCreate Action = "create"
+	// ActionImagePull is a Docker image pull. It is a task job (SubmitTask):
+	// it never holds the profile slot and no Launcher sees it.
+	ActionImagePull Action = "image-pull"
 )
 
 // Request is a job request. Start, stop and restart take no other input: a

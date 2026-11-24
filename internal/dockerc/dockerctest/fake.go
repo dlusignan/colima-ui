@@ -70,6 +70,13 @@ type Fake struct {
 	ImageRemoval dockerc.ImageRemoval
 	ImagePrune   dockerc.ImagePruneResult
 
+	// PullLines are emitted by PullImage, in order, before it returns. PullFunc,
+	// when set, replaces that: it receives the context and the emit function, so
+	// a test can block until cancelled, fail, panic or emit hostile lines. Set
+	// both before use; they are not guarded.
+	PullLines []string
+	PullFunc  func(ctx context.Context, emit func(string)) error
+
 	mu    sync.Mutex
 	calls []Call
 	errs  map[string]error
@@ -255,6 +262,26 @@ func (f *Fake) RemoveImage(_ context.Context, ref string) (dockerc.ImageRemoval,
 
 func (f *Fake) PruneImages(_ context.Context, all bool) (dockerc.ImagePruneResult, error) {
 	return zeroOnErr(f.ImagePrune, f.record("PruneImages", all))
+}
+
+// PullImage validates like the real client (ValidPullRef: a reference with a
+// tag or a digest, else ErrBadName, before anything is emitted), records the
+// call, then runs PullFunc or emits PullLines.
+func (f *Fake) PullImage(ctx context.Context, ref string, emit func(string)) error {
+	err := f.record("PullImage", ref)
+	if !dockerc.ValidPullRef(ref) {
+		return dockerc.ErrBadName
+	}
+	if err != nil {
+		return err
+	}
+	if f.PullFunc != nil {
+		return f.PullFunc(ctx, emit)
+	}
+	for _, l := range f.PullLines {
+		emit(l)
+	}
+	return nil
 }
 
 // Provider implements dockerc.Provider. It records the profile of every For

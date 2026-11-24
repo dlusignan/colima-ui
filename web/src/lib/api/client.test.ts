@@ -147,6 +147,19 @@ describe('request', () => {
     expect(init.body).toBe('{"confirm":"delete-unused-networks"}')
   })
 
+  it('builds the image pull request', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(202, { jobId: 'j_1', action: 'image-pull', profile: 'dev', state: 'running' }),
+    )
+    const got = await api.pullImage('dev', 'ghcr.io/o/app:1.2')
+    expect(got.jobId).toBe('j_1')
+    expect(got.action).toBe('image-pull')
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/profiles/dev/images/pull')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{"reference":"ghcr.io/o/app:1.2"}')
+  })
+
   it('builds the image write requests', async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
     await expect(

@@ -46,6 +46,8 @@ import type {
   JobOutputEvent,
   JobOutputLine,
   JobRef,
+  PullImageAccepted,
+  PullImageRequest,
   MetricEvent,
   Mount,
   MetricPoint,
@@ -222,6 +224,17 @@ export const dockerImageShape = {
   createdAt: 'string',
   containers: 'number',
 } as const satisfies Record<keyof DockerImage, Kind>
+
+export const pullImageRequestShape = {
+  reference: 'string',
+} as const satisfies Record<keyof PullImageRequest, Kind>
+
+export const pullImageAcceptedShape = {
+  jobId: 'string',
+  action: 'string',
+  profile: 'string',
+  state: 'string',
+} as const satisfies Record<keyof PullImageAccepted, Kind>
 
 export const tagImageRequestShape = {
   repository: 'string',

@@ -18,6 +18,7 @@ import type {
   ImageList,
   Job,
   JobRef,
+  PullImageAccepted,
   Metrics,
   MetricsParams,
   NetworkList,
@@ -95,6 +96,17 @@ export const api = {
     request<EngineInfo>('GET', `/api/profiles/${enc(name)}/engine`, { signal }),
   getImages: (name: string, signal?: AbortSignal) =>
     request<ImageList>('GET', `/api/profiles/${enc(name)}/images`, { signal }),
+  /**
+   * Starts a pull as a job (202) and does not wait for it: follow `jobId` with
+   * getJob, cancelJob and the job events like a start or stop. The reference
+   * needs a tag or a digest (422 `details.fields.reference` otherwise) and only
+   * public registries work. 409 `conflict` when the profile already runs 2
+   * pulls or this reference is already being pulled.
+   */
+  pullImage: (name: string, reference: string) =>
+    request<PullImageAccepted>('POST', `/api/profiles/${enc(name)}/images/pull`, {
+      body: { reference },
+    }),
   /** Adds a tag. 204 on success; 409 when the tag is already on another image. */
   tagImage: (name: string, image: string, body: TagImageRequest) =>
     request<void>('POST', `/api/profiles/${enc(name)}/images/${enc(image)}/tag`, {

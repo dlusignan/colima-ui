@@ -504,3 +504,5 @@ func (d *fakeDocker) RemoveImage(context.Context, string) (dockerc.ImageRemoval,
 func (d *fakeDocker) PruneImages(context.Context, bool) (dockerc.ImagePruneResult, error) {
 	return dockerc.ImagePruneResult{}, nil
 }
+
+func (d *fakeDocker) PullImage(context.Context, string, func(string)) error { return nil }

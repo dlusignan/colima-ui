@@ -583,3 +583,5 @@ func (f *fakeClient) RemoveImage(context.Context, string) (ImageRemoval, error) 
 func (f *fakeClient) PruneImages(context.Context, bool) (ImagePruneResult, error) {
 	return ImagePruneResult{}, nil
 }
+
+func (f *fakeClient) PullImage(context.Context, string, func(string)) error { return nil }

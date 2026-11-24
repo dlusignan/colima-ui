@@ -46,9 +46,13 @@ type Manager struct {
 	baseCancel context.CancelFunc
 	wg         sync.WaitGroup
 
-	mu       sync.Mutex
-	closed   bool
-	slots    map[string]*slot
+	mu     sync.Mutex
+	closed bool
+	slots  map[string]*slot
+	// Task jobs (SubmitTask) hold no slot: tasks counts the running ones per
+	// limit group and taskKeys marks the running duplicate keys.
+	tasks    map[string]int
+	taskKeys map[string]struct{}
 	jobs     map[string]*job // launched jobs, running or retained
 	finished []string        // finished job IDs, oldest first
 }
@@ -83,6 +87,8 @@ func New(opts Options) *Manager {
 		base:       base,
 		baseCancel: cancel,
 		slots:      make(map[string]*slot),
+		tasks:      make(map[string]int),
+		taskKeys:   make(map[string]struct{}),
 		jobs:       make(map[string]*job),
 	}
 }
@@ -108,6 +114,17 @@ func (m *Manager) idInUseLocked(id string) bool {
 	return false
 }
 
+// allocIDLocked returns an unused job ID, or "" when the generator keeps
+// colliding. The manager mutex must be held.
+func (m *Manager) allocIDLocked() string {
+	for i := 0; i < 100; i++ {
+		if c := m.opts.NewID(); !m.idInUseLocked(c) {
+			return c
+		}
+	}
+	return ""
+}
+
 // Submit starts a job for the request's profile. It fails at once with
 // *BusyError if the profile's slot is taken, ErrClosed after Shutdown, or the
 // Launcher's error (no job is created then). The job runs under the manager's
@@ -127,13 +144,7 @@ func (m *Manager) Submit(r Request) (JobSummary, error) {
 		m.mu.Unlock()
 		return JobSummary{}, busy
 	}
-	id := ""
-	for i := 0; i < 100; i++ {
-		if c := m.opts.NewID(); !m.idInUseLocked(c) {
-			id = c
-			break
-		}
-	}
+	id := m.allocIDLocked()
 	if id == "" {
 		m.mu.Unlock()
 		return JobSummary{}, ErrIDExhausted
@@ -205,6 +216,7 @@ func (m *Manager) pump(j *job, proc colima.Process) {
 	if key := slotKey(j.profile); m.slots[key] != nil && m.slots[key].job == j {
 		delete(m.slots, key)
 	}
+	m.releaseTaskLocked(j)
 	m.finished = append(m.finished, j.id)
 	for len(m.finished) > m.opts.RetainFinished {
 		delete(m.jobs, m.finished[0])

@@ -170,6 +170,14 @@ type Client interface {
 	// PruneImages removes unused images: dangling only, or with all every
 	// unused image (PruneImagesIncludesTagged).
 	PruneImages(ctx context.Context, all bool) (ImagePruneResult, error)
+	// PullImage pulls ref (a validated reference that carries a tag or a
+	// digest, see ValidPullRef; anything else gives ErrBadName before any
+	// request) from a public registry, with no credentials. emit receives the
+	// compact progress lines: one per layer state change, never raw Docker
+	// output. It blocks until the pull ends. A failure the registry or Docker
+	// reported is a *PullError whose Message is safe to show; cancelling ctx
+	// stops the HTTP stream and returns an error wrapping ctx.Err().
+	PullImage(ctx context.Context, ref string, emit func(line string)) error
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,
