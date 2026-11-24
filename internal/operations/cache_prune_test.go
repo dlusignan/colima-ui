@@ -106,10 +106,13 @@ func TestCachePruneCancelAwaitsTheChildAndRecordsClosingLine(t *testing.T) {
 	m, _, _ := newTestManager(t, nil)
 	fs := &fakeStreamer{proc: newFakeProc()}
 	childGone := make(chan struct{})
+	var once sync.Once
 	fs.proc.onCancel = func(p *fakeProc) {
-		time.Sleep(30 * time.Millisecond) // the child takes a moment to die
-		p.kill()
-		close(childGone)
+		once.Do(func() {
+			time.Sleep(30 * time.Millisecond) // the child takes a moment to die
+			p.kill()
+			close(childGone)
+		})
 	}
 	s, _ := m.SubmitTask(pruneReq(CachePruneTask(fs, false), false))
 	got, err := m.Cancel(ctxTimeout(t, 3*time.Second), s.ID)

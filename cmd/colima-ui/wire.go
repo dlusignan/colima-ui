@@ -257,6 +257,13 @@ func (a *app) handler() http.Handler {
 	// slot, and the manager's observers write its action log row and events)
 	opts = append(opts, httpapi.WithImagePull(a.gate, a.containers, a.mgr, a.mgr))
 
+	// #142 cache prune (a task job on the manager that runs the colima adapter:
+	// it takes no profile slot, and the manager's observers write its action
+	// log row and events)
+	opts = append(opts, httpapi.WithCachePrune(a.mgr, func(includeLima bool) operations.TaskFunc {
+		return operations.CachePruneTask(a.runner, includeLima)
+	}))
+
 	// #80 volumes and networks (#117 and #118 add the write routes, which need
 	// the job manager's busy lookup and the action log)
 	opts = append(opts, httpapi.WithVolumes(a.gate, a.containers, a.mgr, a.store))

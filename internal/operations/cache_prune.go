@@ -39,7 +39,23 @@ func CachePruneTask(s colima.Streamer, includeLima bool) TaskFunc {
 			emit(pruneNotStartedMsg)
 			return fmt.Errorf("%w: colima prune could not start", ErrTaskNotRun)
 		}
-		defer p.Cancel()
+		// The adapter already ends the child when ctx ends; cancelling the
+		// handle as well keeps this task from depending on that.
+		stop := make(chan struct{})
+		watched := make(chan struct{})
+		go func() {
+			defer close(watched)
+			select {
+			case <-ctx.Done():
+				p.Cancel()
+			case <-stop:
+			}
+		}()
+		defer func() {
+			close(stop)
+			<-watched
+			p.Cancel()
+		}()
 		for line := range p.Lines() {
 			emit(line)
 		}
