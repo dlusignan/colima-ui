@@ -14,6 +14,16 @@ import { useDockerMutation } from './useDockerMutation'
 import { VolumeInspectDialog } from './VolumeInspectDialog'
 import { plural, pruneTitle } from './volumeText'
 
+/** Column label and the classes that hide it on narrow screens. */
+const COLUMNS = [
+  ['Name', ''],
+  ['Driver', 'hidden md:table-cell'],
+  ['Size', ''],
+  ['Created', 'hidden lg:table-cell'],
+  ['Used by', ''],
+  ['Actions', ''],
+] as const
+
 function removeReason(v: DockerVolume): string | undefined {
   if (v.containers === null) return 'Usage unknown'
   if (v.containers > 0) return `In use by ${plural(v.containers, 'container', 'containers')}`
@@ -98,8 +108,8 @@ export function VolumesSection({ profile }: { profile: Profile }) {
           <caption className="sr-only">Volumes in {profile.name}</caption>
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              {['Name', 'Driver', 'Size', 'Created', 'Used by', 'Actions'].map((c) => (
-                <th key={c} scope="col" className="px-3 py-2 font-medium">
+              {COLUMNS.map(([c, hide]) => (
+                <th key={c} scope="col" className={`px-3 py-2 font-medium ${hide}`}>
                   {c}
                 </th>
               ))}
@@ -110,14 +120,14 @@ export function VolumesSection({ profile }: { profile: Profile }) {
               const created = new Date(v.createdAt)
               return (
                 <tr key={v.name} className="border-b border-border last:border-0 align-top">
-                  <th scope="row" className="px-3 py-2 text-left font-mono font-medium break-all">
+                  <th scope="row" title={v.name} className="px-3 py-2 text-left font-mono font-medium break-all">
                     {v.name}
                   </th>
-                  <td className="px-3 py-2">{v.driver}</td>
+                  <td className="hidden px-3 py-2 md:table-cell">{v.driver}</td>
                   <td className="px-3 py-2 font-mono whitespace-nowrap">
                     {v.sizeBytes === null ? '–' : formatBytes(v.sizeBytes)}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  <td className="hidden px-3 py-2 lg:table-cell">
                     <span title={Number.isNaN(created.getTime()) ? undefined : created.toLocaleString()}>
                       {formatRelativeTime(v.createdAt)}
                     </span>

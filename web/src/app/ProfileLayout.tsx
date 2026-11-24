@@ -7,9 +7,9 @@ export function ProfileLayout({ tabs }: { tabs: AppRoute[] }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-baseline gap-3">
-        <h2 className="font-mono text-lg">{name}</h2>
+        <h2 className="font-mono text-lg break-words">{name}</h2>
       </div>
-      <nav aria-label="Profile" className="flex gap-4 border-b border-border">
+      <nav aria-label="Profile" className="flex flex-wrap gap-x-4 border-b border-border">
         {tabs.map((t) => (
           <NavLink
             key={t.id}

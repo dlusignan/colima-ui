@@ -23,6 +23,16 @@ import { useDockerMutation } from './useDockerMutation'
 import { usePullJobs } from './usePullJobs'
 import { plural } from './volumeText'
 
+/** Column label and the classes that hide it on narrow screens. */
+const COLUMNS = [
+  ['Tags', ''],
+  ['Image ID', 'hidden md:table-cell'],
+  ['Size', ''],
+  ['Created', 'hidden lg:table-cell'],
+  ['Used by', ''],
+  ['Actions', ''],
+] as const
+
 interface RemoveVars {
   /** The exact reference when one tag is removed, otherwise the 12-character id. */
   target: string
@@ -128,8 +138,8 @@ export function ImagesSection({ profile }: { profile: Profile }) {
           <caption className="sr-only">Images in {profile.name}</caption>
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              {['Tags', 'Image ID', 'Size', 'Created', 'Used by', 'Actions'].map((c) => (
-                <th key={c} scope="col" className="px-3 py-2 font-medium">
+              {COLUMNS.map(([c, hide]) => (
+                <th key={c} scope="col" className={`px-3 py-2 font-medium ${hide}`}>
                   {c}
                 </th>
               ))}
@@ -140,16 +150,16 @@ export function ImagesSection({ profile }: { profile: Profile }) {
               const created = new Date(img.createdAt)
               return (
                 <tr key={img.id} className="border-b border-border last:border-0 align-top">
-                  <th scope="row" className="px-3 py-2 text-left font-mono font-medium">
+                  <th scope="row" title={img.tags.join(', ') || undefined} className="px-3 py-2 text-left font-mono font-medium break-all">
                     {img.tags.length === 0 ? (
                       <div>&lt;none&gt;</div>
                     ) : (
                       img.tags.map((t) => <div key={t}>{t}</div>)
                     )}
                   </th>
-                  <td className="px-3 py-2 font-mono">{img.id.replace(/^sha256:/, '').slice(0, 12)}</td>
+                  <td className="hidden px-3 py-2 font-mono md:table-cell">{img.id.replace(/^sha256:/, '').slice(0, 12)}</td>
                   <td className="px-3 py-2 font-mono whitespace-nowrap">{formatBytes(img.sizeBytes)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  <td className="hidden px-3 py-2 lg:table-cell">
                     <span title={Number.isNaN(created.getTime()) ? undefined : created.toLocaleString()}>
                       {formatRelativeTime(img.createdAt)}
                     </span>

@@ -72,54 +72,56 @@ export function ContainerTable({
   const cpuSum = containers.reduce((n, c) => n + c.cpuPercent, 0)
   const memSum = containers.reduce((n, c) => n + c.memoryBytes, 0)
   return (
-    <table className="w-full text-left text-sm">
-      <caption className="sr-only">Usage per container</caption>
-      <thead className="text-xs text-muted-foreground">
-        <tr>
-          <th scope="col">Container</th>
-          <th scope="col">State</th>
-          <th scope="col">CPU (of one core)</th>
-          <th scope="col">Memory</th>
-        </tr>
-      </thead>
-      <tbody className="font-mono">
-        {sorted.map((c) => (
-          <tr key={c.id}>
-            <th scope="row" className="font-normal">
-              {c.name}
-            </th>
-            <td>{c.state}</td>
-            <td>
-              <span className="flex items-center gap-2">
-                <Bar value={c.cpuPercent} max={cpuLimit} />
-                {formatPercent(c.cpuPercent)}
-              </span>
-            </td>
-            <td>
-              <span className="flex items-center gap-2">
-                <Bar value={c.memoryBytes} max={memoryLimit} />
-                {formatBytes(c.memoryBytes)}
-              </span>
-            </td>
+    <div className="overflow-x-auto">
+      <table className="w-full text-left text-sm">
+        <caption className="sr-only">Usage per container</caption>
+        <thead className="text-xs text-muted-foreground">
+          <tr>
+            <th scope="col">Container</th>
+            <th scope="col">State</th>
+            <th scope="col">CPU (of one core)</th>
+            <th scope="col">Memory</th>
           </tr>
-        ))}
-      </tbody>
-      <tfoot className="font-mono">
-        <tr>
-          <th scope="row" colSpan={2}>
-            Containers total
-          </th>
-          <td>{formatPercent(cpuSum)}</td>
-          <td>{formatBytes(memSum)}</td>
-        </tr>
-        <tr className="text-muted-foreground">
-          <th scope="row" colSpan={2}>
-            Latest VM sample
-          </th>
-          <td>{vmLatest?.cpu == null ? 'no reading' : formatPercent(vmLatest.cpu)}</td>
-          <td>{vmLatest?.mem == null ? 'no reading' : formatBytes(vmLatest.mem)}</td>
-        </tr>
-      </tfoot>
-    </table>
+        </thead>
+        <tbody className="font-mono">
+          {sorted.map((c) => (
+            <tr key={c.id}>
+              <th scope="row" className="font-normal break-words">
+                {c.name}
+              </th>
+              <td>{c.state}</td>
+              <td>
+                <span className="flex items-center gap-2">
+                  <Bar value={c.cpuPercent} max={cpuLimit} />
+                  {formatPercent(c.cpuPercent)}
+                </span>
+              </td>
+              <td>
+                <span className="flex items-center gap-2">
+                  <Bar value={c.memoryBytes} max={memoryLimit} />
+                  {formatBytes(c.memoryBytes)}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot className="font-mono">
+          <tr>
+            <th scope="row" colSpan={2}>
+              Containers total
+            </th>
+            <td>{formatPercent(cpuSum)}</td>
+            <td>{formatBytes(memSum)}</td>
+          </tr>
+          <tr className="text-muted-foreground">
+            <th scope="row" colSpan={2}>
+              Latest VM sample
+            </th>
+            <td>{vmLatest?.cpu == null ? 'no reading' : formatPercent(vmLatest.cpu)}</td>
+            <td>{vmLatest?.mem == null ? 'no reading' : formatBytes(vmLatest.mem)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
   )
 }

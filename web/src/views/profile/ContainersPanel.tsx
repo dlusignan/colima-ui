@@ -16,6 +16,19 @@ const dotClass = {
   other: 'bg-muted-foreground',
 }
 
+/** Column label and the classes that hide it on narrow screens (Created first, CPU and Memory last). */
+const COLUMNS = [
+  ['Name', ''],
+  ['Image', ''],
+  ['Status', ''],
+  ['Ports', 'hidden md:table-cell'],
+  ['Created', 'hidden lg:table-cell'],
+  ['CPU', 'hidden sm:table-cell'],
+  ['Memory', 'hidden sm:table-cell'],
+  ['Logs', ''],
+  ['Actions', ''],
+] as const
+
 const note = 'rounded-lg border border-border px-3 py-3 text-sm text-muted-foreground'
 
 function errorText(error: unknown): string {
@@ -74,8 +87,8 @@ export function ContainersPanel({
           <caption className="sr-only">Containers in {profile.name}</caption>
           <thead>
             <tr className="border-b border-border text-left text-xs text-muted-foreground">
-              {['Name', 'Image', 'Status', 'Ports', 'Created', 'CPU', 'Memory', 'Logs', 'Actions'].map((c) => (
-                <th key={c} scope="col" className="px-3 py-2 font-medium">
+              {COLUMNS.map(([c, hide]) => (
+                <th key={c} scope="col" className={`px-3 py-2 font-medium ${hide}`}>
                   {c}
                 </th>
               ))}
@@ -88,30 +101,33 @@ export function ContainersPanel({
               const created = new Date(c.createdAt)
               return (
                 <tr key={c.id} className="border-b border-border last:border-0 align-top">
-                  <th scope="row" className="px-3 py-2 text-left font-mono font-medium">
+                  <th scope="row" title={c.name} className="px-3 py-2 text-left font-mono font-medium break-words">
                     {c.name}
                   </th>
-                  <td className="px-3 py-2 font-mono">{c.image}</td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  <td title={c.image} className="px-3 py-2 font-mono break-all">{c.image}</td>
+                  <td
+                    title={`Ports: ${ports.length === 0 ? 'None' : ports.join(', ')}. Created: ${Number.isNaN(created.getTime()) ? 'unknown' : created.toLocaleString()}`}
+                    className="px-3 py-2"
+                  >
                     <span aria-hidden="true" className={`mr-2 inline-block size-2 rounded-full ${dotClass[health]}`} />
                     {c.status || c.state}
                     {health === 'paused' && <span className="ml-2 font-medium text-muted-foreground">(paused)</span>}
                     {health === 'crashed' && <span className="ml-2 font-medium text-destructive">(crashed)</span>}
                   </td>
-                  <td className="px-3 py-2 font-mono whitespace-nowrap">
+                  <td className="hidden px-3 py-2 font-mono break-words md:table-cell">
                     {ports.length === 0 ? (
                       <span className="font-sans">None</span>
                     ) : (
                       ports.map((p) => <div key={p}>{p}</div>)
                     )}
                   </td>
-                  <td className="px-3 py-2 whitespace-nowrap">
+                  <td className="hidden px-3 py-2 lg:table-cell">
                     <span title={Number.isNaN(created.getTime()) ? undefined : created.toLocaleString()}>
                       {formatRelativeTime(c.createdAt)}
                     </span>
                   </td>
-                  <td className="px-3 py-2 font-mono">{c.cpuPercent.toFixed(1)}%</td>
-                  <td className="px-3 py-2 font-mono">{formatBytes(c.memoryBytes)}</td>
+                  <td className="hidden px-3 py-2 font-mono sm:table-cell">{c.cpuPercent.toFixed(1)}%</td>
+                  <td className="hidden px-3 py-2 font-mono sm:table-cell">{formatBytes(c.memoryBytes)}</td>
                   <td className="px-3 py-2">
                     <ContainerLogsDialog profile={profile.name} container={c} />
                   </td>
