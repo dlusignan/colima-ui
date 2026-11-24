@@ -21,9 +21,8 @@ import (
 // A delete re-reads it inside the profile slot, after the route's own check,
 // because the route's read can be slow and the VM may have changed meanwhile.
 // A running VM whose Docker engine holds nothing (or that does not use
-// Docker) may be deleted, and so may a broken one unless its Docker answers
-// and holds something (a broken VM whose Docker cannot be read is deletable);
-// anything else ends as a failed job with a closing line and colima is never
+// Docker) may be deleted, and a broken one always may (its Docker contents are
+// not read); anything else ends as a failed job with a closing line and colima is never
 // run. A nil VMStatus skips the
 // check (tests of the argument vector); production wiring always sets it.
 //
@@ -124,18 +123,8 @@ func (l ColimaLauncher) launchDelete(ctx context.Context, r Request) (colima.Pro
 func (l ColimaLauncher) refuseDelete(ctx context.Context, profile, status string) *refusedProcess {
 	switch strings.ToLower(status) {
 	case "broken":
-		// Best effort: a broken VM usually cannot be read, and then it is
-		// deletable (that is how a damaged profile is cleaned up). When Docker
-		// does answer and holds something, the delete is refused like any other.
-		if l.DockerContents == nil {
-			return nil
-		}
-		cctx, cancel := context.WithTimeout(ctx, contentsTimeout)
-		defer cancel()
-		if counts, applicable, err := l.DockerContents(cctx, profile); err == nil && applicable && !counts.Empty() {
-			return newRefusedDelete(NotRunDockerNotEmpty,
-				"Not deleted: Docker in this profile still holds containers, images or volumes. Remove them, then delete it again.")
-		}
+		// Colima cannot be asked about a broken VM, so its Docker contents are
+		// not read: a broken profile is always deletable.
 		return nil
 	case "stopped":
 		return newRefusedDelete(NotRunCannotVerify,

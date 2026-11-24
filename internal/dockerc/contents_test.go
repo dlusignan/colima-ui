@@ -139,3 +139,32 @@ func TestCountContentsNullVolumesAndEmptyLists(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
+// A volumes answer without the Volumes key is not a count of zero.
+func TestCountContentsRejectsAMalformedVolumesAnswer(t *testing.T) {
+	for _, body := range []string{`null`, `{}`, `{"Warnings":null}`, `[]`, `"x"`, `{"Volumes":"x"}`, `{"Volumes":{}}`, ``} {
+		c := newHTTPClient(startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1.41/volumes" {
+				w.Write([]byte(body))
+				return
+			}
+			w.Write([]byte(`[]`))
+		})))
+		got, err := CountContents(context.Background(), c)
+		if !errors.Is(err, ErrDockerUnavailable) || !got.Empty() {
+			t.Fatalf("%q: %+v %v", body, got, err)
+		}
+	}
+	for _, body := range []string{`{"Volumes":null}`, `{"Volumes":[]}`} {
+		c := newHTTPClient(startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/v1.41/volumes" {
+				w.Write([]byte(body))
+				return
+			}
+			w.Write([]byte(`[]`))
+		})))
+		if got, err := CountContents(context.Background(), c); err != nil || !got.Empty() {
+			t.Fatalf("%q: %+v %v", body, got, err)
+		}
+	}
+}

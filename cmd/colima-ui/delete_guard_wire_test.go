@@ -98,9 +98,8 @@ func TestDeleteRefusesWhenDockerUnreadableInTheSlot(t *testing.T) {
 func TestDeleteRechecksStatusInsideTheSlotInProduction(t *testing.T) {
 	r := &fakeRunner{lists: []string{devBrokenJSON, devRunningJSON}, script: []string{"x"}}
 	a := testApp(t, r)
-	// Broken at the route, whose best-effort read cannot reach Docker; running
-	// with a container in the slot.
-	a.containers = &seqProvider{clients: []dockerc.Client{nonEmptyFake()}, errs: []error{dockerc.ErrVMNotRunning, nil}}
+	// Broken at the route (no Docker read); running with a container in the slot.
+	a.containers = &seqProvider{clients: []dockerc.Client{nonEmptyFake()}, errs: []error{nil}}
 	ts := serve(t, a)
 	if code, body := ts.do(t, "POST", "/api/profiles/dev/delete", `{"confirm":"dev"}`); code != 202 {
 		t.Fatalf("delete: %d %s", code, body)

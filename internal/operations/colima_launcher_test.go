@@ -236,34 +236,17 @@ func TestColimaLauncherDeleteCountsDockerInsideTheSlot(t *testing.T) {
 	}
 }
 
-// A broken VM is counted best effort: unreadable or empty (or no hook) runs the
-// delete, a Docker that answers with contents refuses it.
-func TestColimaLauncherDeleteBrokenCountsBestEffort(t *testing.T) {
-	for _, c := range []struct {
-		name string
-		hook func(context.Context, string) (dockerc.Contents, bool, error)
-		runs bool
-	}{
-		{"no hook", nil, true},
-		{"unreadable", func(context.Context, string) (dockerc.Contents, bool, error) {
-			return dockerc.Contents{}, false, dockerc.ErrVMNotRunning
-		}, true},
-		{"empty", emptyDocker, true},
-		{"not docker", func(context.Context, string) (dockerc.Contents, bool, error) { return dockerc.Contents{}, false, nil }, true},
-		{"holds a volume", func(context.Context, string) (dockerc.Contents, bool, error) {
-			return dockerc.Contents{Volumes: 1}, true, nil
-		}, false},
-	} {
-		s := &argsStreamer{}
-		l := ColimaLauncher{S: s, DockerContents: c.hook,
-			VMStatus: func(context.Context, string) (string, error) { return "broken", nil }}
-		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"})
-		if err != nil || (len(s.args) == 1) != c.runs {
-			t.Fatalf("%s: err %v args %v", c.name, err, s.args)
-		}
-		if !c.runs {
-			refusedLines(t, c.name, p, NotRunDockerNotEmpty)
-		}
+// A broken VM is always deleted and Docker is never read.
+func TestColimaLauncherDeleteBrokenNeverReadsDocker(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s,
+		VMStatus: func(context.Context, string) (string, error) { return "broken", nil },
+		DockerContents: func(context.Context, string) (dockerc.Contents, bool, error) {
+			t.Fatal("docker read for a broken profile")
+			return dockerc.Contents{}, false, nil
+		}}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"}); err != nil || len(s.args) != 1 {
+		t.Fatalf("err %v args %v", err, s.args)
 	}
 }
 

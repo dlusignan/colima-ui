@@ -79,32 +79,20 @@ func TestDeleteStoppedCannotBeVerified(t *testing.T) {
 	}
 }
 
-// A broken VM: Docker is read best effort. Unreadable (the usual case) or
-// empty allows the delete; a Docker that answers with contents refuses it.
-func TestDeleteBrokenCountsBestEffort(t *testing.T) {
-	for name, tc := range map[string]struct {
-		p    *dockerctest.Provider
-		want int
-	}{
-		"unreadable":   {&dockerctest.Provider{Err: dockerc.ErrVMNotRunning}, 202},
-		"daemon error": {&dockerctest.Provider{Err: errors.New("boom")}, 202},
-		"empty":        {&dockerctest.Provider{Client: &dockerctest.Fake{}}, 202},
-		"not docker":   {&dockerctest.Provider{Err: dockerc.ErrRuntimeNotDocker}, 202},
-		"holds things": {&dockerctest.Provider{Client: fullFake()}, 409},
+// A broken VM is always deletable and its Docker is never read.
+func TestDeleteBrokenIsAlwaysAllowedWithoutReadingDocker(t *testing.T) {
+	for name, p := range map[string]*dockerctest.Provider{
+		"holds things": {Client: fullFake()},
+		"unreadable":   {Err: dockerc.ErrVMNotRunning},
 	} {
 		m, g := &fakeMgr{}, &fakeGate{status: "broken"}
-		rec := call(t, deleteGuardServer(m, g, tc.p), "POST", deletePath, guardDeleteBody)
-		if rec.Code != tc.want {
+		if rec := call(t, deleteGuardServer(m, g, p), "POST", deletePath, guardDeleteBody); rec.Code != 202 || len(m.submitReq) != 1 {
 			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
 		}
-		if tc.want == 409 {
-			w := wantErr(t, rec, 409, "invalid_state")
-			if w.Error.Details["reason"] != "docker_not_empty" || w.Error.Details["status"] != "broken" || len(m.submitReq) != 0 {
-				t.Fatalf("%s: %v", name, w.Error.Details)
-			}
+		if len(p.Profiles()) != 0 {
+			t.Fatalf("%s: docker read for a broken profile", name)
 		}
 	}
-	// With no provider wired at all a broken profile is still deletable.
 	m := &fakeMgr{}
 	if rec := call(t, deleteGuardServer(m, &fakeGate{status: "broken"}, nil), "POST", deletePath, guardDeleteBody); rec.Code != 202 {
 		t.Fatalf("nil provider: %d", rec.Code)
@@ -143,6 +131,31 @@ func TestDeleteRunningVMThatStoppedMeanwhileIsRefused(t *testing.T) {
 	wantErr(t, call(t, deleteGuardServer(m, g, &dockerctest.Provider{Err: dockerc.ErrVMNotRunning}), "POST", deletePath, guardDeleteBody), 502, "docker_unavailable")
 	if len(m.submitReq) != 0 {
 		t.Fatal("submit called")
+	}
+}
+
+// The route asks the manager before the slow reads; no status or Docker read
+// happens when a task already runs.
+type taskMgr struct {
+	fakeMgr
+	task string
+}
+
+func (m *taskMgr) TaskRunning(string) (string, bool) { return m.task, m.task != "" }
+
+func TestDeleteRefusedEarlyWhileATaskRuns(t *testing.T) {
+	m, g, p := &taskMgr{task: "j_pull"}, &fakeGate{status: "running"}, &dockerctest.Provider{Client: &dockerctest.Fake{}}
+	w := wantErr(t, call(t, deleteGuardServer(m, g, p), "POST", deletePath, guardDeleteBody), 409, "invalid_state")
+	if w.Error.Details["reason"] != "task_running" || w.Error.Details["jobId"] != "j_pull" {
+		t.Fatalf("details %v", w.Error.Details)
+	}
+	if len(g.names) != 0 || len(p.Profiles()) != 0 || len(m.submitReq) != 0 {
+		t.Fatal("slow reads or submit happened")
+	}
+	// No task: the delete goes on.
+	m2 := &taskMgr{}
+	if rec := call(t, deleteGuardServer(m2, &fakeGate{status: "broken"}, p), "POST", deletePath, guardDeleteBody); rec.Code != 202 {
+		t.Fatalf("%d", rec.Code)
 	}
 }
 

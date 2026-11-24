@@ -249,13 +249,21 @@ func (c *httpClient) countContents(ctx context.Context) (Contents, error) {
 	if err := c.get(ctx, c.listTimeout, "/images/json", nil, &images); err != nil {
 		return Contents{}, remapNotFound(err)
 	}
-	var vols struct {
-		Volumes []json.RawMessage `json:"Volumes"`
-	}
-	if err := c.get(ctx, c.listTimeout, "/volumes", nil, &vols); err != nil {
+	// A reply without the Volumes key (null, {} or another shape) is not a
+	// count of zero; only an explicit "Volumes":null or [] is.
+	var raw map[string]json.RawMessage
+	if err := c.get(ctx, c.listTimeout, "/volumes", nil, &raw); err != nil {
 		return Contents{}, remapNotFound(err)
 	}
-	return Contents{Containers: len(containers), Images: len(images), Volumes: len(vols.Volumes)}, nil
+	vraw, ok := raw["Volumes"]
+	if !ok {
+		return Contents{}, fmt.Errorf("%w: unexpected volumes answer", ErrDockerUnavailable)
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(vraw, &list); err != nil {
+		return Contents{}, fmt.Errorf("%w: unexpected volumes answer", ErrDockerUnavailable)
+	}
+	return Contents{Containers: len(containers), Images: len(images), Volumes: len(list)}, nil
 }
 
 func shortID(id string) string {
