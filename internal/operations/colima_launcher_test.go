@@ -188,7 +188,7 @@ func TestRefusedDeleteIsAFailedJob(t *testing.T) {
 	for {
 		got, _ := m.Get(sum.ID)
 		if got.State == StateFailed {
-			if len(got.Output) != 1 || len(s.args) != 0 {
+			if len(got.Output) != 1 || len(s.args) != 0 || !got.NotRun {
 				t.Fatalf("output %v args %v", got.Output, s.args)
 			}
 			break

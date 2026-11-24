@@ -1240,7 +1240,7 @@ Errors:
 
 ### 3.32 `POST /api/profiles/{name}/delete`
 
-Token: yes. Deletes the profile's VM with `colima delete -p <name> --force` as a job (action `delete`), plus `--data` when asked. `--force` is always passed so the process never waits on a prompt the UI cannot answer; the confirmation lives in this request instead. **This cannot be undone.** The call returns at once; follow the job like a start (3.4, 3.5, 3.6, section 5). The job holds the profile's slot, can be cancelled, writes an action log row (`delete`) and its output streams like a stop. When it succeeds the profile leaves the list and the sampler stops for it; its recorded history stays in the database.
+Token: yes. Deletes the profile's VM with `colima delete -p <name> --force` as a job (action `delete`), plus `--data` when asked. `--force` is always passed so the process never waits on a prompt the UI cannot answer; the confirmation lives in this request instead. **This cannot be undone.** The call answers `202` once the job exists: unlike start and stop, it waits for the in-slot status read described below (normally well under a second, at most 15 seconds) before the job is created. Follow the job like a start (3.4, 3.5, 3.6, section 5). The job holds the profile's slot, can be cancelled, writes an action log row (`delete`) and its output streams like a stop. When it succeeds the profile leaves the list and the sampler stops for it; its recorded history stays in the database.
 
 Request body (at most 1 KiB, strict: exact keys, each at most once):
 
@@ -1260,18 +1260,19 @@ Response `202`:
 
 Errors:
 
-1. `404` `profile_not_found`: the name is malformed, or the profile is neither listed by Colima nor present in Colima's folder (names compare ignoring letter case). Unlike the other routes, `default` gets no special case here: it can be deleted only when it exists.
+1. `404` `profile_not_found`: the name is malformed, or the profile is neither listed by Colima nor present in Colima's folder as a real directory (a file or a symlink with the name does not count; names compare ignoring letter case). Unlike the other routes, `default` gets no special case here: it can be deleted only when it exists.
 2. `422` `confirmation_required`: `confirm` is missing or does not equal the name.
 3. `409` `profile_busy`: another job runs on the profile (`details.jobId`).
 4. `409` `invalid_state`: the VM is not `stopped` or `broken` (`details.status` is the current status, for example `running`, as in 3.4). Only those two statuses can be deleted; anything else, including a status the backend does not know, is refused. A `broken` VM is allowed so a half-created or damaged profile can be cleaned up. The user stops it first; nothing starts.
 5. `400` `bad_request`, `502` `colima_failed`, `503` `shutting_down`, `500` `internal_error` as in 3.4.
 
-Order of checks: body shape, busy, profile lookup, confirmation, status, then the job is submitted. The busy check runs before the status read because that read (`colima list`) can be slow. The job re-reads the status inside the profile slot, right before running `colima delete`: if the VM is no longer `stopped` or `broken` (for example it was started from a terminal in between), nothing is deleted and the job ends as `failed` with one closing line in its output.
+Order of checks: body shape, busy, profile lookup, confirmation, status, then the job is submitted. The busy check runs before the status read because that read (`colima list`) can be slow. The job re-reads the status inside the profile slot, right before running `colima delete`: if the VM is no longer `stopped` or `broken` (for example it was started from a terminal in between), nothing is deleted and the job ends as `failed` with one closing line in its output; its action log row says `not run: profile was not stopped`, not a Colima exit status. Like the busy check in 1.3, this re-check is best effort: it sees only this backend's own jobs and a single read of the live status, so a VM started from a terminal in the instant between the re-check and `colima delete` is not prevented.
 
 Things to know:
 
-1. The action log row (`delete`, 3.11) carries `with runtime data` as its detail when `deleteData` was `true`. Once the profile is gone, `GET /api/profiles/{name}/actions` answers `404` for it, so the row cannot be read through the API any more. History is keyed by profile name only, so a profile created later with the same name shows the older rows too.
-2. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
+1. While the delete is waiting for that status read, `GET /api/profiles` and a `409 profile_busy` answer can already show the job id, but `GET /api/jobs/{id}` answers `404 job_not_found` for it until the job exists (up to 15 seconds). Clients should retry a `404` for an id they just received.
+2. The action log row (`delete`, 3.11) carries `with runtime data` as its detail when `deleteData` was `true`. Once the profile is gone, `GET /api/profiles/{name}/actions` answers `404` for it, so the row cannot be read through the API any more. History is keyed by profile name only, so a profile created later with the same name shows the older rows too.
+3. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
 
 
 ## 4. Routes that do not exist

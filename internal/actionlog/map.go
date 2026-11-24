@@ -36,7 +36,10 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 		e.Outcome = OutcomeSuccess
 	case operations.StateFailed:
 		e.Outcome = OutcomeFailed
-		if s.ExitCode != nil {
+		if s.NotRun {
+			// Colima never started, so its exit status would be a lie.
+			detail = "not run: profile was not stopped"
+		} else if s.ExitCode != nil {
 			detail = fmt.Sprintf("colima exited with status %d", *s.ExitCode)
 		} else {
 			detail = "colima did not exit normally"

@@ -56,6 +56,10 @@ func (p *refusedProcess) Wait() (colima.Exit, error) {
 }
 func (p *refusedProcess) Cancel() {}
 
+// NotRun marks the process as one that never ran colima; the manager copies it
+// to JobSummary.NotRun.
+func (p *refusedProcess) NotRun() bool { return true }
+
 func (l ColimaLauncher) launchDelete(ctx context.Context, r Request) (colima.Process, error) {
 	if err := colima.ValidateProfile(r.Profile); err != nil {
 		return nil, err

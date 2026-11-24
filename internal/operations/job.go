@@ -33,7 +33,11 @@ type JobSummary struct {
 	// validated by whoever submitted it. Empty for colima jobs.
 	Subject string
 	// DeleteData is set on a delete job that also removes the runtime data.
-	DeleteData   bool
+	DeleteData bool
+	// NotRun is set on a job whose process refused to run (a delete whose
+	// in-slot status check failed): colima never started, so exit codes in the
+	// summary say nothing about colima.
+	NotRun       bool
 	State        State
 	StartedAt    time.Time
 	FinishedAt   *time.Time
@@ -51,7 +55,9 @@ type job struct {
 	subject string
 	// deleteData is Request.DeleteData of a delete job.
 	deleteData bool
-	cancel     context.CancelFunc
+	// notRun mirrors JobSummary.NotRun, set before the final state.
+	notRun bool
+	cancel context.CancelFunc
 	// groupKey and dupKey are the task limits this job holds ("" for none).
 	groupKey string
 	dupKey   string
@@ -135,6 +141,7 @@ func (j *job) summary() JobSummary {
 		Action:       j.action,
 		Subject:      j.subject,
 		DeleteData:   j.deleteData,
+		NotRun:       j.notRun,
 		State:        j.state,
 		StartedAt:    j.startedAt,
 		Output:       j.ring.after(0),

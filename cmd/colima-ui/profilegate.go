@@ -30,6 +30,12 @@ type folderChecker interface {
 	ProfileFolderExists(name string) (bool, error)
 }
 
+// dirChecker reports whether the Colima folder holds a real directory (no file,
+// no symlink) for a name in any letter case. *config.Service satisfies it.
+type dirChecker interface {
+	ProfileDirExists(name string) (bool, error)
+}
+
 // ProfileExists reports whether a creation must treat name as taken: it is in
 // `colima list`, or the Colima folder holds an entry for it, in either case
 // comparing names ignoring letter case (the default macOS filesystem does).
@@ -131,8 +137,9 @@ func (g profileGate) ProfileStatusForDelete(ctx context.Context, name string) (s
 			}
 		}
 	}
-	if g.folders != nil {
-		found, err := g.folders.ProfileFolderExists(name)
+	// Only a real directory counts (a file named like a profile does not).
+	if dc, ok := g.folders.(dirChecker); ok {
+		found, err := dc.ProfileDirExists(name)
 		if err != nil {
 			return "", fmt.Errorf("scan profile folders: %w", err)
 		}

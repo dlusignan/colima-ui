@@ -38,3 +38,13 @@ func TestDeleteRowsNoteRuntimeData(t *testing.T) {
 		t.Fatalf("stop detail %q", *e.Detail)
 	}
 }
+
+func TestRefusedDeleteRowSaysItDidNotRun(t *testing.T) {
+	s := summary(operations.ActionDelete, operations.StateFailed, intp(1))
+	s.NotRun = true
+	s.DeleteData = true
+	e, ok := entryForJob(s)
+	if !ok || e.Outcome != OutcomeFailed || e.Detail == nil || *e.Detail != "not run: profile was not stopped; with runtime data" {
+		t.Fatalf("%+v %v", e, ok)
+	}
+}
