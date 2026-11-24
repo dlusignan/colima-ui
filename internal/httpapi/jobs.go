@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dlusignan/colima-ui/internal/dockerc"
 	"github.com/dlusignan/colima-ui/internal/operations"
 )
 
@@ -69,8 +70,14 @@ var jobIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 //	POST /api/profiles/{name}/delete
 //	GET  /api/jobs/{id}
 //	POST /api/jobs/{id}/cancel
-func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
+//
+// Without WithDeleteContents a delete of a running profile is refused (the
+// route cannot check what Docker holds, so it fails closed).
+func WithJobs(mgr JobsDeps, gate ProfileGate, opts ...JobsOption) Option {
 	j := &jobRoutes{mgr: mgr, gate: gate}
+	for _, o := range opts {
+		o(j)
+	}
 	return func(rt *Router) {
 		rt.Handle("POST /api/profiles/{name}/start", j.action(operations.ActionStart))
 		rt.Handle("POST /api/profiles/{name}/stop", j.action(operations.ActionStop))
@@ -82,9 +89,19 @@ func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
 	}
 }
 
+// JobsOption customizes WithJobs.
+type JobsOption func(*jobRoutes)
+
+// WithDeleteContents gives the delete route the Docker provider it uses to
+// count a running profile's containers, images and volumes.
+func WithDeleteContents(p dockerc.Provider) JobsOption {
+	return func(j *jobRoutes) { j.docker = p }
+}
+
 type jobRoutes struct {
-	mgr  JobsDeps
-	gate ProfileGate
+	mgr    JobsDeps
+	gate   ProfileGate
+	docker dockerc.Provider // nil: a running profile cannot be deleted
 }
 
 // action serves start, stop and restart. The order matters: the body check,
@@ -141,9 +158,11 @@ const deleteBodyLimit = 1 << 10
 // delete serves POST /api/profiles/{name}/delete. The order: the body shape
 // (400), Busy (409 profile_busy, before the slow status read), the gate (it
 // validates the name before anything else sees it, 404), the confirmation (422,
-// must equal the path name exactly), the status allowlist (409 invalid_state
-// unless stopped or broken: the user stops the VM first), then Submit, which
-// stays authoritative for the slot and whose launcher re-checks the status. Nothing starts before every check has passed, and
+// must equal the path name exactly), the state allowlist (409 invalid_state;
+// broken passes, stopped is refused as cannot_verify, running passes only
+// when Docker holds nothing or is not the runtime, 502 docker_unavailable when
+// it cannot be read), then Submit, which stays authoritative for the slot and
+// whose launcher repeats the status and the count inside it. Nothing starts before every check has passed, and
 // the launcher always passes --force, so the process never waits on a prompt.
 func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
@@ -172,6 +191,15 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 	if id, running := j.mgr.Busy(name); running {
 		return busyError(name, id)
 	}
+	// A running task (an image pull) also refuses a delete; Submit repeats the
+	// check under the manager lock and stays authoritative.
+	if tr, ok := j.mgr.(interface {
+		TaskRunning(string) (string, bool)
+	}); ok {
+		if id, running := tr.TaskRunning(name); running {
+			return taskRunningError(id)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), gateTimeout)
 	defer cancel()
@@ -194,9 +222,29 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 		return newAPIError(http.StatusUnprocessableEntity, "confirmation_required",
 			"Send the profile name in confirm to delete it.", map[string]any{})
 	}
-	// Allowlist: only a stopped or broken VM can be deleted. A running, starting
-	// or unknown state is refused with its status.
-	if st := strings.ToLower(status); st != "stopped" && st != "broken" {
+	// Allowlist by state. A broken VM is always deletable and its Docker is not
+	// read. A stopped one is refused: its Docker data cannot be read, so it cannot be verified empty.
+	// A running one is deleted only when its Docker engine holds nothing (or it
+	// does not use Docker). Anything else (starting, unknown) is refused.
+	switch st := strings.ToLower(status); st {
+	case "broken":
+		// Colima cannot be asked about a broken VM, so its Docker contents are
+		// not read: a broken profile is always deletable.
+	case "stopped":
+		return newAPIError(http.StatusConflict, "invalid_state",
+			"Start the profile and empty its Docker data before deleting it.",
+			map[string]any{"status": st, "reason": "cannot_verify"})
+	case "running":
+		cctx, ccancel := context.WithTimeout(r.Context(), contentsTimeout)
+		defer ccancel()
+		counts, applicable, apiErr := countContents(cctx, j.docker, name, "delete")
+		if apiErr != nil {
+			return apiErr
+		}
+		if applicable && !counts.Empty() {
+			return dockerNotEmpty(st, counts)
+		}
+	default:
 		return newAPIError(http.StatusConflict, "invalid_state",
 			"Stop the profile before deleting it.", map[string]any{"status": st})
 	}
@@ -210,6 +258,21 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"jobId": sum.ID})
 	return nil
+}
+
+func taskRunningError(jobID string) *APIError {
+	return newAPIError(http.StatusConflict, "invalid_state",
+		"A task such as an image pull is running on this profile. Wait for it to finish or cancel it.",
+		map[string]any{"status": "busy", "reason": "task_running", "jobId": jobID})
+}
+
+func dockerNotEmpty(status string, counts dockerc.Contents) *APIError {
+	return newAPIError(http.StatusConflict, "invalid_state",
+		"The profile still holds Docker containers, images or volumes. Remove them before deleting it.",
+		map[string]any{
+			"status": status, "reason": "docker_not_empty",
+			"containers": counts.Containers, "images": counts.Images, "volumes": counts.Volumes,
+		})
 }
 
 func profileNotFound(name string) *APIError {
@@ -232,7 +295,10 @@ func busyError(profile, jobID string) *APIError {
 func submitError(profile string, act operations.Action, err error) error {
 	var busy *operations.BusyError
 	var pruning *operations.CachePruneRunningError
+	var task *operations.TaskRunningError
 	switch {
+	case errors.As(err, &task):
+		return taskRunningError(task.JobID)
 	case errors.As(err, &pruning):
 		return newAPIError(http.StatusConflict, "invalid_state",
 			"The download cache is being cleared. Wait for it to finish.",

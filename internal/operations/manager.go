@@ -144,6 +144,15 @@ func (m *Manager) Submit(r Request) (JobSummary, error) {
 		return JobSummary{}, e
 	}
 	key := slotKey(r.Profile)
+	// A delete would pull the VM out from under a running task (an image
+	// pull holds no slot), so it is refused under the same mutex as the
+	// reservation.
+	if r.Action == ActionDelete {
+		if id, ok := m.taskRunningLocked(r.Profile); ok {
+			m.mu.Unlock()
+			return JobSummary{}, &TaskRunningError{Profile: r.Profile, JobID: id}
+		}
+	}
 	if s, ok := m.slots[key]; ok {
 		busy := &BusyError{Profile: r.Profile}
 		if s.job != nil {
@@ -222,6 +231,9 @@ func (m *Manager) pump(j *job, proc colima.Process) {
 	if nr, ok := proc.(interface{ NotRun() bool }); ok && nr.NotRun() {
 		j.mu.Lock()
 		j.notRun = true
+		if rr, ok := proc.(interface{ NotRunReason() string }); ok {
+			j.notRunReason = rr.NotRunReason()
+		}
 		j.mu.Unlock()
 	}
 	j.finish(state, code, exit.Tail, m.opts.Now())
@@ -277,6 +289,26 @@ func (m *Manager) Cancel(ctx context.Context, id string) (JobSummary, error) {
 	case <-ctx.Done():
 		return JobSummary{}, ctx.Err()
 	}
+}
+
+// taskRunningLocked finds a running task job (one that holds no slot) on the
+// profile. The manager mutex must be held.
+func (m *Manager) taskRunningLocked(profile string) (jobID string, running bool) {
+	prefix := slotKey(profile) + "\x00"
+	for k, id := range m.taskKeys {
+		if strings.HasPrefix(k, prefix) {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// TaskRunning reports a running task job (such as an image pull) on a profile.
+// Tasks hold no profile slot, so Busy does not see them.
+func (m *Manager) TaskRunning(profile string) (jobID string, running bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.taskRunningLocked(profile)
 }
 
 // Busy reports the running job on a profile, for activeJobId. It is false

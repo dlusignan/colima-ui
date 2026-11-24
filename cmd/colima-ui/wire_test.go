@@ -1260,6 +1260,7 @@ func TestProfileStatusForDelete(t *testing.T) {
 const (
 	devStoppedJSON = `{"name":"dev","status":"Stopped","runtime":"docker"}` + "\n"
 	devRunningJSON = `{"name":"dev","status":"Running","runtime":"docker"}` + "\n"
+	devBrokenJSON  = `{"name":"dev","status":"Broken","runtime":"docker"}` + "\n"
 )
 
 func postJSON(t *testing.T, h http.Handler, target, body string) *httptest.ResponseRecorder {
@@ -1268,45 +1269,6 @@ func postJSON(t *testing.T, h http.Handler, target, body string) *httptest.Respo
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
-}
-
-// Production wiring must re-read the status inside the slot: here the VM is
-// stopped for the route's read and running for the launcher's, so no delete
-// argument vector may reach the runner and the job must fail.
-func TestDeleteRechecksStatusInsideTheSlotInProduction(t *testing.T) {
-	r := &fakeRunner{lists: []string{devStoppedJSON, devRunningJSON}}
-	a := testApp(t, r)
-	sub, err := a.hub.Subscribe("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Close()
-	rec := postJSON(t, a.handler(), "/api/profiles/dev/delete", `{"confirm":"dev","deleteData":true}`)
-	if rec.Code != 202 {
-		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
-	}
-	waitFinished(t, sub)
-	if n := r.streamCount(); n != 0 {
-		t.Fatalf("colima was run %d times: %v", n, r.streams)
-	}
-}
-
-// And with a VM that stays stopped, the delete argument vector is streamed.
-func TestDeleteRunsWhenStillStopped(t *testing.T) {
-	r := &fakeRunner{list: devStoppedJSON, script: []string{"done"}}
-	a := testApp(t, r)
-	sub, err := a.hub.Subscribe("", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer sub.Close()
-	if rec := postJSON(t, a.handler(), "/api/profiles/dev/delete", `{"confirm":"dev"}`); rec.Code != 202 {
-		t.Fatalf("delete: %d %s", rec.Code, rec.Body.String())
-	}
-	waitFinished(t, sub)
-	if got := r.streams; len(got) != 1 || strings.Join(got[0], " ") != "delete -p dev --force" {
-		t.Fatalf("streams %v", got)
-	}
 }
 
 func TestDeleteGateIgnoresStrayFilesAndSymlinks(t *testing.T) {

@@ -159,6 +159,8 @@ const mapped: Record<string, Mapping> = {
   '3.33#0': { shape: s.kubernetesStatusShape },
   '3.34#0': { shape: s.kubernetesConfirmRequestShape },
   '3.34#1': { shape: s.jobRefShape },
+  '3.37#0': { shape: s.profileContentsShape },
+  '3.37#1': { shape: s.profileContentsShape, partial: true },
   '3.17#0': { shape: s.createProfileRequestShape, partial: true },
   '3.17#1': { shape: s.profileCreatedShape },
   '3.17#2': { shape: s.apiErrorShape },

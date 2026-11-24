@@ -238,6 +238,34 @@ func (c *httpClient) Containers(ctx context.Context) ([]Container, error) {
 	return out, nil
 }
 
+// countContents is CountContents for the real client: three list calls, each
+// decoded only as far as its length. No name or id is kept.
+func (c *httpClient) countContents(ctx context.Context) (Contents, error) {
+	var containers []json.RawMessage
+	if err := c.get(ctx, c.listTimeout, "/containers/json", url.Values{"all": {"1"}}, &containers); err != nil {
+		return Contents{}, remapNotFound(err)
+	}
+	var images []json.RawMessage
+	if err := c.get(ctx, c.listTimeout, "/images/json", nil, &images); err != nil {
+		return Contents{}, remapNotFound(err)
+	}
+	// A reply without the Volumes key (null, {} or another shape) is not a
+	// count of zero; only an explicit "Volumes":null or [] is.
+	var raw map[string]json.RawMessage
+	if err := c.get(ctx, c.listTimeout, "/volumes", nil, &raw); err != nil {
+		return Contents{}, remapNotFound(err)
+	}
+	vraw, ok := raw["Volumes"]
+	if !ok {
+		return Contents{}, fmt.Errorf("%w: unexpected volumes answer", ErrDockerUnavailable)
+	}
+	var list []json.RawMessage
+	if err := json.Unmarshal(vraw, &list); err != nil {
+		return Contents{}, fmt.Errorf("%w: unexpected volumes answer", ErrDockerUnavailable)
+	}
+	return Contents{Containers: len(containers), Images: len(images), Volumes: len(list)}, nil
+}
+
 func shortID(id string) string {
 	if len(id) > 12 {
 		return id[:12]
