@@ -13,6 +13,10 @@ const (
 	ActionStart   Action = "start"
 	ActionStop    Action = "stop"
 	ActionRestart Action = "restart"
+	// ActionDelete removes the profile's VM (`colima delete --force`), with
+	// the runtime data too when Request.DeleteData is set. The route that
+	// submits it checks the confirmation and that the profile is stopped.
+	ActionDelete Action = "delete"
 	// ActionUpdate refreshes the container runtime of a running profile.
 	ActionUpdate Action = "update"
 	// The four Kubernetes actions run `colima kubernetes <verb>` on a running
@@ -32,11 +36,12 @@ const (
 
 // Request is a job request. Start, stop and restart take no other input: a
 // start reuses the values stored in the profile YAML. Only ActionCreate reads
-// Options.
+// Options, and only ActionDelete reads DeleteData.
 type Request struct {
-	Action  Action
-	Profile string
-	Options colima.StartOptions
+	Action     Action
+	Profile    string
+	Options    colima.StartOptions
+	DeleteData bool
 }
 
 // Launcher starts the process for a request. The context bounds the process:

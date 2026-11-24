@@ -113,7 +113,7 @@ func TestJobFinishedMapping(t *testing.T) {
 		{"failed no code", operations.StateFailed, nil, "failed", "colima did not exit normally"},
 		{"cancelled", operations.StateCancelled, nil, "cancelled", "cancelled before it finished"},
 	}
-	for _, action := range []operations.Action{operations.ActionStart, operations.ActionStop, operations.ActionRestart, operations.ActionUpdate} {
+	for _, action := range []operations.Action{operations.ActionStart, operations.ActionStop, operations.ActionRestart, operations.ActionUpdate, operations.ActionDelete} {
 		for _, c := range cases {
 			t.Run(string(action)+"/"+c.name, func(t *testing.T) {
 				fs := &fakeSink{}
@@ -493,7 +493,9 @@ func TestKubernetesJobsRecordTheVerb(t *testing.T) {
 		{operations.ActionKubernetesReset, operations.StateSucceeded, intp(0), "kubernetes reset"},
 		{operations.ActionKubernetesReset, operations.StateCancelled, nil, "kubernetes reset: cancelled before it finished; the cluster may be partly changed"},
 		{operations.ActionKubernetesDelete, operations.StateCancelled, nil, "kubernetes delete: cancelled before it finished; the cluster may be partly changed"},
-		{operations.ActionKubernetesDelete, operations.StateFailed, nil, "kubernetes delete: colima did not exit normally"},
+		{operations.ActionKubernetesDelete, operations.StateFailed, nil, "kubernetes delete: colima did not exit normally; the cluster may be partly changed"},
+		{operations.ActionKubernetesReset, operations.StateFailed, intp(1), "kubernetes reset: colima exited with status 1; the cluster may be partly changed"},
+		{operations.ActionKubernetesStop, operations.StateFailed, intp(1), "kubernetes stop: colima exited with status 1"},
 	}
 	for _, c := range cases {
 		t.Run(c.detail, func(t *testing.T) {
@@ -508,5 +510,21 @@ func TestKubernetesJobsRecordTheVerb(t *testing.T) {
 				t.Fatalf("rows = %+v", rows)
 			}
 		})
+	}
+}
+
+func TestKubernetesNotRunRowHasNoPartialWarning(t *testing.T) {
+	fs := &fakeSink{}
+	r := New(fs)
+	j := summary(operations.ActionKubernetesReset, operations.StateFailed, intp(1))
+	j.NotRun = true
+	r.JobFinished(j)
+	if err := r.Close(ctxT(t)); err != nil {
+		t.Fatal(err)
+	}
+	rows := fs.snapshot()
+	want := "kubernetes reset: not run: profile was not running or Kubernetes is not enabled"
+	if len(rows) != 1 || rows[0].Detail == nil || *rows[0].Detail != want {
+		t.Fatalf("rows = %+v", rows)
 	}
 }

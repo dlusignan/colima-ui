@@ -168,7 +168,14 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 	// One set of host caps for the config PUT (its default) and for creation.
 	lim := config.DefaultLimits()
 	a.mgr = operations.New(operations.Options{
-		Launcher: operations.ColimaLauncher{S: runner, R: runner, Limits: colimaLimits(lim)},
+		Launcher: operations.ColimaLauncher{
+			S: runner, Limits: colimaLimits(lim),
+			// A delete and the Kubernetes actions re-read the live status
+			// inside the profile slot; the Kubernetes ones also read the
+			// configured flag from the config service.
+			VMStatus:          gate.ProfileStatusForDelete,
+			KubernetesEnabled: kubernetesConfigured(svc),
+		},
 		// Called in order from the job's pump, none of them blocks: the action
 		// log queues, the hub never blocks, and Refresh only signals. The
 		// sampler is built below, so it is read lazily like a.mgr above.
@@ -268,7 +275,7 @@ func (a *app) handler() http.Handler {
 	opts = append(opts, httpapi.WithSSHConfig(a.gate, sshConfigSource{r: a.runner}))
 
 	// #141 kubernetes (jobs on the manager; the probe reads `colima status`)
-	opts = append(opts, httpapi.WithKubernetes(a.mgr, a.gate, kubernetesProbe{r: a.runner}))
+	opts = append(opts, httpapi.WithKubernetes(a.mgr, a.gate, kubernetesProbe{read: kubernetesConfigured(a.configSvc)}))
 
 	// #39 actions
 	opts = append(opts, httpapi.WithActions(a.store, a.gate))
@@ -352,18 +359,29 @@ func (s sshConfigSource) SSHConfig(ctx context.Context, name string) (httpapi.SS
 	return doc, nil
 }
 
-// kubernetesProbe adapts the colima adapter to httpapi.KubernetesProbe. It
-// reads the live `colima status` answer, never the profile's YAML file.
-type kubernetesProbe struct{ r colima.Runner }
-
-func (p kubernetesProbe) KubernetesEnabled(ctx context.Context, name string) (bool, error) {
-	d, err := colima.Status(ctx, p.r, name)
-	var exit *colima.ExitError
-	switch {
-	case errors.As(err, &exit):
-		return false, httpapi.ErrKubernetesProbeRefused
-	case err != nil:
-		return false, err
-	}
-	return d.Kubernetes, nil
+// profileReader reads one profile's configuration. *config.Service satisfies it.
+type profileReader interface {
+	Read(name string) (*config.Profile, error)
 }
+
+// kubernetesConfigured reads the configured kubernetes.enabled flag through the
+// config service. A profile without a file, or without the key, is not enabled.
+// This is the configured decision, not whether k3s is running right now (that
+// is what `colima status` reports, and it reads false for a stopped cluster).
+func kubernetesConfigured(r profileReader) func(string) (bool, error) {
+	return func(name string) (bool, error) {
+		p, err := r.Read(name)
+		switch {
+		case errors.Is(err, config.ErrProfileNotFound):
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		return p.Kubernetes.Enabled != nil && *p.Kubernetes.Enabled, nil
+	}
+}
+
+// kubernetesProbe adapts a config reader to httpapi.KubernetesProbe.
+type kubernetesProbe struct{ read func(string) (bool, error) }
+
+func (p kubernetesProbe) KubernetesEnabled(name string) (bool, error) { return p.read(name) }

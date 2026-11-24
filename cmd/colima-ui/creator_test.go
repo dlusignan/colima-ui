@@ -232,6 +232,8 @@ type fakeFolders struct {
 	err   error
 }
 
+func (f fakeFolders) ProfileDirExists(name string) (bool, error) { return f.ProfileFolderExists(name) }
+
 func (f fakeFolders) ProfileFolderExists(name string) (bool, error) {
 	for _, n := range f.names {
 		if strings.EqualFold(n, name) {

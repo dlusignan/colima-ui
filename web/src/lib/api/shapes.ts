@@ -50,6 +50,7 @@ import type {
   JobOutputEvent,
   JobOutputLine,
   JobRef,
+  DeleteProfileRequest,
   PullImageAccepted,
   PullImageRequest,
   MetricEvent,
@@ -228,6 +229,11 @@ export const dockerImageShape = {
   createdAt: 'string',
   containers: 'number',
 } as const satisfies Record<keyof DockerImage, Kind>
+
+export const deleteProfileRequestShape = {
+  confirm: 'string',
+  deleteData: 'boolean',
+} as const satisfies Record<keyof DeleteProfileRequest, Kind>
 
 export const pullImageRequestShape = {
   reference: 'string',

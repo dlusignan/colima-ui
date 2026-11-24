@@ -21,12 +21,6 @@ var (
 	// ErrDuplicateTask means an identical task (same profile, action and
 	// subject) is already running.
 	ErrDuplicateTask = errors.New("operations: identical task already running")
-	// ErrProfileNotRunning is returned by ColimaLauncher when a Kubernetes
-	// action finds the VM not running once it holds the profile slot.
-	ErrProfileNotRunning = errors.New("operations: profile is not running")
-	// ErrKubernetesNotEnabled is returned by ColimaLauncher when a Kubernetes
-	// action finds the profile without a Kubernetes cluster.
-	ErrKubernetesNotEnabled = errors.New("operations: kubernetes is not enabled on the profile")
 	// ErrIDExhausted means the ID generator kept returning IDs already in use.
 	ErrIDExhausted = errors.New("operations: could not generate a unique job id")
 )

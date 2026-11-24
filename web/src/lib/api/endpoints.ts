@@ -21,6 +21,7 @@ import type {
   ImageList,
   Job,
   JobRef,
+  DeleteProfileRequest,
   PullImageAccepted,
   Metrics,
   MetricsParams,
@@ -78,6 +79,13 @@ export const api = {
     request<JobRef>('POST', `/api/profiles/${enc(name)}/stop`),
   restartProfile: (name: string) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/restart`),
+  /**
+   * Deletes a stopped profile as a job (202, follow `jobId` like a stop).
+   * 422 `confirmation_required` unless `confirm` equals the name, 409
+   * `invalid_state` while the VM runs, 409 `profile_busy` during another job.
+   */
+  deleteProfile: (name: string, body: DeleteProfileRequest) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/delete`, { body }),
   updateProfile: (name: string) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/update`),
   getKubernetes: (name: string, signal?: AbortSignal) =>

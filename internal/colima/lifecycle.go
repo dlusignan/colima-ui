@@ -30,6 +30,22 @@ func Restart(ctx context.Context, s Streamer, profile string, force bool) (Proce
 	return stopLike(ctx, s, "restart", profile, force)
 }
 
+// Delete runs `colima delete -p <profile> --force`, plus --data when deleteData
+// is set. --force is always passed: without it colima asks for a confirmation
+// on stdin that nobody can answer, so the confirmation lives in the UI and the
+// API. --data also removes the container runtime data (the Docker or
+// containerd disk), which cannot be undone.
+func Delete(ctx context.Context, s Streamer, profile string, deleteData bool) (Process, error) {
+	if err := ValidateProfile(profile); err != nil {
+		return nil, err
+	}
+	args := []string{"delete", "-p", profile, "--force"}
+	if deleteData {
+		args = append(args, "--data")
+	}
+	return stream(ctx, s, args)
+}
+
 // Update runs `colima update -p <profile>`, which refreshes the container
 // runtime inside a running VM. It takes no other arguments.
 func Update(ctx context.Context, s Streamer, profile string) (Process, error) {

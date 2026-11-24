@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
 )
@@ -39,7 +41,7 @@ func TestColimaLauncherMapsActionsToAdapterCalls(t *testing.T) {
 func TestColimaLauncherRejectsUnknownActionAndBadProfile(t *testing.T) {
 	s := &argsStreamer{}
 	l := ColimaLauncher{S: s}
-	if _, err := l.Launch(context.Background(), Request{Action: "delete", Profile: "dev"}); !errors.Is(err, ErrUnknownAction) {
+	if _, err := l.Launch(context.Background(), Request{Action: "bogus", Profile: "dev"}); !errors.Is(err, ErrUnknownAction) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := l.Launch(context.Background(), Request{Action: ActionStart, Profile: "../x"}); err == nil {
@@ -108,25 +110,114 @@ func TestColimaLauncherCreateBackstopRejectsBadOptions(t *testing.T) {
 	}
 }
 
-// statusRunner is a colima.Runner fake that answers `colima status --json`.
-type statusRunner struct {
-	out   string
-	err   error
-	calls [][]string
+func TestColimaLauncherDeleteArgv(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s}
+	for _, data := range []bool{false, true} {
+		if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev", DeleteData: data}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := [][]string{
+		{"delete", "-p", "dev", "--force"},
+		{"delete", "-p", "dev", "--force", "--data"},
+	}
+	if !reflect.DeepEqual(s.args, want) {
+		t.Fatalf("args = %v, want %v", s.args, want)
+	}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "../x"}); err == nil {
+		t.Fatal("want invalid profile error")
+	}
+	if len(s.args) != 2 {
+		t.Fatalf("streamer called for a hostile name: %v", s.args)
+	}
 }
 
-func (r *statusRunner) Run(_ context.Context, args []string) (colima.Result, error) {
-	r.calls = append(r.calls, args)
-	return colima.Result{Stdout: []byte(r.out)}, r.err
+func TestColimaLauncherDeleteRechecksStatusInsideTheSlot(t *testing.T) {
+	for _, c := range []struct {
+		status string
+		runs   bool
+	}{
+		{"stopped", true}, {"Broken", true},
+		{"running", false}, {"Running", false}, {"starting", false}, {"unknown", false}, {"", false},
+	} {
+		s := &argsStreamer{}
+		l := ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return c.status, nil }}
+		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev", DeleteData: true})
+		if err != nil {
+			t.Fatalf("%q: %v", c.status, err)
+		}
+		if (len(s.args) == 1) != c.runs {
+			t.Fatalf("%q: streamer calls %v, want run=%v", c.status, s.args, c.runs)
+		}
+		if !c.runs {
+			var lines []string
+			for l := range p.Lines() {
+				lines = append(lines, l)
+			}
+			exit, werr := p.Wait()
+			if len(lines) != 1 || !strings.Contains(lines[0], "not stopped") || exit.ExitCode != 1 || werr != nil {
+				t.Fatalf("%q: lines %v exit %+v %v", c.status, lines, exit, werr)
+			}
+			p.Cancel()
+		}
+	}
 }
 
-const statusK8s = `{"runtime":"docker","kubernetes":true}`
-const statusNoK8s = `{"runtime":"docker","kubernetes":false}`
+func TestColimaLauncherDeleteStatusErrorStartsNothing(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return "", errors.New("boom") }}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"}); err == nil {
+		t.Fatal("want error")
+	}
+	if len(s.args) != 0 {
+		t.Fatalf("streamer called: %v", s.args)
+	}
+}
+
+// A refused delete ends as a failed job through the manager, and its slot is
+// released, so the user can stop the profile and try again.
+func TestRefusedDeleteIsAFailedJob(t *testing.T) {
+	s := &argsStreamer{}
+	m := New(Options{Launcher: ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return "running", nil }}})
+	sum, err := m.Submit(Request{Action: ActionDelete, Profile: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		got, _ := m.Get(sum.ID)
+		if got.State == StateFailed {
+			if len(got.Output) != 1 || len(s.args) != 0 || !got.NotRun {
+				t.Fatalf("output %v args %v", got.Output, s.args)
+			}
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("state %s", got.State)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, running := m.Busy("dev"); running {
+		t.Fatal("slot still held")
+	}
+}
+
+func k8sLauncher(s colima.Streamer, status string, enabled bool) ColimaLauncher {
+	return ColimaLauncher{
+		S:                 s,
+		VMStatus:          func(context.Context, string) (string, error) { return status, nil },
+		KubernetesEnabled: func(string) (bool, error) { return enabled, nil },
+	}
+}
+
+var k8sActions = []Action{ActionKubernetesStart, ActionKubernetesStop, ActionKubernetesReset, ActionKubernetesDelete}
 
 func TestColimaLauncherKubernetesArgv(t *testing.T) {
 	s := &argsStreamer{}
-	l := ColimaLauncher{S: s, R: &statusRunner{out: statusK8s}}
-	for _, a := range []Action{ActionKubernetesStart, ActionKubernetesStop, ActionKubernetesReset, ActionKubernetesDelete} {
+	l := k8sLauncher(s, "Running", true)
+	for _, a := range k8sActions {
 		if !a.IsKubernetes() {
 			t.Fatalf("%s: IsKubernetes false", a)
 		}
@@ -148,43 +239,72 @@ func TestColimaLauncherKubernetesArgv(t *testing.T) {
 	}
 }
 
-func TestColimaLauncherKubernetesRechecksInsideTheSlot(t *testing.T) {
+// A stopped cluster is the normal state for Start: only the configuration
+// decides, never whether k3s is running.
+func TestColimaLauncherKubernetesRefusalsAreFailedJobsNotRuns(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		r    *statusRunner
-		want error
+		name    string
+		status  string
+		enabled bool
 	}{
-		{"stopped", &statusRunner{err: &colima.ExitError{ExitCode: 1}}, ErrProfileNotRunning},
-		{"disabled", &statusRunner{out: statusNoK8s}, ErrKubernetesNotEnabled},
+		{"stopped", "stopped", true},
+		{"broken", "broken", true},
+		{"empty", "", true},
+		{"disabled", "running", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &argsStreamer{}
-			l := ColimaLauncher{S: s, R: tc.r}
-			if _, err := l.Launch(context.Background(), Request{Action: ActionKubernetesReset, Profile: "dev"}); !errors.Is(err, tc.want) {
-				t.Fatalf("err = %v, want %v", err, tc.want)
+			p, err := k8sLauncher(s, tc.status, tc.enabled).Launch(context.Background(), Request{Action: ActionKubernetesReset, Profile: "dev"})
+			if err != nil || p == nil {
+				t.Fatalf("p=%v err=%v", p, err)
+			}
+			if nr, ok := p.(interface{ NotRun() bool }); !ok || !nr.NotRun() {
+				t.Fatal("refusal must be marked NotRun")
+			}
+			if ex, _ := p.Wait(); ex.ExitCode == 0 {
+				t.Fatal("refusal must fail")
 			}
 			if len(s.args) != 0 {
 				t.Fatalf("streamer called: %v", s.args)
 			}
 		})
 	}
-	// An unexpected failure is not read as "not running".
-	l := ColimaLauncher{S: &argsStreamer{}, R: &statusRunner{err: errors.New("boom")}}
-	_, err := l.Launch(context.Background(), Request{Action: ActionKubernetesStop, Profile: "dev"})
-	if err == nil || errors.Is(err, ErrProfileNotRunning) {
-		t.Fatalf("err = %v", err)
+}
+
+func TestColimaLauncherKubernetesFailsClosed(t *testing.T) {
+	boom := errors.New("boom")
+	for _, l := range []ColimaLauncher{
+		{S: &argsStreamer{}}, // no hooks at all
+		{S: &argsStreamer{}, VMStatus: func(context.Context, string) (string, error) { return "running", nil }},
+		{S: &argsStreamer{}, KubernetesEnabled: func(string) (bool, error) { return true, nil }},
+		{S: &argsStreamer{}, VMStatus: func(context.Context, string) (string, error) { return "", boom },
+			KubernetesEnabled: func(string) (bool, error) { return true, nil }},
+		{S: &argsStreamer{}, VMStatus: func(context.Context, string) (string, error) { return "running", nil },
+			KubernetesEnabled: func(string) (bool, error) { return false, boom }},
+	} {
+		s := &argsStreamer{}
+		l.S = s
+		if _, err := l.Launch(context.Background(), Request{Action: ActionKubernetesStop, Profile: "dev"}); err == nil {
+			t.Fatal("want an error")
+		}
+		if len(s.args) != 0 {
+			t.Fatalf("colima ran: %v", s.args)
+		}
 	}
 }
 
-func TestColimaLauncherKubernetesRejectsBadProfileBeforeAnyProcess(t *testing.T) {
-	s, r := &argsStreamer{}, &statusRunner{out: statusK8s}
-	l := ColimaLauncher{S: s, R: r}
-	for _, a := range []Action{ActionKubernetesStart, ActionKubernetesStop, ActionKubernetesReset, ActionKubernetesDelete} {
+func TestColimaLauncherKubernetesRejectsBadProfileBeforeAnyRead(t *testing.T) {
+	s := &argsStreamer{}
+	calls := 0
+	l := ColimaLauncher{S: s,
+		VMStatus:          func(context.Context, string) (string, error) { calls++; return "running", nil },
+		KubernetesEnabled: func(string) (bool, error) { calls++; return true, nil }}
+	for _, a := range k8sActions {
 		if _, err := l.Launch(context.Background(), Request{Action: a, Profile: "--all"}); err == nil {
 			t.Fatalf("%s: want invalid profile error", a)
 		}
 	}
-	if len(s.args) != 0 || len(r.calls) != 0 {
-		t.Fatalf("process started: %v %v", s.args, r.calls)
+	if len(s.args) != 0 || calls != 0 {
+		t.Fatalf("process or read started: %v %d", s.args, calls)
 	}
 }

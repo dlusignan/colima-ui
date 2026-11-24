@@ -83,19 +83,19 @@ export interface ProfileCreated {
 
 /** What a profile's buttons can start. */
 export type ProfileAction = 'start' | 'stop' | 'restart' | 'update'
-/** The four Kubernetes cluster actions (docs/api.md 3.33); each is a job on the profile. */
+/** The four Kubernetes cluster actions (docs/api.md 3.34); each is a job on the profile. */
 export type KubernetesAction =
   | 'kubernetes-start'
   | 'kubernetes-stop'
   | 'kubernetes-reset'
   | 'kubernetes-delete'
 
-/** Answer of `GET /api/profiles/{name}/kubernetes` (docs/api.md 3.32). */
+/** Answer of `GET /api/profiles/{name}/kubernetes` (docs/api.md 3.33): enabled in the profile's configuration. */
 export interface KubernetesStatus {
   enabled: boolean
 }
 
-/** Body of the reset and delete routes (docs/api.md 3.33). */
+/** Body of the reset and delete routes (docs/api.md 3.34). */
 export interface KubernetesConfirmRequest {
   confirm: string
 }
@@ -105,7 +105,7 @@ export interface KubernetesConfirmRequest {
  * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's
  * start/stop slot, and its output is progress text rather than process output).
  */
-export type JobAction = ProfileAction | KubernetesAction | 'create' | 'image-pull'
+export type JobAction = ProfileAction | KubernetesAction | 'delete' | 'create' | 'image-pull'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {
@@ -207,6 +207,16 @@ export interface ImageList {
 export interface PullImageRequest {
   /** A reference with a tag or a digest, such as `postgres:18-alpine`; public registries only. */
   reference: string
+}
+
+/**
+ * Body of `POST /api/profiles/{name}/delete` (docs/api.md 3.32). `confirm` must
+ * equal the profile name exactly; `deleteData` also removes the container
+ * runtime data and defaults to false.
+ */
+export interface DeleteProfileRequest {
+  confirm: string
+  deleteData?: boolean
 }
 
 /** The 202 answer of an image pull: a job to follow like start and stop. */

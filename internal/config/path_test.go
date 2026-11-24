@@ -281,3 +281,34 @@ func TestProfileFolderExists(t *testing.T) {
 		t.Errorf("missing base: %v %v", got, err)
 	}
 }
+
+func TestProfileDirExistsNeedsARealDirectory(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, "dev"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(base, "ssh_config"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(base, "dev"), filepath.Join(base, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]bool{"dev": true, "DEV": true, "ssh_config": false, "alias": false, "ghost": false} {
+		if got, err := s.ProfileDirExists(name); err != nil || got != want {
+			t.Errorf("%s: %v %v, want %v", name, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "..", "a/b", "-x", "_templates"} {
+		if _, err := s.ProfileDirExists(bad); !errors.Is(err, ErrInvalidProfileName) {
+			t.Errorf("%q: %v", bad, err)
+		}
+	}
+	missing, _ := New(filepath.Join(base, "nope"))
+	if got, err := missing.ProfileDirExists("dev"); got || err != nil {
+		t.Errorf("missing base: %v %v", got, err)
+	}
+}

@@ -1,4 +1,6 @@
-import { Link, useParams } from 'react-router-dom'
+import { useEffect } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { ProfileActions } from '@/components/ProfileActions'
 import { StatusDot } from '@/components/StatusDot'
 import { WarningBanners } from '@/components/WarningBanners'
@@ -7,13 +9,17 @@ import { ApiError } from '@/lib/api/client'
 import { useKubernetes } from '@/lib/api/useKubernetes'
 import { useProfiles } from '@/lib/api/useProfiles'
 import type { JobAction } from '@/lib/api/types'
-import { useJobTracker } from '@/lib/jobs/useJobTracker'
+import { queryKeys } from '@/lib/api/keys'
+import { describeActionError } from '@/lib/jobs/describeActionError'
+import { useDeleteProfile } from '@/lib/jobs/useDeleteProfile'
 import { useKubernetesAction } from '@/lib/jobs/useKubernetesAction'
+import { useJobTracker } from '@/lib/jobs/useJobTracker'
 import { useProfileActionRunner } from '@/lib/jobs/useProfileActionRunner'
 import { useToast } from '@/lib/toast/useToast'
 import { logPath } from '@/views/log/logPath'
 import { ActionsPanel } from './ActionsPanel'
 import { ContainersPanel } from './ContainersPanel'
+import { DeleteProfileDialog } from './DeleteProfileDialog'
 import { KubernetesActions } from './KubernetesActions'
 import { ProfileSummary } from './ProfileSummary'
 import { SshConfigDialog } from './SshConfigDialog'
@@ -22,11 +28,12 @@ const PROGRESS: Record<JobAction, string> = {
   start: 'starting',
   stop: 'stopping',
   restart: 'restarting',
-  update: 'updating',
+  delete: 'deleting',
   'kubernetes-start': 'starting Kubernetes',
   'kubernetes-stop': 'stopping Kubernetes',
   'kubernetes-reset': 'resetting Kubernetes',
   'kubernetes-delete': 'deleting Kubernetes',
+  update: 'updating',
   create: 'creating',
   'image-pull': 'pulling',
 }
@@ -49,11 +56,45 @@ export function ProfileView() {
   const runner = useProfileActionRunner(name, tracker, (message) =>
     toast.error({ title: message, key: `action-error:${message}` }),
   )
+  const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const deletion = useDeleteProfile(name)
+  const deleteJob = tracker.jobs.get(name)
+  const deleted = deleteJob?.action === 'delete' && deleteJob.state === 'succeeded'
+
+  // The profile is gone: leave its page. The job toast stays on screen.
+  useEffect(() => {
+    if (deleted) navigate('/', { replace: true })
+  }, [deleted, navigate])
+
   const k8sRunner = useKubernetesAction(name, tracker, (message) =>
     toast.error({ title: message, key: `action-error:${message}` }),
   )
   const profileIsRunning = list?.find((p) => p.name === name)?.status === 'running'
   const kubernetes = useKubernetes(name, profileIsRunning)
+
+  // Read the flag again when a Kubernetes job reaches a final state.
+  const k8sJobFinished =
+    deleteJob?.action.startsWith('kubernetes-') === true && deleteJob.state !== 'running' ? deleteJob.jobId : null
+  useEffect(() => {
+    if (k8sJobFinished) void queryClient.invalidateQueries({ queryKey: queryKeys.kubernetes(name) })
+  }, [k8sJobFinished, name, queryClient])
+
+  const requestDelete = (deleteData: boolean) => {
+    if (deletion.isPending) return
+    deletion.mutate(
+      { deleteData },
+      {
+        onSuccess: ({ jobId }) => tracker.adopt(name, jobId),
+        onError: (error) => {
+          const d = describeActionError(error, 'delete', name)
+          if (d.trackJobId) tracker.adopt(name, d.trackJobId)
+          if (d.refresh) void queryClient.invalidateQueries({ queryKey: queryKeys.profiles })
+          if (d.message) toast.error({ title: d.message, key: `action-error:${d.message}` })
+        },
+      },
+    )
+  }
 
   if (profiles.isPending) {
     return (
@@ -87,7 +128,7 @@ export function ProfileView() {
 
   const job = tracker.jobs.get(name)
   const running = job?.state === 'running'
-  const busy = runner.pending || k8sRunner.pending || running || profile.activeJobId != null
+  const busy = runner.pending || k8sRunner.pending || deletion.isPending || running || profile.activeJobId != null
   const unavailable = (profile.warnings ?? []).some((w) => w.code === 'colima_unavailable')
   const logJobId = job?.jobId ?? profile.activeJobId
 
@@ -132,6 +173,17 @@ export function ProfileView() {
       <ProfileSummary profile={profile} />
       <ContainersPanel profile={profile} />
       <ActionsPanel profile={name} />
+      <section aria-labelledby="danger-heading" className="flex flex-col gap-2">
+        <h3 id="danger-heading" className="text-base font-semibold">
+          Danger zone
+        </h3>
+        <DeleteProfileDialog
+          profile={profile}
+          busy={busy}
+          unavailable={unavailable}
+          onDelete={requestDelete}
+        />
+      </section>
     </div>
   )
 }

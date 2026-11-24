@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +18,7 @@ type fakeProbe struct {
 	calls   int
 }
 
-func (p *fakeProbe) KubernetesEnabled(context.Context, string) (bool, error) {
+func (p *fakeProbe) KubernetesEnabled(string) (bool, error) {
 	p.mu.Lock()
 	p.calls++
 	p.mu.Unlock()
@@ -132,8 +131,6 @@ func TestKubernetesSubmitRacesMapToConflicts(t *testing.T) {
 		reason any
 	}{
 		{&operations.BusyError{Profile: "dev", JobID: "j_x"}, "profile_busy", nil},
-		{operations.ErrProfileNotRunning, "invalid_state", nil},
-		{operations.ErrKubernetesNotEnabled, "invalid_state", "kubernetes_not_enabled"},
 	} {
 		m := &fakeMgr{submit: func(operations.Request) (operations.JobSummary, error) { return operations.JobSummary{}, c.err }}
 		w := wantErr(t, call(t, k8sServer(m, &fakeGate{status: "running"}, &fakeProbe{enabled: true}),
@@ -188,7 +185,7 @@ func TestKubernetesConfirmEnforced(t *testing.T) {
 		{"delete", deleteBody, resetBody},
 	} {
 		for _, body := range []string{
-			"", "{}", "null", `{"confirm":""}`, `{"confirm":"yes"}`, c.other,
+			"", "{}", `{"confirm":""}`, `{"confirm":"yes"}`, c.other,
 			`{"confirm":"` + strings.ToUpper(strings.Trim(c.good[len(`{"confirm":"`):], `"}`)) + `"}`,
 			`{"confirm":" ` + c.verb + `-kubernetes"}`, `{"confirm":"` + c.verb + `-kubernetes "}`,
 			`{"confirm":null}`,
@@ -203,6 +200,9 @@ func TestKubernetesConfirmEnforced(t *testing.T) {
 			}
 		}
 		for _, body := range []string{
+			"null", `{"Confirm":"` + c.verb + `-kubernetes"}`, `{"CONFIRM":"` + c.verb + `-kubernetes"}`,
+			`{"confirm":"` + c.verb + `-kubernetes","confirm":"` + c.verb + `-kubernetes"}`,
+			`{"confirm":"x","confirm":"` + c.verb + `-kubernetes"}`,
 			`{"confirm":5}`, `{"confirm":["x"]}`, `{"confirm":"` + c.verb + `-kubernetes","extra":1}`,
 			`{"confirm":"` + c.verb + `-kubernetes"} {}`, `{"confirm":`, `[]`, `"x"`,
 			`{"confirm":"` + strings.Repeat("a", 2000) + `"}`,
@@ -219,17 +219,14 @@ func TestKubernetesConfirmEnforced(t *testing.T) {
 	}
 }
 
-func TestKubernetesProbeFailures(t *testing.T) {
-	// Colima refusing the status read means the VM went away.
-	w := wantErr(t, call(t, k8sServer(&fakeMgr{}, &fakeGate{status: "running"}, &fakeProbe{err: ErrKubernetesProbeRefused}), "POST", "/api/profiles/dev/kubernetes/stop", ""), 409, "invalid_state")
-	if w.Error.Details["status"] != "stopped" {
-		t.Fatalf("details %v", w.Error.Details)
-	}
+func TestKubernetesProbeFailure(t *testing.T) {
 	rec := call(t, k8sServer(&fakeMgr{}, &fakeGate{status: "running"}, &fakeProbe{err: errors.New("/home/user/x failed")}), "POST", "/api/profiles/dev/kubernetes/stop", "")
-	wantErr(t, rec, 502, "colima_failed")
+	wantErr(t, rec, 500, "internal_error")
 	if strings.Contains(rec.Body.String(), "/home") {
 		t.Fatal("raw error leaked")
 	}
+	rec = call(t, k8sServer(&fakeMgr{}, &fakeGate{status: "running"}, &fakeProbe{err: errors.New("x")}), "GET", "/api/profiles/dev/kubernetes", "")
+	wantErr(t, rec, 500, "internal_error")
 }
 
 func TestKubernetesGet(t *testing.T) {

@@ -13,16 +13,13 @@ import (
 	"github.com/dlusignan/colima-ui/internal/operations"
 )
 
-// ErrKubernetesProbeRefused means Colima would not report the profile's status,
-// which it does for a VM that is not running.
-var ErrKubernetesProbeRefused = errors.New("httpapi: colima refused the status read")
-
-// KubernetesProbe reports whether a running profile has a Kubernetes cluster
-// enabled, from `colima status` (the live answer, never the YAML file).
-// KubernetesEnabled returns ErrKubernetesProbeRefused when Colima refuses the
-// read and any other error when it fails.
+// KubernetesProbe reports whether a profile's configuration enables
+// Kubernetes (`kubernetes.enabled`, read through the config service). It is the
+// configured decision, not whether the cluster is running: `colima status`
+// reports false for a stopped cluster, which would make Start unreachable.
+// A profile with no configuration is not enabled.
 type KubernetesProbe interface {
-	KubernetesEnabled(ctx context.Context, name string) (bool, error)
+	KubernetesEnabled(name string) (bool, error)
 }
 
 // Confirmation strings the destructive routes require in `confirm`, compared
@@ -85,17 +82,12 @@ func (k *kubernetesRoutes) running(ctx context.Context, route, name string) erro
 	return nil
 }
 
-// enabled reads the live Kubernetes flag.
-func (k *kubernetesRoutes) enabled(ctx context.Context, route, name string) (bool, error) {
-	pctx, pcancel := context.WithTimeout(ctx, gateTimeout)
-	defer pcancel()
-	on, err := k.probe.KubernetesEnabled(pctx, name)
-	switch {
-	case errors.Is(err, ErrKubernetesProbeRefused):
-		return false, notRunning("stopped")
-	case err != nil:
-		slog.Error("kubernetes status read failed", "route", route, "error", err)
-		return false, errColimaFailed()
+// enabled reads the configured flag.
+func (k *kubernetesRoutes) enabled(route, name string) (bool, error) {
+	on, err := k.probe.KubernetesEnabled(name)
+	if err != nil {
+		slog.Error("kubernetes config read failed", "route", route, "error", err)
+		return false, errInternal()
 	}
 	return on, nil
 }
@@ -105,7 +97,7 @@ func (k *kubernetesRoutes) get(w http.ResponseWriter, r *http.Request) error {
 	if err := k.running(r.Context(), "kubernetes", name); err != nil {
 		return err
 	}
-	on, err := k.enabled(r.Context(), "kubernetes", name)
+	on, err := k.enabled("kubernetes", name)
 	if err != nil {
 		return err
 	}
@@ -141,7 +133,7 @@ func (k *kubernetesRoutes) action(act operations.Action, confirm string) apiHand
 		if err := k.running(r.Context(), route, name); err != nil {
 			return err
 		}
-		on, err := k.enabled(r.Context(), route, name)
+		on, err := k.enabled(route, name)
 		if err != nil {
 			return err
 		}
@@ -151,10 +143,6 @@ func (k *kubernetesRoutes) action(act operations.Action, confirm string) apiHand
 
 		sum, err := k.mgr.Submit(operations.Request{Action: act, Profile: name})
 		switch {
-		case errors.Is(err, operations.ErrProfileNotRunning):
-			return notRunning("stopped")
-		case errors.Is(err, operations.ErrKubernetesNotEnabled):
-			return kubernetesDisabled()
 		case err != nil:
 			return submitError(name, act, err)
 		}
@@ -171,23 +159,66 @@ func confirmBody(w http.ResponseWriter, r *http.Request, want string) error {
 	if err != nil {
 		return errBadRequest("Request body is not valid.")
 	}
-	var in struct {
-		Confirm *string `json:"confirm"`
-	}
+	var got string
+	ok := false
 	if b = bytes.TrimSpace(b); len(b) > 0 {
+		var m map[string]json.RawMessage
 		dec := json.NewDecoder(bytes.NewReader(b))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(&in); err != nil {
+		if err := dec.Decode(&m); err != nil || m == nil {
 			return errBadRequest("Request body is not valid.")
 		}
 		if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 			return errBadRequest("Request body is not valid.")
 		}
+		if dupKeys(b) {
+			return errBadRequest("Request body is not valid.")
+		}
+		for k := range m {
+			if k != "confirm" {
+				return errBadRequest("Request body is not valid.")
+			}
+		}
+		if raw, present := m["confirm"]; present {
+			if err := json.Unmarshal(raw, &got); err != nil {
+				// null is not text: it counts as a missing confirm (422).
+				if string(bytes.TrimSpace(raw)) != "null" {
+					return errBadRequest("Request body is not valid.")
+				}
+			} else {
+				ok = true
+			}
+		}
 	}
-	if in.Confirm == nil || *in.Confirm != want {
+	if !ok || got != want {
 		return errInvalidRequest(map[string]string{
 			"confirm": "Send the confirmation text to destroy the cluster's workloads and state.",
 		})
 	}
 	return nil
+}
+
+// dupKeys reports whether the top-level object repeats a key (case-sensitive).
+// The input is already known to be one valid JSON object.
+func dupKeys(b []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	if _, err := dec.Token(); err != nil { // the opening brace
+		return false
+	}
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		key, _ := t.(string)
+		if seen[key] {
+			return true
+		}
+		seen[key] = true
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return false
+		}
+	}
+	return false
 }
