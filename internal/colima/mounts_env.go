@@ -42,6 +42,8 @@ var envKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 //   - no comma or double quote: Colima reads --mount as a comma separated,
 //     CSV-quoted list (probed with `colima start --mount ... --help`), so a
 //     comma would add a second mount and a quote is a parse error;
+//   - no brace or dollar sign: they start template and environment expansion
+//     in the tools Colima hands the value to;
 //   - no colon: a colon starts the ":w" suffix, so it would be ambiguous;
 //   - at most 4096 bytes.
 func mountPathProblem(p string) string {
@@ -54,8 +56,8 @@ func mountPathProblem(p string) string {
 		return "not UTF-8"
 	case !path.IsAbs(p):
 		return "not absolute"
-	case strings.ContainsAny(p, ",\":"):
-		return "contains a comma, quote or colon"
+	case strings.ContainsAny(p, ",\":{}$"):
+		return "contains a comma, quote, colon, brace or dollar sign"
 	case path.Clean(p) != p:
 		return "not clean"
 	}
@@ -65,6 +67,20 @@ func mountPathProblem(p string) string {
 		}
 	}
 	return ""
+}
+
+// envValueUnsafe reports a value that Colima's --env parser (pflag
+// stringToString, probed with `colima start --env ... --help` on 0.10.3)
+// would not read back as written. With exactly one "=" in KEY=value (the key
+// has none, so none in the value) pflag only trims double quotes from both
+// ends of the whole argument, so a value ending in a quote loses it. With
+// two or more it CSV-parses the argument, so a comma, a double quote or a line
+// break in the value can split off or drop further variables.
+func envValueUnsafe(v string) bool {
+	if strings.HasSuffix(v, `"`) {
+		return true
+	}
+	return strings.Contains(v, "=") && strings.ContainsAny(v, ",\"\r\n")
 }
 
 func (o StartOptions) validateMountsEnv() error {
@@ -92,7 +108,7 @@ func (o StartOptions) validateMountsEnv() error {
 		if len(e.Key) > maxEnvKeyLen || !envKeyRE.MatchString(e.Key) {
 			return bad("env", "not a variable name")
 		}
-		if len(e.Value) > maxEnvValueLn || strings.IndexByte(e.Value, 0) >= 0 {
+		if len(e.Value) > maxEnvValueLn || strings.IndexByte(e.Value, 0) >= 0 || envValueUnsafe(e.Value) {
 			return bad("env", "not an acceptable value")
 		}
 		if keys[e.Key] {

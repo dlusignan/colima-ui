@@ -57,6 +57,24 @@ func (f *fakeFS) IsDir(p string) (bool, error) {
 	return false, errors.New("synthetic: no such file " + p)
 }
 
+// canon is the fake's file identity: the real filesystem treats an APFS
+// firmlink prefix, letter case and Unicode normalisation as the same file, so
+// the fake does too (lowercase, firmlink prefix stripped, NFD "e\u0301" is "é").
+func canon(p string) string {
+	p = strings.ToLower(strings.ReplaceAll(p, "e\u0301", "\u00e9"))
+	if p == "/system/volumes/data" {
+		return "/"
+	}
+	return strings.TrimPrefix(p, "/system/volumes/data")
+}
+
+func (f *fakeFS) SameFile(a, b string) (bool, error) {
+	if (!f.dirs[a] && !f.files[a]) || (!f.dirs[b] && !f.files[b]) {
+		return false, errors.New("synthetic: no such file")
+	}
+	return canon(a) == canon(b), nil
+}
+
 func resolve(t *testing.T, fs *fakeFS, ms ...NewMount) ([]NewMount, map[string]string) {
 	t.Helper()
 	out, errs := ResolveMounts(ms, fs)
@@ -162,6 +180,46 @@ func TestResolveMountsHomeCheckIgnoresCase(t *testing.T) {
 	}
 }
 
+// APFS firmlinks make /System/Volumes/Data/Users/me the home folder under
+// another name. Symlink resolution does not see it, identity does.
+func TestResolveMountsSeesThroughFirmlinks(t *testing.T) {
+	fs := newFakeFS("/Users/me/src")
+	fs.home = "/Users/me"
+	for _, p := range []string{"/System/Volumes/Data", "/System/Volumes/Data/Users", "/System/Volumes/Data/Users/me"} {
+		fs.dirs[p] = true
+	}
+	for _, p := range []string{"/System/Volumes/Data", "/System/Volumes/Data/Users", "/System/Volumes/Data/Users/me"} {
+		if _, errs := resolve(t, fs, NewMount{p, true}); errs["mounts[0].path"] == "" {
+			t.Errorf("%q accepted writable", p)
+		}
+		// Read-only stays allowed.
+		if _, errs := resolve(t, fs, NewMount{p, false}); len(errs) != 0 {
+			t.Errorf("%q read-only: %v", p, errs)
+		}
+	}
+	fs.dirs["/System/Volumes/Data/Users/me/src"] = true
+	if _, errs := resolve(t, fs, NewMount{"/System/Volumes/Data/Users/me/src", true}); len(errs) != 0 {
+		t.Fatalf("folder below home refused: %v", errs)
+	}
+}
+
+// Case, Unicode normalisation and firmlink variants of one folder are the same
+// folder and so duplicates.
+func TestResolveMountsDuplicatesByIdentity(t *testing.T) {
+	fs := newFakeFS("/srv/Café", "/srv/cafe\u0301", "/srv/CAFÉ", "/System/Volumes/Data/srv/Café")
+	fs.dirs["/srv/cafe\u0301"] = true
+	for _, p := range []string{"/srv/cafe\u0301", "/srv/CAFÉ", "/System/Volumes/Data/srv/Café"} {
+		fs.dirs[p] = true
+		_, errs := resolve(t, fs, NewMount{"/srv/Café", false}, NewMount{p, false})
+		if errs["mounts[1].path"] == "" {
+			t.Errorf("%q not a duplicate of /srv/Café", p)
+		}
+	}
+	if _, errs := resolve(t, newFakeFS("/srv/a", "/srv/b"), NewMount{"/srv/a", false}, NewMount{"/srv/b", false}); len(errs) != 0 {
+		t.Fatal(errs)
+	}
+}
+
 func TestResolveMountsWritableBelowHomeIsFine(t *testing.T) {
 	fs := newFakeFS("/home/user/a", "/home/username", "/home/user2")
 	// Sibling names that share a prefix with the home folder are not ancestors.
@@ -239,6 +297,9 @@ func TestValidateNewMountSyntax(t *testing.T) {
 		{"empty", []NewMount{{"", false}}, map[string]string{"mounts[0].path": "required"}},
 		{"comma", []NewMount{{"/a,b", false}}, map[string]string{"mounts[0].path": "comma"}},
 		{"quote", []NewMount{{`/a"b`, false}}, map[string]string{"mounts[0].path": "comma"}},
+		{"open brace", []NewMount{{"/a{b", false}}, map[string]string{"mounts[0].path": "brace"}},
+		{"close brace", []NewMount{{"/a}b", false}}, map[string]string{"mounts[0].path": "brace"}},
+		{"dollar", []NewMount{{"/a$HOME", false}}, map[string]string{"mounts[0].path": "dollar"}},
 		{"colon", []NewMount{{"/a:w", false}}, map[string]string{"mounts[0].path": "colon"}},
 		{"newline", []NewMount{{"/a\nb", false}}, map[string]string{"mounts[0].path": "control"}},
 		{"NUL", []NewMount{{"/a\x00b", false}}, map[string]string{"mounts[0].path": "control"}},
@@ -294,6 +355,15 @@ func TestValidateNewEnv(t *testing.T) {
 		{"empty key", []NewEnvVar{{"", "1"}}, map[string]string{"env[0]": "name"}},
 		{"duplicate", []NewEnvVar{{"A", "1"}, {"A", "2"}}, map[string]string{"env[1]": "repeats"}},
 		{"long value named by key", []NewEnvVar{{"TOKEN", long}}, map[string]string{"env.TOKEN": "4096"}},
+		{"quote at end", []NewEnvVar{{"K", `a"`}}, map[string]string{"env.K": "double quote"}},
+		{"equals and comma", []NewEnvVar{{"K", "x=1,junk"}}, map[string]string{"env.K": "double quote"}},
+		{"equals and quote", []NewEnvVar{{"K", `x=1,"B=2"`}}, map[string]string{"env.K": "double quote"}},
+		{"equals and newline", []NewEnvVar{{"K", "x=1\nB=2"}}, map[string]string{"env.K": "double quote"}},
+		{"equals and CR", []NewEnvVar{{"K", "x=1\rB"}}, map[string]string{"env.K": "double quote"}},
+		{"comma without equals", []NewEnvVar{{"K", "a,b"}}, map[string]string{}},
+		{"quote inside without equals", []NewEnvVar{{"K", `a"b`}}, map[string]string{}},
+		{"newline without equals", []NewEnvVar{{"K", "a\nb"}}, map[string]string{}},
+		{"equals alone", []NewEnvVar{{"K", "a=b=c"}}, map[string]string{}},
 		{"NUL value named by key", []NewEnvVar{{"TOKEN", "a\x00"}}, map[string]string{"env.TOKEN": "NUL"}},
 	}
 	for _, c := range cases {

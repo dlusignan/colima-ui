@@ -60,8 +60,78 @@ type NewProfile struct {
 	CPUType          string
 
 	// Mounts and Env, both optional. Env is in the order the keys appeared.
-	Mounts []Mount
+	Mounts MountList
 	Env    EnvVars
+}
+
+// Decoding stops building elements one past the caps in internal/config (16
+// mounts, 32 variables): that is enough for the validator to answer "too many"
+// on the field alone, and the rest of the array or object is only checked for
+// JSON syntax, so a body at the size cap cannot cost tens of megabytes of
+// garbage.
+const (
+	decodeMountsMax = 17
+	decodeEnvMax    = 33
+)
+
+// MountList is the decoded mounts array, cut off at decodeMountsMax elements.
+type MountList []Mount
+
+// UnmarshalJSON implements json.Unmarshaler. null counts as absent.
+func (l *MountList) UnmarshalJSON(b []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	t, err := dec.Token()
+	if err != nil {
+		return errors.New("bad array")
+	}
+	if t == nil {
+		*l = nil
+		return nil
+	}
+	if t != json.Delim('[') {
+		return errors.New("not an array")
+	}
+	var out MountList
+	for dec.More() {
+		if len(out) >= decodeMountsMax {
+			if err := skipValue(dec); err != nil {
+				return err
+			}
+			continue
+		}
+		var m Mount
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil || m.UnmarshalJSON(raw) != nil {
+			return errors.New("bad mount")
+		}
+		out = append(out, m)
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim(']') {
+		return errors.New("not an array")
+	}
+	*l = out
+	return nil
+}
+
+// skipValue consumes one JSON value without building it.
+func skipValue(dec *json.Decoder) error {
+	depth := 0
+	for {
+		t, err := dec.Token()
+		if err != nil {
+			return errors.New("bad value")
+		}
+		if d, ok := t.(json.Delim); ok {
+			if d == '{' || d == '[' {
+				depth++
+			} else {
+				depth--
+			}
+		}
+		if depth == 0 {
+			return nil
+		}
+	}
 }
 
 // Mount is one mounts entry. It decodes only exactly cased "path" (string) and
@@ -108,6 +178,9 @@ func (e *EnvVars) UnmarshalJSON(b []byte) error {
 	}
 	var out EnvVars
 	err := decodeFlatObject(b, func(key string, raw json.RawMessage) error {
+		if len(out) >= decodeEnvMax {
+			return nil // counted as "too many" by the validator
+		}
 		var v string
 		if err := unmarshalNonNull(raw, &v); err != nil {
 			return err

@@ -49,6 +49,12 @@ func (h *fakeHost) EvalSymlinks(p string) (string, error) {
 	return p, nil
 }
 func (h *fakeHost) IsDir(p string) (bool, error) { return h.dirs[p], nil }
+func (h *fakeHost) SameFile(a, b string) (bool, error) {
+	if (!h.dirs[a] && !h.files[a]) || (!h.dirs[b] && !h.files[b]) {
+		return false, errors.New("synthetic: missing")
+	}
+	return a == b, nil
+}
 
 func creatorWithHost(m *fakeMgr, h *fakeHost) profileCreator {
 	c, _ := newCreator(m, false, nil)

@@ -41,7 +41,8 @@ type NewEnvVar struct {
 // rules are the adapter's (internal/colima.mountPathProblem), spelled out:
 // absolute and already clean, no ".." segment, no control character, valid
 // UTF-8, no comma or double quote (Colima reads --mount as a CSV list, so a
-// comma would add a mount) and no colon (it starts the ":w" suffix).
+// comma would add a mount), no colon (it starts the ":w" suffix) and no brace
+// or dollar sign (template and environment expansion).
 func mountPathProblem(p string) string {
 	switch {
 	case p == "":
@@ -52,8 +53,8 @@ func mountPathProblem(p string) string {
 		return "must be valid UTF-8"
 	case !path.IsAbs(p):
 		return "must be an absolute path"
-	case strings.ContainsAny(p, ",\":"):
-		return "must not contain a comma, double quote or colon"
+	case strings.ContainsAny(p, ",\":{}$"):
+		return "must not contain a comma, double quote, colon, brace or dollar sign"
 	}
 	for i := 0; i < len(p); i++ {
 		if p[i] < 0x20 || p[i] == 0x7f {
@@ -117,11 +118,22 @@ func validateMountsEnv(mounts []NewMount, env []NewEnvVar) []FieldError {
 				add("env."+e.Key, fmt.Sprintf("must be at most %d bytes", maxEnvValueLn))
 			case strings.IndexByte(e.Value, 0) >= 0:
 				add("env."+e.Key, "must not contain a NUL byte")
+			case envValueUnsafe(e.Value):
+				add("env."+e.Key, "must not end with a double quote, and must not combine = with a comma, double quote or line break")
 			}
 			keys[e.Key] = true
 		}
 	}
 	return errs
+}
+
+// envValueUnsafe mirrors internal/colima.envValueUnsafe; see there for the
+// pflag behaviour behind it.
+func envValueUnsafe(v string) bool {
+	if strings.HasSuffix(v, `"`) {
+		return true
+	}
+	return strings.Contains(v, "=") && strings.ContainsAny(v, ",\"\r\n")
 }
 
 // HostFS is the part of the host filesystem the mount checks read. Tests pass
@@ -133,6 +145,10 @@ type HostFS interface {
 	EvalSymlinks(p string) (string, error)
 	// IsDir reports whether p exists and is a directory (following symlinks).
 	IsDir(p string) (bool, error)
+	// SameFile reports whether a and b are the same file or folder by identity
+	// (device and inode), which sees through APFS firmlinks, case and Unicode
+	// normalisation differences and bind mounts that no string compare can.
+	SameFile(a, b string) (bool, error)
 }
 
 // OSHostFS is HostFS over the real filesystem.
@@ -148,6 +164,18 @@ func (OSHostFS) IsDir(p string) (bool, error) {
 	return fi.IsDir(), nil
 }
 
+func (OSHostFS) SameFile(a, b string) (bool, error) {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(fa, fb), nil
+}
+
 // ResolveMounts checks the mounts that passed ValidateNew against the host and
 // returns them with every path replaced by its symlink-resolved form, which is
 // what must be handed to Colima.
@@ -158,7 +186,7 @@ func (OSHostFS) IsDir(p string) (bool, error) {
 // checked is what is mounted (a link swapped afterwards has no effect, though
 // a swap of a real folder between check and start cannot be prevented here).
 //
-// Rules, per mount, on both the path as given and its resolved form:
+// Rules, per mount, on its resolved form:
 //
 //  1. It must exist and be a directory. A missing path, a file and a path that
 //     cannot be read all get the same message.
@@ -166,8 +194,13 @@ func (OSHostFS) IsDir(p string) (bool, error) {
 //     that contains the home folder (/Users on macOS), because each exposes
 //     the whole home. A read-only mount of any of them is allowed, as the
 //     issue decides.
-//     The comparison ignores letter case (see tooBroad).
-//  3. Two mounts that resolve to the same folder are duplicates.
+//     This is decided by identity (HostFS.SameFile), not by comparing
+//     strings, because strings miss aliases: APFS firmlinks
+//     (/System/Volumes/Data/Users/me is /Users/me), case and Unicode
+//     normalisation variants. The string comparison (case-insensitive, see
+//     tooBroad) stays as a cheap first line.
+//  3. Two mounts that are the same folder by identity are duplicates, so
+//     case and normalisation variants of one folder are caught too.
 //
 // A failure to find the home folder rejects every writable mount (fail
 // closed). Errors name mounts[i].path with fixed messages; neither the path
@@ -189,7 +222,7 @@ func ResolveMounts(mounts []NewMount, host HostFS) ([]NewMount, []FieldError) {
 		}
 	}
 	out := make([]NewMount, len(mounts))
-	seen := map[string]int{}
+	var accepted []string // resolved paths of the mounts kept so far
 	for i, m := range mounts {
 		if mountPathProblem(m.Path) != "" {
 			add(i, "must be an acceptable path")
@@ -206,15 +239,15 @@ func ResolveMounts(mounts []NewMount, host HostFS) ([]NewMount, []FieldError) {
 			add(i, "must be an existing directory on this machine")
 			continue
 		}
-		if m.Writable && (len(homes) == 0 || tooBroad(m.Path, homes) || tooBroad(res, homes)) {
+		if m.Writable && (len(homes) == 0 || tooBroad(res, homes) || containsHome(host, res, homes)) {
 			add(i, "is too broad to mount writable: the root, the home folder and the folders above it are allowed read-only only")
 			continue
 		}
-		if _, dup := seen[res]; dup {
+		if sameAsAny(host, res, accepted) {
 			add(i, "repeats an earlier mount")
 			continue
 		}
-		seen[res] = i
+		accepted = append(accepted, res)
 		out[i] = NewMount{Path: res, Writable: m.Writable}
 	}
 	if len(errs) > 0 {
@@ -237,6 +270,44 @@ func tooBroad(p string, homes []string) bool {
 		h = strings.ToLower(h)
 		if h == p || strings.HasPrefix(h, p+"/") {
 			return true
+		}
+	}
+	return false
+}
+
+// sameAsAny reports whether p is the same folder as any of paths, by string
+// or by identity.
+func sameAsAny(host HostFS, p string, paths []string) bool {
+	for _, q := range paths {
+		if q == p {
+			return true
+		}
+		if ok, err := host.SameFile(p, q); err == nil && ok {
+			return true
+		}
+	}
+	return false
+}
+
+// containsHome reports whether the home folder is res or lies inside it, by
+// identity. For every lexical ancestor A of home (including home itself and
+// "/") it asks whether res plus the rest of home's path, below A, is home:
+// for res = /System/Volumes/Data and home = /Users/me that is
+// /System/Volumes/Data/Users/me, which the filesystem answers with home's own
+// identity although no string says so. A lookup that fails counts as "no".
+func containsHome(host HostFS, res string, homes []string) bool {
+	for _, h := range homes {
+		for a := h; ; a = path.Dir(a) {
+			suffix := strings.TrimPrefix(h, a)
+			if a == "/" {
+				suffix = h
+			}
+			if ok, err := host.SameFile(path.Join(res, suffix), h); err == nil && ok {
+				return true
+			}
+			if a == "/" {
+				break
+			}
 		}
 	}
 	return false

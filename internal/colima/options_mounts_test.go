@@ -45,8 +45,8 @@ func TestMountEnvFlagTable(t *testing.T) {
 // Every hostile value stays exactly one argv element, right after its flag.
 func TestEnvValuesStayOneArgvElement(t *testing.T) {
 	vals := []string{
-		"--edit", "--", "a;b", "a\nb", "a\r\nb", "x=y=z", "$(id)", "`id`", "a|b&c", "'; rm -rf /", `a"b`, "a,b=c", "a b",
-		"-x", "=", "==", "\t", "ünï", "KEY2=1",
+		"--edit", "--", "a;b", "a\nb", "a\r\nb", "x=y=z", "$(id)", "`id`", "a|b&c", "'; rm -rf /", `a"b`, "a b",
+		"-x", "=", "==", "\t", "ünï", "KEY2=1", "a,b", "a b,c", "x=1", "x=y=z", "a\"b", "{}", "$HOME",
 	}
 	for _, v := range vals {
 		o := StartOptions{Env: []EnvVar{{"K", v}}}
@@ -59,10 +59,31 @@ func TestEnvValuesStayOneArgvElement(t *testing.T) {
 	}
 }
 
+// The values Colima's pflag parser would read differently (probed on 0.10.3):
+// one "=" in KEY=value trims double quotes off both ends of the argument, two
+// or more make it a CSV record.
+func TestEnvValuesColimaWouldReadDifferentlyAreRejected(t *testing.T) {
+	for _, v := range []string{
+		`a"`, `""`, `"`, `x"`, "x=1,junk", `x=1,"B=2"`, `x=1,B"q`, "x=1\nB=2", "x=1\r\nB=2", "x=1\rB", "=,", "=\"", `a=b"`,
+		"x=1,ANY KEY=v",
+	} {
+		err := StartOptions{Env: []EnvVar{{"K", v}}}.Validate(testLimits)
+		var ioe *InvalidOptionError
+		if !errors.As(err, &ioe) || ioe.Field != "env" {
+			t.Errorf("%q: got %v", v, err)
+		}
+	}
+	for _, v := range []string{"a,b", `a"b`, "a\nb", "a=b", "a=b=c", "a=b;c", `"a`, "a b,c d"} {
+		if err := (StartOptions{Env: []EnvVar{{"K", v}}}).Validate(testLimits); err != nil {
+			t.Errorf("%q: %v", v, err)
+		}
+	}
+}
+
 func TestMountPathsStayOneArgvElement(t *testing.T) {
 	// Accepted despite looking odd: they are one argv element and Colima sees
 	// no comma, quote, colon or control character in them.
-	for _, p := range []string{"/--edit", "/a;b", "/$(id)", "/`id`", "/a b", "/a|b", "/-x", "/a=b", "/ünï", `/a\b`, "/*", "/~"} {
+	for _, p := range []string{"/--edit", "/a;b", "/`id`", "/a b", "/a|b", "/-x", "/a=b", "/ünï", `/a\b`, "/*", "/~"} {
 		o := StartOptions{Mounts: []Mount{{Path: p, Writable: true}}}
 		if err := o.Validate(testLimits); err != nil {
 			t.Fatalf("%q: %v", p, err)
@@ -76,7 +97,7 @@ func TestMountPathsStayOneArgvElement(t *testing.T) {
 var hostileMountPaths = []string{
 	"", "a", "./a", "../a", "~", "~/a", "$HOME", "none", "-x", "--mount", "/a/../b", "/a/./b", "/..", "/a/..", "/.", "//a", "/a//b", "/a/",
 	"/a,b", "/a\",\"b", `/a"b`, "/a:w", "/a:b", "/a\nb", "/a\rb", "/a\x00b", "/a\tb", "/a\x7fb", "/a\x1b[0m", "\xff/a", "/\xc3\x28",
-	"/a,/etc", strings.Repeat("/a", 2049), "relative/path", " /a",
+	"/a,/etc", "/a{b", "/a}b", "/a$b", "/${HOME}", "/{{.Home}}", strings.Repeat("/a", 2049), "relative/path", " /a",
 }
 
 func TestMountPathsRejectHostileValues(t *testing.T) {
@@ -232,7 +253,7 @@ func mountEnvAgree(t *testing.T, p, key, val string) {
 
 var parityPaths = append([]string{
 	"/", "/a", "/Users", "/Users/u", "/a b", "/a/b/c", "/tmp/x_y-z.w", "/ünï", "/" + strings.Repeat("a", 4095),
-	"/" + strings.Repeat("a", 4096), "/a/b/", "/a:w", "/a:", "/a\\b", "/a#b", "/a$b", "/a%00",
+	"/" + strings.Repeat("a", 4096), "/a/b/", "/a:w", "/a:", "/a\\b", "/a#b", "/a$b", "/a{b}", "/a%00",
 }, hostileMountPaths...)
 
 var parityKeys = []string{
@@ -241,7 +262,7 @@ var parityKeys = []string{
 }
 
 var parityValues = []string{
-	"", "v", "a=b", "a,b", `a"b`, "a\nb", "a\x00b", "-x", "--", strings.Repeat("v", 4096), strings.Repeat("v", 4097), "ünï", "\xff",
+	"", "v", "a=b", "a,b", `a"b`, `a"`, `"a`, "a=b,c", `a=b,"C=1"`, "a=b\nc", "a=b\rc", "a=b=c", "a\nb", "a\x00b", "-x", "--", strings.Repeat("v", 4096), strings.Repeat("v", 4097), "ünï", "\xff",
 }
 
 func TestMountEnvValidatorsAgreeWithConfig(t *testing.T) {

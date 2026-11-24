@@ -14,7 +14,7 @@ func TestCreateAcceptsMountsAndEnv(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	p := f.calls[0]
-	if want := []Mount{{"/srv/a", true}, {"/srv/b", false}, {"/srv/c", false}}; !reflect.DeepEqual(p.Mounts, want) {
+	if want := (MountList{{"/srv/a", true}, {"/srv/b", false}, {"/srv/c", false}}); !reflect.DeepEqual(p.Mounts, want) {
 		t.Fatalf("mounts %+v", p.Mounts)
 	}
 	// Keys that differ only in case are different variables, in body order.
@@ -120,7 +120,33 @@ func TestCreateHugeMountsAndEnvReachTheValidator(t *testing.T) {
 	if rec := cfgReq(t, createAPI(f), "POST", "/api/profiles", body); rec.Code != 202 {
 		t.Fatalf("%d %.200s", rec.Code, rec.Body)
 	}
-	if len(f.calls[0].Mounts) != 500 {
-		t.Fatalf("mounts %d", len(f.calls[0].Mounts))
+	// Decoding stops one past the caps; the validator answers "too many".
+	if p := f.calls[0]; len(p.Mounts) != decodeMountsMax || len(p.Env) != decodeEnvMax {
+		t.Fatalf("mounts %d env %d", len(p.Mounts), len(p.Env))
+	}
+}
+
+// Past the cap an element or entry is only checked for JSON syntax.
+func TestCreateElementsPastTheCapAreOnlySyntaxChecked(t *testing.T) {
+	var mounts, env []string
+	for i := 0; i < 17; i++ {
+		mounts = append(mounts, `{"path":"/a"}`)
+	}
+	for i := 0; i < 33; i++ {
+		env = append(env, `"K`+strings.Repeat("x", i)+`":"v"`)
+	}
+	f := &fakeCreator{id: "1"}
+	ok := `{"name":"dev","mounts":[` + strings.Join(mounts, ",") + `,{"nope":[1,{"a":[]}]},"str",null,[[]]],"env":{` +
+		strings.Join(env, ",") + `,"X":1}}`
+	if rec := cfgReq(t, createAPI(f), "POST", "/api/profiles", ok); rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	for name, body := range map[string]string{
+		"broken json past the mounts cap": `{"name":"dev","mounts":[` + strings.Join(mounts, ",") + `,{"a":}]}`,
+		"unterminated past the cap":       `{"name":"dev","mounts":[` + strings.Join(mounts, ",") + `,[1,2}`,
+	} {
+		if rec := cfgReq(t, createAPI(&fakeCreator{id: "1"}), "POST", "/api/profiles", body); rec.Code != 400 {
+			t.Errorf("%s: %d", name, rec.Code)
+		}
 	}
 }
