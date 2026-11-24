@@ -113,11 +113,11 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
+For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`; the network routes (3.22 to 3.25) use `name`, `subnet`, `network` (the path parameter) and `confirm`. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
 
 ## 3. Routes
 
-There are 23 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 27 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -141,6 +141,10 @@ There are 23 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `DELETE` | `/api/profiles/{name}/volumes/{volume}` | Remove a volume, never forced (3.20) |
 | `POST` | `/api/profiles/{name}/volumes/prune` | Remove all unused volumes, named ones included; needs a confirmation text (3.21) |
 | `GET` | `/api/profiles/{name}/networks` | Docker networks |
+| `POST` | `/api/profiles/{name}/networks` | Create a bridge network (3.22) |
+| `GET` | `/api/profiles/{name}/networks/{network}` | Inspect one network (3.23) |
+| `DELETE` | `/api/profiles/{name}/networks/{network}` | Remove a network, never forced (3.24) |
+| `POST` | `/api/profiles/{name}/networks/prune` | Remove all unused networks; needs a confirmation text (3.25) |
 | `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
@@ -571,7 +575,7 @@ Response `200`:
 - The list is sorted by `name`, then by `id`.
 - A running VM always has the built-in networks, so the list is empty only for a running profile whose runtime is not Docker, which returns `{"networks":[]}`.
 
-This route only reads. There is no network create, remove or prune.
+This route only reads. Networks are created, inspected, removed and pruned by the routes in 3.22 to 3.25.
 
 Errors are the same as for 3.13.
 
@@ -860,9 +864,128 @@ How the v1.41 behaviour was verified. The v1.41 API description of `POST /volume
 
 Errors: the shared ones of 1.3, plus the `422` and `400` above.
 
+### 3.22 `POST /api/profiles/{name}/networks`
+
+Token: yes. Creates a bridge network. It follows the Docker write rules in 1.3 (profile, busy check, strict body, validation, one fixed Docker call, action log row `docker.network.create`). The body is at most 4 KiB.
+
+Request:
+
+```json
+{
+  "name": "backend",
+  "internal": false,
+  "subnet": "172.28.0.0/16"
+}
+```
+
+- `name` is required and follows the object name rule of 1.3.
+- `internal` is optional (absent and `null` mean `false`). An internal network has no route to the outside.
+- `subnet` is optional (absent and `null` mean that Docker chooses). It is one CIDR, IPv4 or IPv6, and nothing else: no list, no gateway, no IP range. Anything that fails the rules below is `422 invalid_request` with `details.fields` holding the single key `subnet` and a fixed message; the answer never repeats the value.
+  1. It must be ASCII text of at most 64 characters, with no spaces, control or format characters, no zone and no bare address, and an IPv4-mapped IPv6 address (`::ffff:...`) is refused.
+  2. The prefix length must be 8 to 28 for IPv4 and 48 to 120 for IPv6. That refuses `/0` and ranges too wide to be a network, and ranges too small to hold a gateway and containers.
+  3. The range must not overlap loopback (`127.0.0.0/8`, `::1`), the unspecified or "this network" range (`0.0.0.0/8`, `::/8`), link-local (`169.254.0.0/16`, `fe80::/10`), multicast (`224.0.0.0/4`, `ff00::/8`) or the reserved block `240.0.0.0/4`. Overlap is what counts, so a short prefix cannot contain a refused range.
+  4. **Host bits are ignored.** `172.28.0.5/16` is read as `172.28.0.0/16`, and the masked form is what is sent to Docker, so Docker never stores something other than what was checked.
+  Docker still decides about overlaps with other networks and with the VM's own routes; its refusal is `409 conflict`.
+- No driver and no options are accepted (`driver`, `options`, `attachable`, `enableIPv6`, `gateway` and the like are unknown keys, `400`). The network is always created with the `bridge` driver. The Docker request carries exactly: the name, the driver `bridge`, `Internal`, `CheckDuplicate: true`, at most one IPAM subnet, and `EnableIPv6: true` only when that subnet is IPv6 (Docker ignores an IPv6 subnet on a network without IPv6). It never carries driver options, labels, `Attachable`, `Ingress` or a swarm scope.
+
+Response `201`, the same fields as a list entry (3.14):
+
+```json
+{
+  "id": "9d1c0a47be12",
+  "name": "backend",
+  "driver": "bridge",
+  "scope": "local",
+  "internal": false,
+  "containers": 0
+}
+```
+
+If Docker answered `201` but its answer could not be read, the network exists and the route still answers `201` with `"id": ""`: the list (3.14) has the id.
+
+Errors: the shared ones of 1.3, plus `409 conflict` (`details.name`) when a network with that name exists, and `422` for `name` or `subnet`. Duplicate names are refused in two ways. The backend first looks the name up (an inspect; `404` means free) and does not create anything if that lookup fails for any other reason. The create request also carries `CheckDuplicate`, because on Docker API v1.41 a create without it makes a second network with the same name, which then cannot be addressed by name. Docker's own documentation calls that check best effort, so two creates of one name racing each other can both pass and leave two networks with that name; the list shows both by id. This was checked against the published API description only; no network was created on any engine to test it.
+
+### 3.23 `GET /api/profiles/{name}/networks/{network}`
+
+Token: yes. Request body: none. Inspects one network by name, or by its short (12 characters) or full (64 characters) lowercase hex id. It follows the profile, body, validation and error rules of 1.3 but it is a read: it does not check the busy state and it writes no action log row. Clients should not poll it; ask for it when the user opens a network.
+
+Response `200`:
+
+```json
+{
+  "id": "9d1c0a47be12",
+  "name": "backend",
+  "driver": "bridge",
+  "scope": "local",
+  "internal": false,
+  "subnets": [{ "subnet": "172.28.0.0/16", "gateway": "172.28.0.1" }],
+  "containers": [{ "name": "api", "ipv4Address": "172.28.0.2", "ipv6Address": "" }]
+}
+```
+
+- `subnets` lists the network's address ranges in canonical form, `gateway` is `""` when there is none. Ranges the engine reports in a form that is not a CIDR are left out.
+- `containers` lists every container that is attached: those the engine reports as connected (with their addresses, without the prefix length) and those the container list says use the network, stopped ones included (with empty addresses). It is sorted by name. A container name that is not a plain name is replaced by its short id. Nothing else about a container is returned.
+- Options, labels, endpoint ids and MAC addresses are never returned.
+- Text that is neither a valid name nor a 12 or 64 character hex id is `422` (`details.fields.network`). Docker also resolves a name by any id prefix; the backend does not: if the network Docker finds is not the one the text names exactly (its name, or a 12 or 64 character id prefix), the answer is `404`.
+
+Errors: the shared ones of 1.3, plus `404 not_found` (`details.name`) for an unknown network and `422 invalid_request` (`details.fields.network`).
+
+### 3.24 `DELETE /api/profiles/{name}/networks/{network}`
+
+Token: yes. Request body: none. Removes one network, found by name or id as in 3.23. Response `204` with no body. Action log row `docker.network.remove`.
+
+The removal is never forced: no `force` parameter exists and the backend never sends one. Before removing, it looks the network up and refuses, without sending any remove request:
+
+1. The predefined networks `bridge`, `host` and `none`, matched by name in any letter case (so also when reached by id), and the swarm `ingress` network: `409 conflict` with `details.name`.
+2. A network with attached containers, running or stopped: `409 conflict` with `details.name` and `details.containers` (the number of containers; no names, no addresses). If a container attaches after that check, Docker refuses itself and the answer is the same `409` without `details.containers`.
+
+The remove request then goes to the network's full id, as Docker reported it in the lookup, never to the text of the URL.
+
+Errors: the shared ones of 1.3, plus `404 not_found` for an unknown network, `409 conflict` as above and `422 invalid_request` (`details.fields.network`). A network literally named `prune` is removed with this route like any other.
+
+### 3.25 `POST /api/profiles/{name}/networks/prune`
+
+Token: yes. Removes unused networks. This cannot be undone. Because of that the request must carry a fixed confirmation text. Action log row `docker.network.prune` with no detail. It has a 2 minute budget. Docker never prunes the predefined networks (`bridge`, `host`, `none`). What counts as unused is Docker's own rule and the backend does not second-guess it: a network that no running container uses may be removed even if a stopped container is configured for it. No filters are sent and none can be given.
+
+Request:
+
+```json
+{
+  "confirm": "delete-unused-networks"
+}
+```
+
+- `confirm` must be exactly `delete-unused-networks`. An empty body, `{}`, a missing or `null` key and any other string (including the volume prune text) answer `422 invalid_request` with `details.fields` holding `confirm`; Docker is not reached and no log row is written. Any other key, a repeated key, trailing data and a non-object body are `400 bad_request`. The body is at most 1 KiB.
+
+Response `200`:
+
+```json
+{
+  "removed": ["old-backend", "scratch"],
+  "removedCount": 2,
+  "truncated": false,
+  "resultComplete": true
+}
+```
+
+- `removed` lists the networks Docker deleted (sorted, `[]` when there was nothing to remove), at most 1000 valid names. Names that do not follow the object name rule of 1.3 are never listed or echoed.
+- `removedCount` is the number of networks Docker says it deleted. `truncated` is `true` when `removed` lists fewer names than `removedCount`.
+- `resultComplete` is `false` when Docker ran the prune (it answered `200`) but its answer could not be read: the body was too large or not the expected JSON. The networks are already gone, so the route still answers `200`, writes a `success` row and reports `removedCount` as `null` with `removed` empty. A client must show this as "the prune ran, the list is unknown", never as a failure:
+
+```json
+{
+  "removed": [],
+  "removedCount": null,
+  "truncated": false,
+  "resultComplete": false
+}
+```
+
+Errors: the shared ones of 1.3, plus the `422` and `400` above.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

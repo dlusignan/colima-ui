@@ -249,6 +249,57 @@ export interface PruneVolumesRequest {
   confirm: string
 }
 
+/** Body of `POST /api/profiles/{name}/networks`. Bridge networks only. */
+export interface CreateNetworkRequest {
+  name: string
+  internal?: boolean
+  /** One CIDR (IPv4 /8 to /28, IPv6 /48 to /120); host bits are ignored. */
+  subnet?: string
+}
+
+export interface NetworkSubnet {
+  subnet: string
+  /** Empty when the network has no gateway. */
+  gateway: string
+}
+
+/** A container attached to a network; addresses are empty when unknown. */
+export interface NetworkContainer {
+  name: string
+  ipv4Address: string
+  ipv6Address: string
+}
+
+/** Answer of `GET /api/profiles/{name}/networks/{network}`. */
+export interface NetworkDetail {
+  id: string
+  name: string
+  driver: string
+  scope: string
+  internal: boolean
+  subnets: NetworkSubnet[]
+  containers: NetworkContainer[]
+}
+
+/**
+ * Answer of `POST /api/profiles/{name}/networks/prune`. Irreversible. When
+ * Docker ran the prune but its answer was unreadable, `resultComplete` is
+ * false and `removedCount` is null: the networks are gone, only the list is
+ * unknown. `truncated` is true when `removed` lists fewer names than
+ * `removedCount`.
+ */
+export interface NetworkPruneResult {
+  removed: string[]
+  removedCount: number | null
+  truncated: boolean
+  resultComplete: boolean
+}
+
+/** Body of `POST /api/profiles/{name}/networks/prune`. */
+export interface PruneNetworksRequest {
+  confirm: string
+}
+
 export interface NetworkList {
   networks: DockerNetwork[]
 }

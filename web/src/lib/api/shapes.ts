@@ -25,6 +25,12 @@ import type {
   VolumeDetail,
   VolumePruneResult,
   PruneVolumesRequest,
+  CreateNetworkRequest,
+  NetworkSubnet,
+  NetworkContainer,
+  NetworkDetail,
+  NetworkPruneResult,
+  PruneNetworksRequest,
   ConfigUpdate,
   CreateProfileRequest,
   ConfigUpdateResult,
@@ -262,6 +268,44 @@ export const dockerNetworkShape = {
   internal: 'boolean',
   containers: 'number',
 } as const satisfies Record<keyof DockerNetwork, Kind>
+
+export const createNetworkRequestShape = {
+  name: 'string',
+  internal: 'boolean',
+  subnet: 'string',
+} as const satisfies Record<keyof CreateNetworkRequest, Kind>
+
+export const networkSubnetShape = {
+  subnet: 'string',
+  gateway: 'string',
+} as const satisfies Record<keyof NetworkSubnet, Kind>
+
+export const networkContainerShape = {
+  name: 'string',
+  ipv4Address: 'string',
+  ipv6Address: 'string',
+} as const satisfies Record<keyof NetworkContainer, Kind>
+
+export const networkDetailShape = {
+  id: 'string',
+  name: 'string',
+  driver: 'string',
+  scope: 'string',
+  internal: 'boolean',
+  subnets: { arrayOf: networkSubnetShape },
+  containers: { arrayOf: networkContainerShape },
+} as const satisfies Record<keyof NetworkDetail, Kind>
+
+export const pruneNetworksRequestShape = {
+  confirm: 'string',
+} as const satisfies Record<keyof PruneNetworksRequest, Kind>
+
+export const networkPruneResultShape = {
+  removed: 'string[]',
+  removedCount: 'number|null',
+  truncated: 'boolean',
+  resultComplete: 'boolean',
+} as const satisfies Record<keyof NetworkPruneResult, Kind>
 
 export const networkListShape = {
   networks: { arrayOf: dockerNetworkShape },

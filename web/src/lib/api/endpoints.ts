@@ -3,7 +3,9 @@ import type {
   ActionList,
   ConfigUpdate,
   CreateProfileRequest,
+  CreateNetworkRequest,
   CreateVolumeRequest,
+  DockerNetwork,
   DockerVolume,
   ConfigUpdateResult,
   ContainerList,
@@ -19,6 +21,8 @@ import type {
   ProfileConfig,
   ProfileCreated,
   ProfileList,
+  NetworkDetail,
+  NetworkPruneResult,
   VolumeDetail,
   VolumeList,
   VolumePruneResult,
@@ -28,6 +32,9 @@ const enc = encodeURIComponent
 
 /** The fixed text `POST .../volumes/prune` requires in `confirm` (docs/api.md 3.21). */
 export const PRUNE_VOLUMES_CONFIRMATION = 'delete-unused-volumes'
+
+/** The fixed text `POST .../networks/prune` requires in `confirm` (docs/api.md 3.25). */
+export const PRUNE_NETWORKS_CONFIRMATION = 'delete-unused-networks'
 
 function withQuery(
   path: string,
@@ -103,6 +110,27 @@ export const api = {
     }),
   getNetworks: (name: string, signal?: AbortSignal) =>
     request<NetworkList>('GET', `/api/profiles/${enc(name)}/networks`, { signal }),
+  createNetwork: (name: string, body: CreateNetworkRequest) =>
+    request<DockerNetwork>('POST', `/api/profiles/${enc(name)}/networks`, { body }),
+  getNetwork: (name: string, network: string, signal?: AbortSignal) =>
+    request<NetworkDetail>('GET', `/api/profiles/${enc(name)}/networks/${enc(network)}`, { signal }),
+  /**
+   * Never forced: the predefined networks and a network with containers answer
+   * 409 (`details.containers` counts them).
+   */
+  removeNetwork: (name: string, network: string) =>
+    request<void>('DELETE', `/api/profiles/${enc(name)}/networks/${enc(network)}`, {
+      expectEmpty: true,
+    }),
+  /**
+   * Irreversible. Removes every unused network. The server requires the
+   * confirmation text, which is sent here so no caller can forget it: call this
+   * only after the user has confirmed.
+   */
+  pruneNetworks: (name: string) =>
+    request<NetworkPruneResult>('POST', `/api/profiles/${enc(name)}/networks/prune`, {
+      body: { confirm: PRUNE_NETWORKS_CONFIRMATION },
+    }),
   getActions: (name: string, limit?: number, signal?: AbortSignal) =>
     request<ActionList>('GET', withQuery(`/api/profiles/${enc(name)}/actions`, { limit }), {
       signal,
