@@ -115,6 +115,49 @@ describe('request', () => {
     expect(init.body).toBe('{"confirm":"delete-unused-volumes"}')
   })
 
+  it('builds the network write requests and treats a 204 as success', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(201, { id: 'a', name: 'backend' }))
+    await api.createNetwork('dev', { name: 'backend', internal: true, subnet: '172.28.0.0/16' })
+    let [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/profiles/dev/networks')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{"name":"backend","internal":true,"subnet":"172.28.0.0/16"}')
+
+    fetchMock.mockResolvedValue(jsonResponse(200, { name: 'a/b' }))
+    await api.getNetwork('dev', 'a/b')
+    ;[url, init] = fetchMock.mock.calls[1]
+    expect(url).toBe('/api/profiles/dev/networks/a%2Fb')
+    expect(init.method).toBe('GET')
+
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    await expect(api.removeNetwork('dev', 'backend')).resolves.toBeUndefined()
+    ;[url, init] = fetchMock.mock.calls[2]
+    expect(url).toBe('/api/profiles/dev/networks/backend')
+    expect(init.method).toBe('DELETE')
+    expect(init.body).toBeUndefined()
+    expect(url).not.toContain('force')
+
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { removed: [], removedCount: 0, truncated: false, resultComplete: true }),
+    )
+    await api.pruneNetworks('dev')
+    ;[url, init] = fetchMock.mock.calls[3]
+    expect(url).toBe('/api/profiles/dev/networks/prune')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{"confirm":"delete-unused-networks"}')
+  })
+
+  it('decodes the in-use conflict of a network removal', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        error: { code: 'conflict', message: 'm', details: { name: 'backend', containers: 2 } },
+      }),
+    )
+    const e = await failure(api.removeNetwork('dev', 'backend'))
+    expect(e.status).toBe(409)
+    expect(e.details.containers).toBe(2)
+  })
+
   it('accepts an empty 204 only where the caller expects one', async () => {
     fetchMock.mockImplementation(() => Promise.resolve(new Response(null, { status: 204 })))
     const e = await failure(api.getVolume('dev', 'data'))

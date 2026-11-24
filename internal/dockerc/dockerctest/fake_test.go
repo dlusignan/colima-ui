@@ -167,3 +167,30 @@ func TestFakeVolumeWritesValidateLikeTheRealClient(t *testing.T) {
 		t.Fatalf("prune: %v %+v", err, r)
 	}
 }
+
+func TestFakeNetworkWritesValidateLikeTheRealClient(t *testing.T) {
+	f := &Fake{CreatedNetwork: dockerc.Network{Name: "ok"}, NetworkDetail: dockerc.NetworkDetail{Name: "ok"}}
+	ctx := context.Background()
+	if _, err := f.CreateNetwork(ctx, "../x", false, ""); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("bad name: %v", err)
+	}
+	if n, err := f.CreateNetwork(ctx, "ok", false, "0.0.0.0/0"); !errors.Is(err, dockerc.ErrBadName) || n.Name != "" {
+		t.Fatalf("bad subnet: %v %+v", err, n)
+	}
+	if n, err := f.CreateNetwork(ctx, "ok", true, "172.28.0.0/16"); err != nil || n.Name != "ok" {
+		t.Fatalf("ok: %v %+v", err, n)
+	}
+	if _, err := f.InspectNetwork(ctx, "a/b"); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("inspect: %v", err)
+	}
+	if err := f.RemoveNetwork(ctx, ""); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("remove: %v", err)
+	}
+	if got := len(f.CallsTo("CreateNetwork")); got != 3 {
+		t.Fatalf("calls = %d (rejected calls are still recorded)", got)
+	}
+	f.FailWith("PruneNetworks", dockerc.ErrConflict)
+	if r, err := f.PruneNetworks(ctx); !errors.Is(err, dockerc.ErrConflict) || r.Removed != nil {
+		t.Fatalf("prune: %v %+v", err, r)
+	}
+}

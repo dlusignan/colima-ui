@@ -120,6 +120,20 @@ func (f *fakeDockerClient) PruneVolumes(context.Context) (dockerc.PruneResult, e
 	return dockerc.PruneResult{}, nil
 }
 
+func (f *fakeDockerClient) CreateNetwork(context.Context, string, bool, string) (dockerc.Network, error) {
+	return dockerc.Network{}, nil
+}
+
+func (f *fakeDockerClient) InspectNetwork(context.Context, string) (dockerc.NetworkDetail, error) {
+	return dockerc.NetworkDetail{}, nil
+}
+
+func (f *fakeDockerClient) RemoveNetwork(context.Context, string) error { return nil }
+
+func (f *fakeDockerClient) PruneNetworks(context.Context) (dockerc.NetworkPruneResult, error) {
+	return dockerc.NetworkPruneResult{}, nil
+}
+
 type fakeProvider struct {
 	client dockerc.Client
 	err    error

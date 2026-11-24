@@ -562,3 +562,13 @@ func (f *fakeClient) InspectVolume(context.Context, string) (VolumeDetail, error
 }
 func (f *fakeClient) RemoveVolume(context.Context, string) error        { return nil }
 func (f *fakeClient) PruneVolumes(context.Context) (PruneResult, error) { return PruneResult{}, nil }
+func (f *fakeClient) CreateNetwork(context.Context, string, bool, string) (Network, error) {
+	return Network{}, nil
+}
+func (f *fakeClient) InspectNetwork(context.Context, string) (NetworkDetail, error) {
+	return NetworkDetail{}, nil
+}
+func (f *fakeClient) RemoveNetwork(context.Context, string) error { return nil }
+func (f *fakeClient) PruneNetworks(context.Context) (NetworkPruneResult, error) {
+	return NetworkPruneResult{}, nil
+}
