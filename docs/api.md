@@ -48,7 +48,7 @@ In the route tables below, "Token" is "yes" for every route under `/api`.
 Routes that change Docker objects (volumes, networks, images) live under `/api/profiles/{name}/...` and all follow the same rules, in this order. The first rule that fails answers; nothing reaches Docker before the last step.
 
 1. **Profile.** `404 profile_not_found` for an unknown or malformed profile name, `409 invalid_state` when the VM is not running (`details.status` names the state).
-2. **Busy check.** `409 profile_busy` (with `details.jobId`) while a start, stop or restart job runs on the profile, the same answer as the config route. The check is advisory: it sees only this backend's own jobs, not a `colima` run from a terminal or a configuration write in progress, and a job can start right after it. For that reason a slow Docker route (image pull) does not hold the profile slot.
+2. **Busy check.** `409 profile_busy` (with `details.jobId`) while a start, stop or restart job runs on the profile, the same answer as the config route. The check is advisory: it sees only this backend's own jobs, not a `colima` run from a terminal or a configuration write in progress, and a job can start right after it. For that reason a slow Docker route (image pull, 3.30) does not hold the profile slot: it runs as a job that is not counted by this check, so a pull never blocks a start, stop, restart or configuration write.
 3. **Body.** The body is a JSON object with the route's own keys, at most 1 MiB unless the route says otherwise. Unknown keys, repeated keys, keys in the wrong case, a `null` or non-object body, trailing data and a body over the limit are `400 bad_request`. A route that takes no body accepts an empty body or `{}` and nothing else. The strict decoder checks the top-level keys only: write bodies stay flat (no nested objects), unless the route validates the nested keys itself.
 4. **Validation.** Object names (volumes, networks) match `[a-zA-Z0-9][a-zA-Z0-9_.-]*` and are at most 128 characters. Image references follow a narrower form of Docker's reference grammar (`[domain[:port]/]path[:tag][@digest]`): the registry domain may use uppercase letters, the path may not, IPv6 registry hosts are rejected, and the limit of 255 characters covers the whole reference, tag and digest included. The same rules apply to path parameters and body values, so `..`, `/`, `%`, spaces and control characters never reach a Docker URL. A failure is `422 invalid_request` with `details.fields` mapping the rejected key or path parameter to a fixed message, never to the request value.
 5. **Docker call.** One fixed, typed call. Docker's own error text is never returned; only the fixed message and, for 404 and 409, `details.name` with the validated object name:
@@ -65,7 +65,7 @@ Routes that change Docker objects (volumes, networks, images) live under `/api/p
 
 The `502 docker_unavailable` message tells the causes apart: the socket is missing or not answering, Docker answered with an error, or Docker did not answer in time.
 
-6. **Audit.** Every attempt that reaches step 5 appends one row to the action log (3.11) with the route's action name (`docker.<resource>.<verb>`, for example `docker.volume.remove`), the outcome `success` or `failed`, and as `detail` only the object name or reference. Requests refused in steps 1 to 4 write no row, so a hostile name never lands in the log. The row never contains body content, registry credentials or paths. A failed append is logged on the server and never changes the answer. From step 5 on the call runs even if the browser disconnects (it is bounded by the route's own timeout), so the row says what happened. `failed` means the write was not confirmed: for `404`, `409` and `422` Docker refused it and nothing changed, but after a timeout, a dropped socket or a Docker `5xx` the change may or may not have been applied. The answer's status code tells the two apart; the row does not.
+6. **Audit.** Every attempt that reaches step 5 appends one row to the action log (3.11) with the route's action name (`docker.<resource>.<verb>`, for example `docker.volume.remove`), the outcome `success` or `failed`, and as `detail` only the object name or reference. Requests refused in steps 1 to 4 write no row, so a hostile name never lands in the log. The row never contains body content, registry credentials or paths. A failed append is logged on the server and never changes the answer. The one exception is the image pull (3.30): it answers before its work is done, so its row is written when the job ends, with the job's real outcome (`success`, `failed` or `cancelled`). From step 5 on the call runs even if the browser disconnects (it is bounded by the route's own timeout), so the row says what happened. `failed` means the write was not confirmed: for `404`, `409` and `422` Docker refused it and nothing changed, but after a timeout, a dropped socket or a Docker `5xx` the change may or may not have been applied. The answer's status code tells the two apart; the row does not.
 
 A successful write answers `200` with a JSON body, or `204` with none, as each route documents.
 
@@ -117,7 +117,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 31 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 32 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -139,6 +139,7 @@ There are 31 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/images/{image}` | Inspect one image (3.27) |
 | `DELETE` | `/api/profiles/{name}/images/{image}` | Remove an image or untag one reference, never forced (3.28) |
 | `POST` | `/api/profiles/{name}/images/prune` | Remove unused images (dangling only, or all); needs a confirmation text (3.29) |
+| `POST` | `/api/profiles/{name}/images/pull` | Pull an image as a job with progress; public registries only (3.30) |
 | `GET` | `/api/profiles/{name}/volumes` | Docker volumes |
 | `POST` | `/api/profiles/{name}/volumes` | Create a volume (3.18) |
 | `GET` | `/api/profiles/{name}/volumes/{volume}` | Inspect one volume (3.19) |
@@ -279,7 +280,7 @@ Response `200`:
 
 Fields:
 
-- `action`: `start`, `stop`, `restart` or `create` (3.17).
+- `action`: `start`, `stop`, `restart`, `create` (3.17) or `image-pull` (3.30). An `image-pull` job has `exitCode` `0` when it succeeded, `1` when it failed and `null` when it was cancelled; its `output` is a compact progress text, not process output.
 - `state`: `running`, `succeeded`, `failed` or `cancelled`.
 - `finishedAt` and `exitCode` are `null` while the job is running. `exitCode` is also `null` for a cancelled job whose process was killed.
 - `output` holds the captured lines in order. Each line has a per-job `seq` that starts at 1 and rises by 1. Lines keep their ANSI escape sequences.
@@ -473,7 +474,7 @@ Response `200`, newest first:
 }
 ```
 
-- `action` is a string such as `start`, `stop`, `restart`, `create` or `config_change`. Clients must tolerate new values.
+- `action` is a string such as `start`, `stop`, `restart`, `create`, `config_change` or `docker.image.pull`. Clients must tolerate new values.
 - `outcome` is `success`, `failed` or `cancelled`.
 - `detail` is a short string or `null`.
 - Entries carry no job id. Finished job output is not kept across a restart (see the C4 decisions table), so there is nothing to reopen.
@@ -1150,9 +1151,58 @@ Response `200`:
 
 Errors: the shared ones of 1.3, plus the `422` and `400` above.
 
+### 3.30 `POST /api/profiles/{name}/images/pull`
+
+Token: yes. Pulls an image from a **public registry** as a job. A pull can take minutes and reports progress per layer, so the route answers `202` at once and the client follows the job like a start or stop (3.5, 3.6 and section 5).
+
+Request:
+
+```json
+{
+  "reference": "postgres:18-alpine"
+}
+```
+
+- `reference` is required: an image reference (the grammar of 1.3, rule 4) that carries a **tag or a digest**, such as `postgres:18-alpine`, `ghcr.io/owner/app:1.2` or `postgres@sha256:...`. A reference with neither (`postgres`, `localhost:5000/app`) is `422 invalid_request` with `details.fields.reference`, so a pull never takes `latest` by accident. A repository named `sha256` or a 64 character hex string is refused too, because it would read like an image ID. A missing key, an empty body and `null` are `422` as well; Docker is not reached.
+- Any other key (a platform, credentials, a registry, a filter), a repeated key, a wrong type, trailing data, a nested body and a non-object body are `400 bad_request`. The body is at most 1 KiB.
+- Only the profile rules of 1.3 apply before the job starts (profile, running VM, busy check, strict body, validation). The busy check is advisory and the pull does **not** hold the profile's start, stop and restart slot.
+
+Response `202`:
+
+```json
+{
+  "jobId": "j_8f3a2c",
+  "action": "image-pull",
+  "profile": "default",
+  "state": "running"
+}
+```
+
+`jobId` is the same key start, stop and restart answer with; the other three fields let a client show the job without a first `GET`. `GET /api/jobs/{id}` (3.5) then returns the job, `POST /api/jobs/{id}/cancel` (3.6) cancels it, and `job.output` and `job.finished` (5.3) carry its output and its end, all with `action` `image-pull`.
+
+The job:
+
+- Output is a compact progress text, one line per layer state change, never Docker's raw stream: `Pulling postgres:18-alpine`, `Pulling from library/postgres`, then per layer (identified by its first 12 hex characters) `waiting`, `downloading (4.0 MB)`, `downloading 25%`, `downloading 50%`, `downloading 75%`, `download complete`, `extracting`, `pull complete` or `already exists`, then `Digest: sha256:...` and a final `Status: downloaded newer image` or `Status: image is up to date, nothing was downloaded`. Byte ticks are not lines. A pull of an image that is already up to date succeeds and says so. The output is bounded like any job output (3.5: `truncated`, `droppedLines`), and the server also keeps at most 256 layers and 3000 lines per pull.
+- A failure ends the job `failed` with a last line `error: <message>`. For a registry or daemon error (not found, access denied, a network error) the message is the registry's own text, because it answers the user's own request. It is cleaned before it is shown: control characters, ANSI sequences and bidirectional or zero width characters are removed, whitespace is collapsed, absolute paths and socket addresses become `[path]`, text that looks like raw JSON is dropped, and it is cut to 300 characters. Where there is no usable text, a fixed message is shown (`The pull failed.`, `Docker is not reachable.`). A stream that ends without Docker's final status line is a failed pull.
+- Cancelling closes the HTTP stream to Docker and the job ends `cancelled`. A pull that goes quiet for 2 minutes, or runs for 30 minutes, is stopped and fails.
+- When the backend shuts down, running pulls are cancelled and awaited like other jobs.
+- Action log row `docker.image.pull` with the validated reference as `detail` and the outcome `success`, `failed` or `cancelled`, written when the job ends (this is the one Docker write whose row is not written by the route itself).
+- Limits per profile: at most 2 pulls at the same time, and one pull per identical reference. Both limits are released whatever way a pull ends.
+
+How the Docker call was verified. The backend sends `POST /v1.41/images/create` with the query values `fromImage` and, for a tag reference, `tag`. The published Docker Engine API v1.41 description (`https://docs.docker.com/reference/api/engine/version/v1.41.yaml`, checked while writing this) says for `fromImage`: "Name of the image to pull. The name may include a tag or digest. [...] The pull is cancelled if the HTTP connection is closed." and for `tag`: "Tag or digest. If empty when pulling an image, this causes all tags for the given image to be pulled." So a tag reference is sent as `fromImage=<repository, with registry host and port>` plus `tag=<tag>` (never empty), and a digest reference is sent whole in `fromImage` (`name@sha256:...`) with no `tag`. No other query value is ever sent: not `fromSrc`, `repo`, `changes` or `message` (import), and not `platform`. The `X-Registry-Auth` header is never sent. The route was checked against the published description only; no test pulls a real image, every test uses a fake socket or a fake Docker client.
+
+The stream is newline-delimited JSON objects (`status`, `id`, `progressDetail`, `error`, `errorDetail`). Docker reports a pull that failed after it started as an `error` object inside a `200` answer, and the backend turns that into a failed job. A line that is not the expected JSON, or is longer than 64 KiB, is skipped and never echoed.
+
+Errors (before the job exists): the shared ones of 1.3, plus:
+
+- `422` `invalid_request` with `details.fields.reference`: not a valid reference, or no tag or digest.
+- `400` `bad_request`: the body rules above.
+- `409` `conflict`: the profile already runs 2 pulls (`details.limit` is `2`), or the same reference is already being pulled on it (`details.name` is the reference).
+- `503` `shutting_down`: the backend is stopping and accepts no new jobs.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed and pruned (3.26 to 3.29), but pull, push, save, load, import, build and registry login are not available (pull is planned). A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

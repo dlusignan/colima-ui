@@ -57,6 +57,8 @@ func TestTaskSucceedsAndRecordsOutput(t *testing.T) {
 		t.Fatalf("job = %+v", got)
 	}
 	eventually(t, "observer", func() bool { return obs.finishedCount() == 1 })
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
 	if obs.finished[0].Subject != "postgres:18" || obs.finished[0].Action != ActionImagePull || len(obs.lines) != 2 {
 		t.Fatalf("observer saw %+v / %+v", obs.finished, obs.lines)
 	}
@@ -167,8 +169,11 @@ func TestTaskCancelEndsCancelledAndReleases(t *testing.T) {
 	}
 	slotFreeAgain(t, m, "dev", "a:1")
 	eventually(t, "observer", func() bool { return obs.finishedCount() >= 1 })
-	if obs.finished[0].State != StateCancelled {
-		t.Fatalf("observer state = %s", obs.finished[0].State)
+	obs.mu.Lock()
+	first := obs.finished[0].State
+	obs.mu.Unlock()
+	if first != StateCancelled {
+		t.Fatalf("observer state = %s", first)
 	}
 }
 

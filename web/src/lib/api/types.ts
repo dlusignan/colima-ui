@@ -83,8 +83,12 @@ export interface ProfileCreated {
 
 /** What a profile's buttons can start. */
 export type ProfileAction = 'start' | 'stop' | 'restart'
-/** What a job can be doing: a profile action, or creating the profile (POST /api/profiles, 3.17). */
-export type JobAction = ProfileAction | 'create'
+/**
+ * What a job can be doing: a profile action, creating the profile (POST
+ * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's
+ * start/stop slot, and its output is progress text rather than process output).
+ */
+export type JobAction = ProfileAction | 'create' | 'image-pull'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {
@@ -180,6 +184,19 @@ export interface DockerImage {
 
 export interface ImageList {
   images: DockerImage[]
+}
+
+/** Body of `POST /api/profiles/{name}/images/pull` (docs/api.md 3.30). */
+export interface PullImageRequest {
+  /** A reference with a tag or a digest, such as `postgres:18-alpine`; public registries only. */
+  reference: string
+}
+
+/** The 202 answer of an image pull: a job to follow like start and stop. */
+export interface PullImageAccepted extends JobRef {
+  action: 'image-pull'
+  profile: string
+  state: 'running'
 }
 
 /** Body of `POST /api/profiles/{name}/images/{image}/tag`. Both fields are required. */

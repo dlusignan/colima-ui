@@ -87,10 +87,13 @@ func (m *Manager) SubmitTask(r TaskRequest) (JobSummary, error) {
 	m.wg.Add(1)
 	m.mu.Unlock()
 
+	// The snapshot is taken before the task can run, so a task that ends at
+	// once is still reported as running to the caller that started it.
+	sum := j.summary()
 	proc := startTaskProc(ctx, cancel, r.Run)
 	j.setProc(proc)
 	go m.pump(j, proc)
-	return j.summary(), nil
+	return sum, nil
 }
 
 // releaseTaskLocked gives back the limits a task job held. The manager mutex

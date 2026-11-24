@@ -11,6 +11,7 @@ const PROGRESS: Record<JobAction, string> = {
   stop: 'stopping',
   restart: 'restarting',
   create: 'creating',
+  'image-pull': 'pulling',
 }
 
 const WARNING_LABEL: Record<string, string> = {
