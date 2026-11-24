@@ -19,6 +19,14 @@ export interface DockerMutationOptions<TVars, TData> {
   errorTitle: (vars: TVars) => string
   /** Stable name of the action, part of the dedupe key ("volume-remove"). */
   action: string
+  /** Runs after a successful call and its toast (close a dialog, for example). */
+  onSuccess?: (data: TData, vars: TVars) => void
+  /**
+   * Sees a failed call before the toast. Return true when the caller shows the
+   * error itself (next to a form field): no error toast is then shown. The
+   * lists are refetched either way.
+   */
+  handleError?: (error: unknown, vars: TVars) => boolean
 }
 
 /**
@@ -42,8 +50,10 @@ export function useDockerMutation<TVars = void, TData = unknown>(
     mutationFn: options.mutationFn,
     onSuccess: (data, vars) => {
       toast.success({ title: options.successTitle(data, vars) })
+      options.onSuccess?.(data, vars)
     },
     onError: (error, vars) => {
+      if (options.handleError?.(error, vars)) return
       const title = options.errorTitle(vars)
       const description = describeDockerError(error, title)
       if (description === '') return
