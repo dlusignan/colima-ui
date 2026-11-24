@@ -47,6 +47,12 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 	default:
 		return e, false
 	}
+	if s.Action == operations.ActionDelete && s.DeleteData {
+		if detail != "" {
+			detail += "; "
+		}
+		detail += "with runtime data"
+	}
 	if detail != "" {
 		e.Detail = &detail
 	}

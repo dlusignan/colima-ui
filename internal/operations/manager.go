@@ -151,14 +151,15 @@ func (m *Manager) Submit(r Request) (JobSummary, error) {
 	}
 	ctx, cancel := context.WithCancel(m.base)
 	j := &job{
-		id:        id,
-		profile:   r.Profile,
-		action:    r.Action,
-		cancel:    cancel,
-		recorded:  make(chan struct{}),
-		state:     StateRunning,
-		startedAt: m.opts.Now(),
-		ring:      newOutputRing(m.opts.MaxLines, m.opts.MaxBytes),
+		id:         id,
+		profile:    r.Profile,
+		action:     r.Action,
+		deleteData: r.DeleteData && r.Action == ActionDelete,
+		cancel:     cancel,
+		recorded:   make(chan struct{}),
+		state:      StateRunning,
+		startedAt:  m.opts.Now(),
+		ring:       newOutputRing(m.opts.MaxLines, m.opts.MaxBytes),
 	}
 	m.slots[key] = &slot{job: j}
 	m.wg.Add(1)

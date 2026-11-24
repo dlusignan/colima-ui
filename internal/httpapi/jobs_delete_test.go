@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http/httptest"
 	"reflect"
@@ -104,7 +105,8 @@ func TestDeleteBusyAndUnknown(t *testing.T) {
 	if _, ok := w.Error.Details["name"]; ok {
 		t.Fatal("hostile name echoed")
 	}
-	if len(m.calls) != 0 {
+	// Busy is a read-only lookup that runs before the gate; nothing is submitted.
+	if len(m.submitReq) != 0 {
 		t.Fatalf("manager reached: %v", m.calls)
 	}
 }
@@ -124,5 +126,65 @@ func TestDeleteSubmitErrorsAndGateFailure(t *testing.T) {
 	wantErr(t, call(t, jobsServer(m, &fakeGate{err: errors.New("exec /usr/local/bin/colima: boom")}), "POST", deletePath, `{"confirm":"dev"}`), 502, "colima_failed")
 	if len(m.submitReq) != 0 {
 		t.Fatal("submit called after gate failure")
+	}
+}
+
+// busyGate flips what the manager reports while the status read is running, as a
+// start that began during a slow `colima list` would.
+func TestDeleteSeesAStartThatBeganDuringTheStatusRead(t *testing.T) {
+	var busy bool
+	m := &fakeMgr{busy: func(string) (string, bool) { return "j_7", busy }}
+	g := &fakeGate{status: "stopped", onCall: func() { busy = true }}
+	// Busy is read before the gate, so the flip happens too late for the first
+	// check; Submit stays authoritative and answers busy.
+	m.submit = func(operations.Request) (operations.JobSummary, error) {
+		return operations.JobSummary{}, &operations.BusyError{Profile: "dev", JobID: "j_7"}
+	}
+	wantErr(t, call(t, jobsServer(m, g), "POST", deletePath, `{"confirm":"dev"}`), 409, "profile_busy")
+
+	// A job already running before the call stops it before the gate is asked.
+	busy = true
+	g2 := &fakeGate{status: "stopped"}
+	m2 := &fakeMgr{busy: func(string) (string, bool) { return "j_8", true }}
+	wantErr(t, call(t, jobsServer(m2, g2), "POST", deletePath, `{"confirm":"dev"}`), 409, "profile_busy")
+	if len(g2.names) != 0 {
+		t.Fatalf("status read before the busy check: %v", g2.names)
+	}
+	if m2.calls[0] != "busy" {
+		t.Fatalf("calls %v", m2.calls)
+	}
+}
+
+func TestDeleteStatusAllowlist(t *testing.T) {
+	for _, st := range []string{"running", "Running", "starting", "stopping", "unknown", "", "weird"} {
+		m, g := &fakeMgr{}, &fakeGate{status: st}
+		w := wantErr(t, call(t, jobsServer(m, g), "POST", deletePath, `{"confirm":"dev"}`), 409, "invalid_state")
+		if w.Error.Details["status"] != strings.ToLower(st) || len(m.submitReq) != 0 {
+			t.Fatalf("%q: %v %v", st, w.Error.Details, m.submitReq)
+		}
+	}
+	for _, st := range []string{"stopped", "Stopped", "broken", "Broken"} {
+		m, g := &fakeMgr{}, &fakeGate{status: st}
+		if rec := call(t, jobsServer(m, g), "POST", deletePath, `{"confirm":"dev"}`); rec.Code != 202 {
+			t.Fatalf("%q: %d", st, rec.Code)
+		}
+	}
+}
+
+type deleteStrictGate struct {
+	fakeGate
+	deleteCalls int
+}
+
+func (g *deleteStrictGate) ProfileStatusForDelete(context.Context, string) (string, error) {
+	g.deleteCalls++
+	return "", ErrProfileNotFound
+}
+
+func TestDeleteUsesTheStrictGateWhenThereIsOne(t *testing.T) {
+	m, g := &fakeMgr{}, &deleteStrictGate{fakeGate: fakeGate{status: "stopped"}}
+	wantErr(t, call(t, jobsServer(m, g), "POST", deletePath, `{"confirm":"dev"}`), 404, "profile_not_found")
+	if g.deleteCalls != 1 || len(g.names) != 0 || len(m.submitReq) != 0 {
+		t.Fatalf("strict %d plain %v submit %v", g.deleteCalls, g.names, m.submitReq)
 	}
 }

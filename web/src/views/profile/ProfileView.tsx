@@ -59,8 +59,9 @@ export function ProfileView() {
     if (deleted) navigate('/', { replace: true })
   }, [deleted, navigate])
 
-  const requestDelete = (deleteData: boolean) =>
-    deletion.mutate(
+  const requestDelete = (deleteData: boolean) => {
+    if (deletion.isPending) return
+        deletion.mutate(
       { deleteData },
       {
         onSuccess: ({ jobId }) => tracker.adopt(name, jobId),
@@ -72,6 +73,7 @@ export function ProfileView() {
         },
       },
     )
+  }
 
   if (profiles.isPending) {
     return (

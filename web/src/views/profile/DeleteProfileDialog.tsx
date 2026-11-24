@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import type { Profile } from '@/lib/api/types'
@@ -16,7 +16,9 @@ interface DeleteProfileDialogProps {
 function deleteBlockedReason(status: Profile['status'], busy: boolean, unavailable: boolean) {
   if (busy) return 'Another job is running on this profile.'
   if (unavailable) return 'Colima is not available.'
-  if (status !== 'stopped') return 'Stop the profile first.'
+  // The list API reports a broken VM as 'unknown'; the server decides for real
+  // (stopped and broken only), so 'unknown' stays enabled to clean up a broken one.
+  if (status === 'running') return 'Stop the profile first.'
   return null
 }
 
@@ -28,6 +30,9 @@ function deleteBlockedReason(status: Profile['status'], busy: boolean, unavailab
 export function DeleteProfileDialog({ profile, busy, unavailable, onDelete }: DeleteProfileDialogProps) {
   const { name } = profile
   const [deleteData, setDeleteData] = useState(false)
+  // Set at the first confirm until the dialog opens again, so a double click
+  // cannot send two requests.
+  const sent = useRef(false)
   const reason = deleteBlockedReason(profile.status, busy, unavailable)
 
   const button = (
@@ -55,9 +60,14 @@ export function DeleteProfileDialog({ profile, busy, unavailable, onDelete }: De
           destructive
           requireText={name}
           onOpenChange={(open) => {
-            if (!open) setDeleteData(false)
+            if (open) sent.current = false // a new dialog may confirm once
+            else setDeleteData(false)
           }}
-          onConfirm={() => onDelete(deleteData)}
+          onConfirm={() => {
+            if (sent.current) return
+            sent.current = true
+            onDelete(deleteData)
+          }}
         >
           <div className="flex flex-col gap-1 text-sm">
             <label className="flex items-center gap-2">

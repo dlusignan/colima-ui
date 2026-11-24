@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
@@ -288,6 +288,29 @@ describe('delete', () => {
     dialog = await screen.findByRole('alertdialog')
     expect(within(dialog).getByRole('checkbox')).not.toBeChecked()
     expect(within(dialog).getByRole('textbox')).toHaveValue('')
+  })
+
+  it('sends one request when Delete is clicked twice', async () => {
+    const del = vi.spyOn(api, 'deleteProfile').mockImplementation(() => new Promise(() => {}))
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete profile dev' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), 'dev')
+    const confirm = within(dialog).getByRole('button', { name: 'Delete' })
+    // Both clicks land in one batch, before React can close and unmount the dialog.
+    act(() => {
+      confirm.click()
+      confirm.click()
+    })
+    await waitFor(() => expect(del).toHaveBeenCalledTimes(1))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(del).toHaveBeenCalledTimes(1)
+  })
+
+  it('is enabled for an unknown status (a broken VM) and the server decides', async () => {
+    setup([profileFixture({ name: 'dev', status: 'unknown' })])
+    const button = await screen.findByRole('button', { name: 'Delete profile dev' })
+    expect(isDisabled(button)).toBe(false)
   })
 
   it('shows a toast when the server says the profile is running', async () => {

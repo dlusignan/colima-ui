@@ -168,7 +168,11 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 	// One set of host caps for the config PUT (its default) and for creation.
 	lim := config.DefaultLimits()
 	a.mgr = operations.New(operations.Options{
-		Launcher: operations.ColimaLauncher{S: runner, Limits: colimaLimits(lim)},
+		Launcher: operations.ColimaLauncher{
+			S: runner, Limits: colimaLimits(lim),
+			// A delete re-reads the live status inside the profile slot.
+			VMStatus: gate.ProfileStatusForDelete,
+		},
 		// Called in order from the job's pump, none of them blocks: the action
 		// log queues, the hub never blocks, and Refresh only signals. The
 		// sampler is built below, so it is read lazily like a.mgr above.

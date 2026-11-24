@@ -1256,13 +1256,19 @@ Response `202`:
 
 Errors:
 
-1. `404` `profile_not_found`: the name is malformed or no such profile exists. The `default` profile is allowed like any other.
+1. `404` `profile_not_found`: the name is malformed, or the profile is neither listed by Colima nor present in Colima's folder (names compare ignoring letter case). Unlike the other routes, `default` gets no special case here: it can be deleted only when it exists.
 2. `422` `confirmation_required`: `confirm` is missing or does not equal the name.
 3. `409` `profile_busy`: another job runs on the profile (`details.jobId`).
-4. `409` `invalid_state`: the VM is running (`details.status` is `running`, as in 3.4). The user stops it first; nothing starts.
+4. `409` `invalid_state`: the VM is not `stopped` or `broken` (`details.status` is the current status, for example `running`, as in 3.4). Only those two statuses can be deleted; anything else, including a status the backend does not know, is refused. A `broken` VM is allowed so a half-created or damaged profile can be cleaned up. The user stops it first; nothing starts.
 5. `400` `bad_request`, `502` `colima_failed`, `503` `shutting_down`, `500` `internal_error` as in 3.4.
 
-Order of checks: body shape, profile lookup, confirmation, busy, running, then the job is submitted.
+Order of checks: body shape, busy, profile lookup, confirmation, status, then the job is submitted. The busy check runs before the status read because that read (`colima list`) can be slow. The job re-reads the status inside the profile slot, right before running `colima delete`: if the VM is no longer `stopped` or `broken` (for example it was started from a terminal in between), nothing is deleted and the job ends as `failed` with one closing line in its output.
+
+Things to know:
+
+1. The action log row (`delete`, 3.11) carries `with runtime data` as its detail when `deleteData` was `true`. Once the profile is gone, `GET /api/profiles/{name}/actions` answers `404` for it, so the row cannot be read through the API any more. History is keyed by profile name only, so a profile created later with the same name shows the older rows too.
+2. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
+
 
 ## 4. Routes that do not exist
 

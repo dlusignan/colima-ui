@@ -34,6 +34,15 @@ type ProfileGate interface {
 	ProfileStatus(ctx context.Context, name string) (status string, err error)
 }
 
+// DeleteGate is an optional extension of ProfileGate. A gate that implements it
+// is used by the delete route instead of ProfileStatus, so that delete can be
+// stricter than the other routes: it answers ErrProfileNotFound unless the
+// profile is listed by Colima or has an entry in Colima's folder (the
+// `default` profile is not special).
+type DeleteGate interface {
+	ProfileStatusForDelete(ctx context.Context, name string) (status string, err error)
+}
+
 // JobsDeps is the operation manager as the job routes see it.
 // *operations.Manager satisfies it.
 type JobsDeps interface {
@@ -125,11 +134,11 @@ func (j *jobRoutes) action(act operations.Action) apiHandler {
 const deleteBodyLimit = 1 << 10
 
 // delete serves POST /api/profiles/{name}/delete. The order: the body shape
-// (400), the gate (it validates the name before anything else sees it, 404),
-// the confirmation (422, must equal the path name exactly), Busy (409
-// profile_busy), the running check (409 invalid_state, decided
-// conservatively: the user stops the VM first), then Submit, which stays
-// authoritative for the slot. Nothing starts before every check has passed, and
+// (400), Busy (409 profile_busy, before the slow status read), the gate (it
+// validates the name before anything else sees it, 404), the confirmation (422,
+// must equal the path name exactly), the status allowlist (409 invalid_state
+// unless stopped or broken: the user stops the VM first), then Submit, which
+// stays authoritative for the slot and whose launcher re-checks the status. Nothing starts before every check has passed, and
 // the launcher always passes --force, so the process never waits on a prompt.
 func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
@@ -152,9 +161,20 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 	}
 	name := r.PathValue("name")
 
+	// Busy first: the status read below is a slow `colima list`, and a start
+	// that began before it must be seen, not raced. The launcher re-checks the
+	// status inside the slot, and Submit stays authoritative for the slot.
+	if id, running := j.mgr.Busy(name); running {
+		return busyError(name, id)
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), gateTimeout)
 	defer cancel()
-	status, err := j.gate.ProfileStatus(ctx, name)
+	statusOf := j.gate.ProfileStatus
+	if dg, ok := j.gate.(DeleteGate); ok {
+		statusOf = dg.ProfileStatusForDelete
+	}
+	status, err := statusOf(ctx, name)
 	switch {
 	case errors.Is(err, ErrInvalidProfileName):
 		return profileNotFound("")
@@ -169,12 +189,11 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 		return newAPIError(http.StatusUnprocessableEntity, "confirmation_required",
 			"Send the profile name in confirm to delete it.", map[string]any{})
 	}
-	if id, running := j.mgr.Busy(name); running {
-		return busyError(name, id)
-	}
-	if strings.ToLower(status) == "running" {
+	// Allowlist: only a stopped or broken VM can be deleted. A running, starting
+	// or unknown state is refused with its status.
+	if st := strings.ToLower(status); st != "stopped" && st != "broken" {
 		return newAPIError(http.StatusConflict, "invalid_state",
-			"Stop the profile before deleting it.", map[string]any{"status": "running"})
+			"Stop the profile before deleting it.", map[string]any{"status": st})
 	}
 
 	sum, err := j.mgr.Submit(operations.Request{

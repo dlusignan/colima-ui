@@ -1200,3 +1200,38 @@ func TestAppCreateAfterShutdownIs503(t *testing.T) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 }
+
+func TestProfileStatusForDelete(t *testing.T) {
+	runner := &fakeRunner{list: listJSON}
+	g := profileGate{runner: runner, files: fakeFiles{names: []string{"fileonly"}}}
+	for name, want := range map[string]string{"default": "running", "dev": "stopped", "odd": "broken", "fileonly": "stopped", "DEV": "stopped", "DEFAULT": "running"} {
+		got, err := g.ProfileStatusForDelete(t.Context(), name)
+		if err != nil || got != want {
+			t.Fatalf("%s: %q %v, want %q", name, got, err, want)
+		}
+	}
+	// "default" gets no special case: unlisted and without a file it is unknown.
+	empty := profileGate{runner: &fakeRunner{list: ""}, files: fakeFiles{}}
+	if _, err := empty.ProfileStatusForDelete(t.Context(), "default"); !errors.Is(err, httpapi.ErrProfileNotFound) {
+		t.Fatalf("default on an empty machine: %v", err)
+	}
+	// A folder without a listing or a YAML file counts, in any letter case.
+	folders := profileGate{runner: &fakeRunner{list: ""}, folders: fakeFolders{names: []string{"GHOST"}}}
+	if got, err := folders.ProfileStatusForDelete(t.Context(), "ghost"); err != nil || got != "stopped" {
+		t.Fatalf("folder only: %q %v", got, err)
+	}
+	for _, name := range []string{"ghost", "dev2"} {
+		if _, err := g.ProfileStatusForDelete(t.Context(), name); !errors.Is(err, httpapi.ErrProfileNotFound) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	for _, name := range []string{"", "../x", "-x", "a b", "a;b"} {
+		bad := profileGate{runner: &fakeRunner{listErr: errors.New("must not run")}}
+		if _, err := bad.ProfileStatusForDelete(t.Context(), name); !errors.Is(err, httpapi.ErrInvalidProfileName) {
+			t.Fatalf("%q: %v", name, err)
+		}
+	}
+	if _, err := (profileGate{runner: &fakeRunner{listErr: errors.New("boom")}}).ProfileStatusForDelete(t.Context(), "dev"); err == nil || errors.Is(err, httpapi.ErrProfileNotFound) {
+		t.Fatalf("list failure: %v", err)
+	}
+}

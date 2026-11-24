@@ -31,7 +31,9 @@ type JobSummary struct {
 	Action  Action
 	// Subject is what a task job works on (an image reference for a pull),
 	// validated by whoever submitted it. Empty for colima jobs.
-	Subject      string
+	Subject string
+	// DeleteData is set on a delete job that also removes the runtime data.
+	DeleteData   bool
 	State        State
 	StartedAt    time.Time
 	FinishedAt   *time.Time
@@ -47,7 +49,9 @@ type job struct {
 	profile string
 	action  Action
 	subject string
-	cancel  context.CancelFunc
+	// deleteData is Request.DeleteData of a delete job.
+	deleteData bool
+	cancel     context.CancelFunc
 	// groupKey and dupKey are the task limits this job holds ("" for none).
 	groupKey string
 	dupKey   string
@@ -130,6 +134,7 @@ func (j *job) summary() JobSummary {
 		Profile:      j.profile,
 		Action:       j.action,
 		Subject:      j.subject,
+		DeleteData:   j.deleteData,
 		State:        j.state,
 		StartedAt:    j.startedAt,
 		Output:       j.ring.after(0),
