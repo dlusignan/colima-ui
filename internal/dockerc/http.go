@@ -50,7 +50,11 @@ func newHTTPClient(socket string) *httpClient {
 		IdleConnTimeout: 30 * time.Second,
 	}
 	return &httpClient{
-		hc:               &http.Client{Transport: tr},
+		// A redirect is never followed: Docker does not send one, and a
+		// write must not be replayed against a URL nobody validated.
+		hc: &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
 		maxBody:          maxBodyBytes,
 		listTimeout:      listTimeout,
 		statsTimeout:     statsTimeout,
