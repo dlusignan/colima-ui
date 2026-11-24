@@ -72,13 +72,17 @@ func (m *Manager) SubmitTask(r TaskRequest) (JobSummary, error) {
 	}
 	group := taskGroupKey(r.Profile, r.Action)
 	dup := group + "\x00" + r.Subject
-	if _, ok := m.taskKeys[dup]; ok {
+	if id, ok := m.taskKeys[dup]; ok {
 		m.mu.Unlock()
-		return JobSummary{}, ErrDuplicateTask
+		return JobSummary{}, &TaskBusyError{Err: ErrDuplicateTask, JobID: id}
 	}
 	if r.MaxPerProfile > 0 && m.tasks[group] >= r.MaxPerProfile {
+		id := ""
+		if r.Action == ActionCachePrune {
+			id = m.pruneID
+		}
 		m.mu.Unlock()
-		return JobSummary{}, ErrTooManyTasks
+		return JobSummary{}, &TaskBusyError{Err: ErrTooManyTasks, JobID: id}
 	}
 	id := m.allocIDLocked()
 	if id == "" {
@@ -100,7 +104,10 @@ func (m *Manager) SubmitTask(r TaskRequest) (JobSummary, error) {
 		ring:      newOutputRing(m.opts.MaxLines, m.opts.MaxBytes),
 	}
 	m.tasks[group]++
-	m.taskKeys[dup] = struct{}{}
+	m.taskKeys[dup] = id
+	if r.Action == ActionCachePrune {
+		m.pruneID = id
+	}
 	m.jobs[id] = j
 	m.wg.Add(1)
 	m.mu.Unlock()
@@ -127,6 +134,9 @@ func (m *Manager) releaseTaskLocked(j *job) {
 		}
 	}
 	delete(m.taskKeys, j.dupKey)
+	if m.pruneID == j.id {
+		m.pruneID = ""
+	}
 	j.groupKey, j.dupKey = "", ""
 }
 

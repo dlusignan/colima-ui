@@ -163,7 +163,11 @@ func TestCachePruneIsGlobalOneAtATimeAndHoldsNoSlot(t *testing.T) {
 	if _, running := m.Busy(""); running {
 		t.Fatal("prune holds a slot")
 	}
-	cj := mustSubmit(t, m, "dev") // a start on any profile is not blocked by a prune
+	// A stop on any profile is not blocked by a prune (a start is: see below).
+	cj, err := m.Submit(Request{Action: ActionStop, Profile: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	l.proc(0).exitWith(0)
 	waitState(t, m, cj.ID, StateSucceeded)
 	fs.proc.exitWith(0)
@@ -212,4 +216,48 @@ func TestCachePruneRefusedWhileCreateOrStartRuns(t *testing.T) {
 	waitState(t, m, s.ID, StateSucceeded)
 	l.proc(0).exitWith(0)
 	waitState(t, m, cj.ID, StateSucceeded)
+}
+
+func TestRunningPruneRefusesJobsThatDownloadAndAllowsTheRest(t *testing.T) {
+	m, _, _ := newTestManager(t, nil)
+	fs := &fakeStreamer{proc: newFakeProc()}
+	pj, err := m.SubmitTask(pruneReq(CachePruneTask(fs, false), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, act := range []Action{ActionCreate, ActionStart, ActionRestart, ActionKubernetesStart} {
+		_, err := m.Submit(Request{Action: act, Profile: "dev"})
+		var pr *CachePruneRunningError
+		if !errors.As(err, &pr) || pr.JobID != pj.ID {
+			t.Fatalf("%s: err = %v", act, err)
+		}
+	}
+	// Nothing was launched and no slot was left behind.
+	if _, running := m.Busy("dev"); running {
+		t.Fatal("a refused job holds a slot")
+	}
+	for _, act := range []Action{ActionStop, ActionDelete, ActionUpdate, ActionKubernetesStop, ActionKubernetesReset, ActionKubernetesDelete} {
+		s, err := m.Submit(Request{Action: act, Profile: "p-" + string(act)})
+		if err != nil {
+			t.Fatalf("%s refused during a prune: %v", act, err)
+		}
+		_ = s
+	}
+	// A second prune is busy and names the running one.
+	_, err = m.SubmitTask(pruneReq(CachePruneTask(&fakeStreamer{proc: newFakeProc()}, true), true))
+	var tb *TaskBusyError
+	if !errors.As(err, &tb) || tb.JobID != pj.ID || !errors.Is(err, ErrTooManyTasks) {
+		t.Fatalf("second prune: %v", err)
+	}
+	fs.proc.exitWith(0)
+	waitState(t, m, pj.ID, StateSucceeded)
+	// Once the prune is over the same actions are accepted again.
+	eventually(t, "downloading job accepted", func() bool {
+		s, err := m.Submit(Request{Action: ActionStart, Profile: "after"})
+		if err != nil {
+			return false
+		}
+		_ = s
+		return true
+	})
 }

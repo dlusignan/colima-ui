@@ -27,7 +27,8 @@ function refusalText(error: unknown): string | null {
  * usePullJobs: no event stream needed, a missed event cannot leave it stuck)
  * and refreshes nothing when it ends: the profile, image and engine data do not
  * change. The outcome toast belongs to JobOutcomeToasts. A reload forgets the
- * job; starting another then answers `conflict` while the first still runs.
+ * job; clicking again then answers `conflict` with the running job's id, which
+ * the card adopts and follows.
  */
 export function useCachePrune() {
   const toast = useToast()
@@ -48,6 +49,16 @@ export function useCachePrune() {
       sent.current = false
     },
     onError: (error) => {
+      // Another prune is already running (this tab forgot it, or another one
+      // started it): follow that job instead of showing an error.
+      if (error instanceof ApiError && error.code === 'conflict') {
+        const id = error.details.jobId
+        if (typeof id === 'string' && id !== '') {
+          setCancelling(false)
+          setJobId(id)
+          return
+        }
+      }
       const text = refusalText(error)
       if (text) toast.error({ title: text, key: 'cache-prune-error' })
     },
@@ -57,7 +68,14 @@ export function useCachePrune() {
     queryKey: jobId ? queryKeys.job(jobId) : ['jobs', 'none'],
     queryFn: ({ signal }) => api.getJob(jobId ?? '', signal),
     enabled: jobId !== null,
-    refetchInterval: (query) => (query.state.data?.state === 'running' ? POLL_MS : false),
+    // Keep polling while there is no answer yet (a failed first poll) or the
+    // job runs; stop only on a final state or a job the server no longer has.
+    refetchInterval: (query) => {
+      const err = query.state.error
+      if (err instanceof ApiError && err.code === 'job_not_found') return false
+      const data = query.state.data
+      return !data || data.state === 'running' ? POLL_MS : false
+    },
     retry: (count, error) =>
       error instanceof ApiError ? error.code === 'job_not_found' && count < 1 : count < 2,
     retryDelay: 500,

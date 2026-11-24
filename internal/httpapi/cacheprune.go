@@ -85,7 +85,7 @@ func (c *cachePruneRoutes) prune(w http.ResponseWriter, r *http.Request) error {
 	}
 	sum, err := c.jobs.SubmitTask(operations.TaskRequest{
 		Action: operations.ActionCachePrune, Subject: subject, MaxPerProfile: 1,
-		RefuseWhileRunning: []operations.Action{operations.ActionCreate, operations.ActionStart},
+		RefuseWhileRunning: operations.AssetDownloadActions,
 		Run:                c.task(all),
 	})
 	var blocked *operations.TaskBlockedError
@@ -96,11 +96,16 @@ func (c *cachePruneRoutes) prune(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	case errors.As(err, &blocked):
 		return newAPIError(http.StatusConflict, "invalid_state",
-			"A profile is being created or started and may be downloading these files. Wait for it to finish.",
+			"A profile is being created, started or restarted and may be downloading these files. Wait for it to finish.",
 			map[string]any{"status": "starting", "reason": "assets_in_use", "jobId": blocked.JobID})
 	case errors.Is(err, operations.ErrDuplicateTask), errors.Is(err, operations.ErrTooManyTasks):
+		details := map[string]any{}
+		var tb *operations.TaskBusyError
+		if errors.As(err, &tb) && tb.JobID != "" {
+			details["jobId"] = tb.JobID
+		}
 		return newAPIError(http.StatusConflict, "conflict",
-			"The download cache is already being cleared.", map[string]any{})
+			"The download cache is already being cleared.", details)
 	case errors.Is(err, operations.ErrClosed):
 		return newAPIError(http.StatusServiceUnavailable, "shutting_down", "The backend is shutting down.", nil)
 	}

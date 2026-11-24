@@ -130,6 +130,35 @@ describe('MaintenanceCard', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Clear download cache' })).toBeEnabled())
   })
 
+  it('a conflict names the running prune and the card follows it', async () => {
+    vi.spyOn(api, 'pruneCache').mockRejectedValue(new ApiError(409, 'conflict', 'x', { jobId: 'j_7' }))
+    const get = vi.spyOn(api, 'getJob').mockResolvedValue(
+      jobFixture({ id: 'j_7', profile: '', action: 'cache-prune', output: [{ seq: 1, line: 'halfway' }] }),
+    )
+    const { user } = setup()
+    await user.click(within(await open(user)).getByRole('button', { name: 'Clear cache' }))
+    expect(await screen.findByText('halfway')).toBeInTheDocument()
+    expect(get).toHaveBeenCalledWith('j_7', expect.anything())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('keeps polling after a failed first poll and never stays on Clearing forever', async () => {
+    vi.spyOn(api, 'pruneCache').mockResolvedValue(accepted)
+    const get = vi
+      .spyOn(api, 'getJob')
+      .mockRejectedValueOnce(new ApiError(500, 'internal_error', 'x', {}))
+      .mockRejectedValueOnce(new ApiError(500, 'internal_error', 'x', {}))
+      .mockRejectedValueOnce(new ApiError(500, 'internal_error', 'x', {}))
+      .mockResolvedValue(jobFixture({ id: 'j_9', profile: '', state: 'succeeded' }))
+    const { user } = setup()
+    await user.click(within(await open(user)).getByRole('button', { name: 'Clear cache' }))
+    expect(await screen.findByText('Clearing the download cache…')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Clear download cache' })).toBeEnabled(), {
+      timeout: 8_000,
+    })
+    expect(get.mock.calls.length).toBeGreaterThanOrEqual(4)
+  }, 12_000)
+
   it('a job that is gone after a backend restart frees the card', async () => {
     vi.spyOn(api, 'pruneCache').mockResolvedValue(accepted)
     vi.spyOn(api, 'getJob').mockRejectedValue(new ApiError(404, 'job_not_found', 'x', {}))

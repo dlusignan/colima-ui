@@ -260,6 +260,7 @@ Errors:
 - `404` `profile_not_found`.
 - `409` `profile_busy`: another job is running on that profile. `details.jobId` is the running job.
 - `409` `invalid_state`: start on a running profile, or stop on a stopped one. `details.status` is the current status. Restart is allowed from either state.
+- `409` `invalid_state` with `details.reason` `cache_prune_running` (`details.jobId` is the prune) for start and restart while a cache prune runs (3.35).
 - `409` `invalid_state` for `update` when the profile is not running (`details.status` is the current status; nothing is started).
 - `400` `bad_request`: the body is not empty or `{}`.
 - `502` `colima_failed`: Colima could not be queried or launched.
@@ -1370,19 +1371,19 @@ Response `202`:
 
 The job:
 
-1. It is a task job like an image pull (3.30): it holds no profile slot, so it never blocks or is blocked by start, stop, restart or delete, and it is allowed while profiles run. Its output is Colima's own output, streamed as it comes, followed on failure or cancel by one fixed closing line of the backend's own.
+1. It is a task job like an image pull (3.30): it holds no profile slot, so it never blocks stop, delete or update and is not blocked by them, and it is allowed while profiles run (item 3 lists what it does refuse and what refuses it). Its output is Colima's own output, streamed as it comes, followed on failure or cancel by one fixed closing line of the backend's own.
 2. At most one cache prune runs at a time across the whole backend. A second request answers `409 conflict` until the first has ended and its final state is recorded, a moment after it finishes.
-3. It is refused while a **create or start** job runs on any profile, because those download the very assets a prune removes. A start from a terminal is not seen. The refusal is checked in the same step that reserves the single prune place, so a start submitted a moment earlier is always seen. A start submitted after the prune began is not refused: the prune only removes cached files that no process holds open, and a start that needs a removed file downloads it again.
-4. Cancelling kills the Colima process and the job ends `cancelled` once the process is gone. **A cancelled or interrupted prune can leave the cache partly cleared**: some files may already be removed. That is harmless, the next create or start downloads what is missing, and the last output line says so (`Cache prune cancelled. Some cached files may already have been removed.`). When the backend shuts down a running prune is cancelled and awaited like other jobs.
+3. It is refused while a **create, start, restart or kubernetes-start** job runs on any profile, because those download the very assets a prune removes (`update` refreshes the runtime inside the VM, not the host cache, so it is not refused). The other way round, a prune that runs refuses those four actions with `409 invalid_state` (`details.reason` `cache_prune_running`, `details.status` `busy`, `details.jobId` the prune job) from the routes that start them (3.4, 3.17, 3.34); stop, delete, update and the other Kubernetes verbs are allowed. Both checks run under the manager's own lock, in the same step that reserves the profile slot or the single prune place, so neither side can slip past the other. A start from a terminal is not seen. `details.jobId` of a refusal is read from the profile slot, which exists a moment before the job is readable, so `GET /api/jobs/{id}` can answer `404` for it briefly. Colima removes the cache folder regardless of what is using it, which is why the two sides refuse each other instead of relying on files being closed.
+4. Cancelling kills the Colima process and the job ends `cancelled` once the process is gone. **A cancelled or interrupted prune can leave a partial cache**: some files may already be removed. That is harmless, the next create or start downloads what is missing, and the last output line says so (`Cache prune cancelled. Some cached files may already have been removed.`). When the backend shuts down a running prune is cancelled and awaited like other jobs.
 5. Action log row `cache-prune` with the outcome `success`, `failed` or `cancelled`, written when the job ends. The detail is the vector that ran (`colima prune --force` or `colima prune --force --all`), so `--all` is always visible. When Colima could not be started the detail starts with `not run:` and never claims an exit status; a cancelled prune says `some cached files may already be removed`. The row belongs to no profile, so it is stored under the reserved key `_global` (a name no profile can have). No route reads it yet: `GET /api/profiles/{name}/actions` (3.11) only serves real profiles.
-6. A failed job has the exit code `1`: the backend does not pass Colima's status through for tasks. Colima's output can contain paths of the cache folder; like every job output it is for the token holder only.
+6. A failed job has the exit code `1`: the backend does not pass Colima's status through for tasks. Colima's output can contain absolute paths of the cache folder, like the output of every other job. They are the user's own paths, and the UI and API are loopback only and need the token.
 
 Errors:
 
 1. `422` `confirmation_required`: `confirm` is missing or not the exact text.
 2. `400` `bad_request`: the body rules above.
-3. `409` `invalid_state` with `details.reason` `assets_in_use`, `details.status` `starting` and `details.jobId`: a create or start job is running on some profile. Nothing starts.
-4. `409` `conflict`: a cache prune is already running.
+3. `409` `invalid_state` with `details.reason` `assets_in_use`, `details.status` `starting` and `details.jobId`: a create, start, restart or kubernetes-start job is running on some profile. Nothing starts.
+4. `409` `conflict`: a cache prune is already running (`details.jobId` is that job, so a client can follow it after a reload).
 5. `503` `shutting_down`: the backend is stopping and accepts no new jobs.
 6. `500` `internal_error`: unexpected failure.
 

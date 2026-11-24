@@ -52,7 +52,10 @@ type Manager struct {
 	// Task jobs (SubmitTask) hold no slot: tasks counts the running ones per
 	// limit group and taskKeys marks the running duplicate keys.
 	tasks    map[string]int
-	taskKeys map[string]struct{}
+	taskKeys map[string]string // dup key -> job id
+	// pruneID is the running cache-prune job ("" for none). Submit reads it
+	// under mu to refuse the actions that download what a prune removes.
+	pruneID  string
 	jobs     map[string]*job // launched jobs, running or retained
 	finished []string        // finished job IDs, oldest first
 }
@@ -88,7 +91,7 @@ func New(opts Options) *Manager {
 		baseCancel: cancel,
 		slots:      make(map[string]*slot),
 		tasks:      make(map[string]int),
-		taskKeys:   make(map[string]struct{}),
+		taskKeys:   make(map[string]string),
 		jobs:       make(map[string]*job),
 	}
 }
@@ -134,6 +137,11 @@ func (m *Manager) Submit(r Request) (JobSummary, error) {
 	if m.closed {
 		m.mu.Unlock()
 		return JobSummary{}, ErrClosed
+	}
+	if m.pruneID != "" && DownloadsAssets(r.Action) {
+		e := &CachePruneRunningError{JobID: m.pruneID}
+		m.mu.Unlock()
+		return JobSummary{}, e
 	}
 	key := slotKey(r.Profile)
 	if s, ok := m.slots[key]; ok {

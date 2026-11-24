@@ -259,3 +259,49 @@ func TestCachePruneRouteNeedsTheBearerToken(t *testing.T) {
 		t.Fatal("task built without a token")
 	}
 }
+
+func TestRunningPruneRefusesDownloadingActionsOverHTTP(t *testing.T) {
+	started := make(chan struct{}, 1)
+	e := newPruneEnv(t, func(ctx context.Context, _ func(string)) error {
+		started <- struct{}{}
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	rec := call(t, e.h, "POST", prunePath, `{"confirm":"delete-cached-assets"}`)
+	if rec.Code != 202 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	id := decodeMap(t, rec)["jobId"].(string)
+	<-started
+	// restart goes through the shared job routes (start needs a stopped gate; the manager test covers it).
+	for _, path := range []string{"/api/profiles/synthetic-a/restart"} {
+		w := wantErr(t, call(t, e.h, "POST", path, ""), 409, "invalid_state")
+		if w.Error.Details["reason"] != "cache_prune_running" || w.Error.Details["jobId"] != id {
+			t.Fatalf("%s details = %v", path, w.Error.Details)
+		}
+	}
+	// stop is not refused, and the second prune names the first.
+	if rec := call(t, e.h, "POST", "/api/profiles/synthetic-a/stop", ""); rec.Code != 409 && rec.Code != 202 {
+		t.Fatalf("stop: %d", rec.Code)
+	}
+	w := wantErr(t, call(t, e.h, "POST", prunePath, `{"confirm":"delete-cached-assets"}`), 409, "conflict")
+	if w.Error.Details["jobId"] != id {
+		t.Fatalf("conflict details = %v", w.Error.Details)
+	}
+	call(t, e.h, "POST", "/api/jobs/"+id+"/cancel", "")
+}
+
+func TestPruneIsRefusedWhileRestartOrKubernetesStartRuns(t *testing.T) {
+	for _, act := range []operations.Action{operations.ActionRestart, operations.ActionKubernetesStart} {
+		e := newPruneEnv(t, okBody)
+		sum, err := e.mgr.Submit(operations.Request{Action: act, Profile: "synthetic-a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := wantErr(t, call(t, e.h, "POST", prunePath, `{"confirm":"delete-cached-assets"}`), 409, "invalid_state")
+		if w.Error.Details["reason"] != "assets_in_use" || w.Error.Details["jobId"] != sum.ID {
+			t.Fatalf("%s: %v", act, w.Error.Details)
+		}
+		e.mgr.Cancel(context.Background(), sum.ID)
+	}
+}
