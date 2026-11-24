@@ -20,15 +20,17 @@ import (
 // VMStatus is the live status read for a profile ("running", "stopped", ...).
 // A delete re-reads it inside the profile slot, after the route's own check,
 // because the route's read can be slow and the VM may have changed meanwhile.
-// Only a broken VM, or a running one whose Docker engine holds nothing (or
-// that does not use Docker), may be deleted; anything else ends as a failed
-// job with a closing line and colima is never run. A nil VMStatus skips the
+// A running VM whose Docker engine holds nothing (or that does not use
+// Docker) may be deleted, and so may a broken one unless its Docker answers
+// and holds something (a broken VM whose Docker cannot be read is deletable);
+// anything else ends as a failed job with a closing line and colima is never
+// run. A nil VMStatus skips the
 // check (tests of the argument vector); production wiring always sets it.
 //
 // DockerContents counts the Docker objects of a running profile (applicable
 // is false for another runtime). A delete of a running profile counts again
 // inside the slot, just before colima runs, and fails closed: a nil hook, an
-// error or a VM that is no longer running means colima is not run. The count
+// error (a VM that is no longer running included) means colima is not run. The count
 // and `colima delete` are not atomic, so a container created in between is
 // not seen.
 type ColimaLauncher struct {
@@ -122,6 +124,18 @@ func (l ColimaLauncher) launchDelete(ctx context.Context, r Request) (colima.Pro
 func (l ColimaLauncher) refuseDelete(ctx context.Context, profile, status string) *refusedProcess {
 	switch strings.ToLower(status) {
 	case "broken":
+		// Best effort: a broken VM usually cannot be read, and then it is
+		// deletable (that is how a damaged profile is cleaned up). When Docker
+		// does answer and holds something, the delete is refused like any other.
+		if l.DockerContents == nil {
+			return nil
+		}
+		cctx, cancel := context.WithTimeout(ctx, contentsTimeout)
+		defer cancel()
+		if counts, applicable, err := l.DockerContents(cctx, profile); err == nil && applicable && !counts.Empty() {
+			return newRefusedDelete(NotRunDockerNotEmpty,
+				"Not deleted: Docker in this profile still holds containers, images or volumes. Remove them, then delete it again.")
+		}
 		return nil
 	case "stopped":
 		return newRefusedDelete(NotRunCannotVerify,
@@ -140,9 +154,6 @@ func (l ColimaLauncher) refuseDelete(ctx context.Context, profile, status string
 	defer cancel()
 	counts, applicable, err := l.DockerContents(cctx, profile)
 	switch {
-	case errors.Is(err, dockerc.ErrVMNotRunning):
-		return newRefusedDelete(NotRunCannotVerify,
-			"Not deleted: the profile stopped, so what Docker holds cannot be checked. Start it, then delete it again.")
 	case err != nil:
 		return unreadable
 	case applicable && !counts.Empty():

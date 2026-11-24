@@ -98,3 +98,14 @@ func DownloadsAssets(a Action) bool { return slices.Contains(AssetDownloadAction
 // AssetDownloadActions is the list DownloadsAssets reads. A cache prune is
 // refused while one of these runs, and these are refused while a prune runs.
 var AssetDownloadActions = []Action{ActionCreate, ActionStart, ActionRestart, ActionKubernetesStart}
+
+// TaskRunningError means a delete was refused because a task job (an image
+// pull) is running on the profile. JobID is that task.
+type TaskRunningError struct {
+	Profile string
+	JobID   string
+}
+
+func (e *TaskRunningError) Error() string {
+	return "operations: a task job is running on the profile: " + e.JobID
+}

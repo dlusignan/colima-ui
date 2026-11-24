@@ -3,6 +3,11 @@ package operations
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -213,7 +218,7 @@ func TestColimaLauncherDeleteCountsDockerInsideTheSlot(t *testing.T) {
 		}, false, NotRunDockerUnreadable},
 		{"vm stopped meanwhile", func(context.Context, string) (dockerc.Contents, bool, error) {
 			return dockerc.Contents{}, false, dockerc.ErrVMNotRunning
-		}, false, NotRunCannotVerify},
+		}, false, NotRunDockerUnreadable},
 		{"no hook wired", nil, false, NotRunDockerUnreadable},
 	} {
 		s := &argsStreamer{}
@@ -231,17 +236,110 @@ func TestColimaLauncherDeleteCountsDockerInsideTheSlot(t *testing.T) {
 	}
 }
 
-// A broken VM is deleted without reading Docker.
-func TestColimaLauncherDeleteBrokenSkipsTheCount(t *testing.T) {
-	s := &argsStreamer{}
-	l := ColimaLauncher{S: s,
-		VMStatus: func(context.Context, string) (string, error) { return "broken", nil },
-		DockerContents: func(context.Context, string) (dockerc.Contents, bool, error) {
-			t.Fatal("docker read for a broken profile")
-			return dockerc.Contents{}, false, nil
-		}}
-	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"}); err != nil || len(s.args) != 1 {
-		t.Fatalf("err %v args %v", err, s.args)
+// A broken VM is counted best effort: unreadable or empty (or no hook) runs the
+// delete, a Docker that answers with contents refuses it.
+func TestColimaLauncherDeleteBrokenCountsBestEffort(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		hook func(context.Context, string) (dockerc.Contents, bool, error)
+		runs bool
+	}{
+		{"no hook", nil, true},
+		{"unreadable", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{}, false, dockerc.ErrVMNotRunning
+		}, true},
+		{"empty", emptyDocker, true},
+		{"not docker", func(context.Context, string) (dockerc.Contents, bool, error) { return dockerc.Contents{}, false, nil }, true},
+		{"holds a volume", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{Volumes: 1}, true, nil
+		}, false},
+	} {
+		s := &argsStreamer{}
+		l := ColimaLauncher{S: s, DockerContents: c.hook,
+			VMStatus: func(context.Context, string) (string, error) { return "broken", nil }}
+		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"})
+		if err != nil || (len(s.args) == 1) != c.runs {
+			t.Fatalf("%s: err %v args %v", c.name, err, s.args)
+		}
+		if !c.runs {
+			refusedLines(t, c.name, p, NotRunDockerNotEmpty)
+		}
+	}
+}
+
+// Unknown, empty and disagreeing runtimes fail closed in the slot, through the
+// real resolver; docker+k3s is counted.
+func TestColimaLauncherDeleteRuntimeClassificationInTheSlot(t *testing.T) {
+	for _, c := range []struct {
+		runtime string
+		runs    bool
+		reason  string
+	}{
+		{"docker", false, NotRunDockerNotEmpty},
+		{"docker+k3s", false, NotRunDockerNotEmpty},
+		{"containerd", true, ""},
+		{"", false, NotRunDockerUnreadable},
+		{"podman", false, NotRunDockerUnreadable},
+	} {
+		sock := startDockerSocket(t)
+		rn := runtimeRunner{runtime: c.runtime, sock: sock}
+		prov := dockerc.NewProvider(dockerc.NewColimaResolver(rn))
+		s := &argsStreamer{}
+		l := ColimaLauncher{S: s,
+			VMStatus: func(context.Context, string) (string, error) { return "running", nil },
+			DockerContents: func(ctx context.Context, profile string) (dockerc.Contents, bool, error) {
+				return dockerc.ProfileContents(ctx, prov, profile)
+			}}
+		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"})
+		if err != nil || (len(s.args) == 1) != c.runs {
+			t.Fatalf("%q: err %v args %v", c.runtime, err, s.args)
+		}
+		if !c.runs {
+			refusedLines(t, c.runtime, p, c.reason)
+		}
+	}
+}
+
+// A running task job (an image pull) on the profile refuses a delete under the
+// manager's own lock, and a task on another profile does not.
+func TestDeleteRefusedWhileATaskRuns(t *testing.T) {
+	m := New(Options{Launcher: ColimaLauncher{S: &argsStreamer{}}})
+	release := make(chan struct{})
+	task, err := m.SubmitTask(TaskRequest{Action: ActionImagePull, Profile: "Dev", Subject: "synthetic:1",
+		Run: func(ctx context.Context, _ func(string)) error {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := m.TaskRunning("dev"); !ok || id != task.ID {
+		t.Fatalf("TaskRunning = %q %v", id, ok)
+	}
+	var tr *TaskRunningError
+	if _, err := m.Submit(Request{Action: ActionDelete, Profile: "dev"}); !errors.As(err, &tr) || tr.JobID != task.ID {
+		t.Fatalf("err %v", err)
+	}
+	if _, ok := m.TaskRunning("other"); ok {
+		t.Fatal("task seen on another profile")
+	}
+	close(release)
+	deadline := time.After(5 * time.Second)
+	for {
+		if _, ok := m.TaskRunning("dev"); !ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("task never ended")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	if _, err := m.Submit(Request{Action: ActionDelete, Profile: "dev"}); err != nil {
+		t.Fatalf("delete after the task ended: %v", err)
 	}
 }
 
@@ -427,4 +525,44 @@ func TestColimaLauncherKubernetesRejectsBadProfileBeforeAnyRead(t *testing.T) {
 	if len(s.args) != 0 || calls != 0 {
 		t.Fatalf("process or read started: %v %d", s.args, calls)
 	}
+}
+
+// runtimeRunner is a colima.Runner that reports one runtime in list and status,
+// with a Docker socket behind it.
+type runtimeRunner struct{ runtime, sock string }
+
+func (r runtimeRunner) Run(_ context.Context, args []string) (colima.Result, error) {
+	if args[0] == "list" {
+		return colima.Result{Stdout: []byte(`{"name":"dev","status":"Running","runtime":"` + r.runtime + `"}`)}, nil
+	}
+	return colima.Result{Stdout: []byte(`{"runtime":"` + r.runtime + `","docker_socket":"unix://` + r.sock + `"}`)}, nil
+}
+
+// startDockerSocket serves one container, one image and no volume.
+func startDockerSocket(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "dk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1.41/containers/json", "/v1.41/images/json":
+			w.Write([]byte(`[{"Id":"aaaaaaaaaaaa"}]`))
+		case "/v1.41/volumes":
+			w.Write([]byte(`{"Volumes":null}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	srv.Listener = l
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return sock
 }

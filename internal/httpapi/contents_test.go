@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -90,11 +91,33 @@ func TestContentsRefusesAProfileThatIsNotRunning(t *testing.T) {
 			t.Fatalf("%q: %v %v", st, w.Error.Details, p.Profiles())
 		}
 	}
-	// The VM stopped between the status read and the Docker resolve.
+}
+
+// The status read said running but the resolver does not find the VM running
+// (a stop in between, or a name that differs from the listed one in letter
+// case): never answered as stopped, because that could be false.
+func TestContentsNeverReportsARunningVMAsStopped(t *testing.T) {
 	p := &dockerctest.Provider{Err: dockerc.ErrVMNotRunning}
-	w := wantErr(t, call(t, contentsServer(&fakeGate{status: "running"}, p), "GET", contentsURL, ""), 409, "invalid_state")
-	if w.Error.Details["status"] != "stopped" {
-		t.Fatalf("details %v", w.Error.Details)
+	wantErr(t, call(t, contentsServer(&fakeGate{status: "running"}, p), "GET", contentsURL, ""), 502, "docker_unavailable")
+}
+
+// caseGate answers like the production delete gate: a listed profile that
+// differs only in letter case reports its own status.
+type caseGate struct{ fakeGate }
+
+func (g *caseGate) ProfileStatusForDelete(context.Context, string) (string, error) {
+	return "running", nil
+}
+
+func TestContentsUsesTheCaseTolerantGate(t *testing.T) {
+	g := &caseGate{fakeGate{status: "stopped"}}
+	p := &dockerctest.Provider{Err: dockerc.ErrVMNotRunning}
+	rec := call(t, contentsServer(g, p), "GET", "/api/profiles/DEV/contents", "")
+	// The plain gate said stopped; the tolerant one said running, so the answer
+	// is not a 409 "stopped".
+	wantErr(t, rec, 502, "docker_unavailable")
+	if len(g.names) != 0 {
+		t.Fatal("plain gate used")
 	}
 }
 

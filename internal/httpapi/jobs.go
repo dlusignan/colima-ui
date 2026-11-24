@@ -213,12 +213,21 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 		return newAPIError(http.StatusUnprocessableEntity, "confirmation_required",
 			"Send the profile name in confirm to delete it.", map[string]any{})
 	}
-	// Allowlist by state. A broken VM is deleted as is. A stopped one is
-	// refused: its Docker data cannot be read, so it cannot be verified empty.
+	// Allowlist by state. A broken VM is deleted unless its Docker answers and
+	// holds something. A stopped one is refused: its Docker data cannot be read, so it cannot be verified empty.
 	// A running one is deleted only when its Docker engine holds nothing (or it
 	// does not use Docker). Anything else (starting, unknown) is refused.
 	switch st := strings.ToLower(status); st {
 	case "broken":
+		// Best effort: a broken VM usually cannot be read, and then it is
+		// deletable. Only a Docker that answers and holds something refuses.
+		if j.docker != nil {
+			cctx, ccancel := context.WithTimeout(r.Context(), contentsTimeout)
+			defer ccancel()
+			if counts, applicable, err := dockerc.ProfileContents(cctx, j.docker, name); err == nil && applicable && !counts.Empty() {
+				return dockerNotEmpty(st, counts)
+			}
+		}
 	case "stopped":
 		return newAPIError(http.StatusConflict, "invalid_state",
 			"Start the profile and empty its Docker data before deleting it.",
@@ -231,12 +240,7 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 			return apiErr
 		}
 		if applicable && !counts.Empty() {
-			return newAPIError(http.StatusConflict, "invalid_state",
-				"The profile still holds Docker containers, images or volumes. Remove them before deleting it.",
-				map[string]any{
-					"status": st, "reason": "docker_not_empty",
-					"containers": counts.Containers, "images": counts.Images, "volumes": counts.Volumes,
-				})
+			return dockerNotEmpty(st, counts)
 		}
 	default:
 		return newAPIError(http.StatusConflict, "invalid_state",
@@ -252,6 +256,15 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"jobId": sum.ID})
 	return nil
+}
+
+func dockerNotEmpty(status string, counts dockerc.Contents) *APIError {
+	return newAPIError(http.StatusConflict, "invalid_state",
+		"The profile still holds Docker containers, images or volumes. Remove them before deleting it.",
+		map[string]any{
+			"status": status, "reason": "docker_not_empty",
+			"containers": counts.Containers, "images": counts.Images, "volumes": counts.Volumes,
+		})
 }
 
 func profileNotFound(name string) *APIError {
@@ -274,7 +287,12 @@ func busyError(profile, jobID string) *APIError {
 func submitError(profile string, act operations.Action, err error) error {
 	var busy *operations.BusyError
 	var pruning *operations.CachePruneRunningError
+	var task *operations.TaskRunningError
 	switch {
+	case errors.As(err, &task):
+		return newAPIError(http.StatusConflict, "invalid_state",
+			"A task such as an image pull is running on this profile. Wait for it to finish or cancel it.",
+			map[string]any{"status": "busy", "reason": "task_running", "jobId": task.JobID})
 	case errors.As(err, &pruning):
 		return newAPIError(http.StatusConflict, "invalid_state",
 			"The download cache is being cleared. Wait for it to finish.",

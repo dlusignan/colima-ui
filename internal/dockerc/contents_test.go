@@ -3,6 +3,7 @@ package dockerc
 import (
 	"context"
 	"errors"
+	"slices"
 	"net/http"
 	"sync"
 	"testing"
@@ -28,8 +29,8 @@ func (h *contentsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`[{"Id":"aaaaaaaaaaaa","Names":["/synthetic-a"],"State":"exited","ImageID":"sha256:i1"},{"Id":"bbbbbbbbbbbb","Names":["/synthetic-b"],"State":"running","ImageID":"sha256:i1"}]`))
 	case "/v1.41/images/json":
 		w.Write([]byte(`[{"Id":"sha256:i1","RepoTags":["synthetic/a:1"]},{"Id":"sha256:i2","RepoTags":null}]`))
-	case "/v1.41/system/df":
-		w.Write([]byte(`{"Volumes":[{"Name":"synthetic-v","Driver":"local"}]}`))
+	case "/v1.41/volumes":
+		w.Write([]byte(`{"Volumes":[{"Name":"synthetic-v","Driver":"local"}],"Warnings":null}`))
 	default:
 		http.NotFound(w, r)
 	}
@@ -49,6 +50,10 @@ func TestCountContentsAgainstTheRealClient(t *testing.T) {
 	if h.requests[0] != "GET /v1.41/containers/json?all=1" {
 		t.Fatalf("requests = %v", h.requests)
 	}
+	want := []string{"GET /v1.41/containers/json?all=1", "GET /v1.41/images/json", "GET /v1.41/volumes"}
+	if !slices.Equal(h.requests, want) {
+		t.Fatalf("requests = %v, want exactly %v", h.requests, want)
+	}
 	for _, r := range h.requests {
 		if r[:3] != "GET" {
 			t.Fatalf("non-read request %q", r)
@@ -57,7 +62,7 @@ func TestCountContentsAgainstTheRealClient(t *testing.T) {
 }
 
 func TestCountContentsFailsClosed(t *testing.T) {
-	for _, path := range []string{"/containers/json", "/images/json", "/system/df"} {
+	for _, path := range []string{"/containers/json", "/images/json", "/volumes"} {
 		h := &contentsHandler{fail: path}
 		c := newHTTPClient(startFakeDocker(t, h))
 		got, err := CountContents(context.Background(), c)
@@ -76,7 +81,7 @@ func TestProfileContentsOutcomes(t *testing.T) {
 	}
 
 	// Another runtime: not applicable, no error, and no status call.
-	other := &fakeColima{list: listFor("Running", "containerd")}
+	other := &fakeColima{list: listFor("Running", "containerd"), status: statusFor("containerd", "")}
 	_, applicable, err = ProfileContents(context.Background(), NewProvider(NewColimaResolver(other)), "synthetic-a")
 	if err != nil || applicable {
 		t.Fatalf("containerd: applicable=%v err=%v", applicable, err)
@@ -99,9 +104,11 @@ func TestProfileContentsOutcomes(t *testing.T) {
 // The runtime name is compared ignoring letter case, in the list and in status.
 func TestResolverRuntimeIgnoresCase(t *testing.T) {
 	sock := startFakeDocker(t, &contentsHandler{})
-	f := &fakeColima{list: listFor("Running", "Docker"), status: statusFor("DOCKER", "unix://"+sock)}
-	if _, err := NewProvider(NewColimaResolver(f)).For(context.Background(), "synthetic-a"); err != nil {
-		t.Fatal(err)
+	for _, rt := range [][2]string{{"Docker", "DOCKER"}, {" docker ", "docker"}, {"docker+k3s", "docker+k3s"}, {"docker", "docker+k3s"}} {
+		f := &fakeColima{list: listFor("Running", rt[0]), status: statusFor(rt[1], "unix://"+sock)}
+		if _, err := NewProvider(NewColimaResolver(f)).For(context.Background(), "synthetic-a"); err != nil {
+			t.Fatalf("%v: %v", rt, err)
+		}
 	}
 }
 
@@ -116,5 +123,19 @@ func TestProfileContentsHostileNameMakesNoCall(t *testing.T) {
 	}
 	if len(f.calls) != 0 || len(h.requests) != 0 {
 		t.Fatalf("colima calls %v socket requests %v", f.calls, h.requests)
+	}
+}
+
+func TestCountContentsNullVolumesAndEmptyLists(t *testing.T) {
+	c := newHTTPClient(startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1.41/volumes" {
+			w.Write([]byte(`{"Volumes":null,"Warnings":null}`))
+			return
+		}
+		w.Write([]byte(`[]`))
+	})))
+	got, err := CountContents(context.Background(), c)
+	if err != nil || !got.Empty() {
+		t.Fatalf("%+v %v", got, err)
 	}
 }

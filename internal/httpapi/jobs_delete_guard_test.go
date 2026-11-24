@@ -1,11 +1,17 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
+	"net"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dlusignan/colima-ui/internal/colima"
 	"github.com/dlusignan/colima-ui/internal/dockerc"
 	"github.com/dlusignan/colima-ui/internal/dockerc/dockerctest"
 	"github.com/dlusignan/colima-ui/internal/operations"
@@ -73,13 +79,35 @@ func TestDeleteStoppedCannotBeVerified(t *testing.T) {
 	}
 }
 
-func TestDeleteBrokenIsAllowedWithoutLookingAtDocker(t *testing.T) {
-	m, g, p := &fakeMgr{}, &fakeGate{status: "broken"}, &dockerctest.Provider{Client: fullFake()}
-	if rec := call(t, deleteGuardServer(m, g, p), "POST", deletePath, guardDeleteBody); rec.Code != 202 {
-		t.Fatalf("%d", rec.Code)
+// A broken VM: Docker is read best effort. Unreadable (the usual case) or
+// empty allows the delete; a Docker that answers with contents refuses it.
+func TestDeleteBrokenCountsBestEffort(t *testing.T) {
+	for name, tc := range map[string]struct {
+		p    *dockerctest.Provider
+		want int
+	}{
+		"unreadable":   {&dockerctest.Provider{Err: dockerc.ErrVMNotRunning}, 202},
+		"daemon error": {&dockerctest.Provider{Err: errors.New("boom")}, 202},
+		"empty":        {&dockerctest.Provider{Client: &dockerctest.Fake{}}, 202},
+		"not docker":   {&dockerctest.Provider{Err: dockerc.ErrRuntimeNotDocker}, 202},
+		"holds things": {&dockerctest.Provider{Client: fullFake()}, 409},
+	} {
+		m, g := &fakeMgr{}, &fakeGate{status: "broken"}
+		rec := call(t, deleteGuardServer(m, g, tc.p), "POST", deletePath, guardDeleteBody)
+		if rec.Code != tc.want {
+			t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
+		}
+		if tc.want == 409 {
+			w := wantErr(t, rec, 409, "invalid_state")
+			if w.Error.Details["reason"] != "docker_not_empty" || w.Error.Details["status"] != "broken" || len(m.submitReq) != 0 {
+				t.Fatalf("%s: %v", name, w.Error.Details)
+			}
+		}
 	}
-	if len(p.Profiles()) != 0 {
-		t.Fatal("docker read for a broken profile")
+	// With no provider wired at all a broken profile is still deletable.
+	m := &fakeMgr{}
+	if rec := call(t, deleteGuardServer(m, &fakeGate{status: "broken"}, nil), "POST", deletePath, guardDeleteBody); rec.Code != 202 {
+		t.Fatalf("nil provider: %d", rec.Code)
 	}
 }
 
@@ -108,11 +136,106 @@ func TestDeleteRefusedWhenDockerCannotBeRead(t *testing.T) {
 	}
 }
 
+// A VM the resolver no longer finds running is refused as unavailable, never
+// reported as stopped.
 func TestDeleteRunningVMThatStoppedMeanwhileIsRefused(t *testing.T) {
 	m, g := &fakeMgr{}, &fakeGate{status: "running"}
-	w := wantErr(t, call(t, deleteGuardServer(m, g, &dockerctest.Provider{Err: dockerc.ErrVMNotRunning}), "POST", deletePath, guardDeleteBody), 409, "invalid_state")
-	if w.Error.Details["status"] != "stopped" || len(m.submitReq) != 0 {
-		t.Fatalf("details %v submit %v", w.Error.Details, m.submitReq)
+	wantErr(t, call(t, deleteGuardServer(m, g, &dockerctest.Provider{Err: dockerc.ErrVMNotRunning}), "POST", deletePath, guardDeleteBody), 502, "docker_unavailable")
+	if len(m.submitReq) != 0 {
+		t.Fatal("submit called")
+	}
+}
+
+func TestDeleteRefusedWhileATaskRuns(t *testing.T) {
+	m := &fakeMgr{submit: func(operations.Request) (operations.JobSummary, error) {
+		return operations.JobSummary{}, &operations.TaskRunningError{Profile: "dev", JobID: "j_pull"}
+	}}
+	w := wantErr(t, call(t, deleteGuardServer(m, &fakeGate{status: "running"}, &dockerctest.Provider{Client: &dockerctest.Fake{}}), "POST", deletePath, guardDeleteBody), 409, "invalid_state")
+	if w.Error.Details["reason"] != "task_running" || w.Error.Details["jobId"] != "j_pull" {
+		t.Fatalf("details %v", w.Error.Details)
+	}
+}
+
+// socketRuntimeProvider is the production resolver over a fake colima that
+// reports the given runtimes, with a real Docker socket behind it.
+type runtimeColima struct{ list, status string }
+
+func (r runtimeColima) Run(_ context.Context, args []string) (colima.Result, error) {
+	if args[0] == "list" {
+		return colima.Result{Stdout: []byte(r.list)}, nil
+	}
+	return colima.Result{Stdout: []byte(r.status)}, nil
+}
+
+func runtimeProvider(t *testing.T, listRuntime, statusRuntime string, h http.Handler) dockerc.Provider {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "dk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "d.sock")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewUnstartedServer(h)
+	srv.Listener = l
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return dockerc.NewProvider(dockerc.NewColimaResolver(runtimeColima{
+		list:   `{"name":"dev","status":"Running","runtime":"` + listRuntime + `"}`,
+		status: `{"runtime":"` + statusRuntime + `","docker_socket":"unix://` + sock + `"}`,
+	}))
+}
+
+// dockerWith answers the three list reads with one container, one image and no volume.
+var dockerWith = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case "/v1.41/containers/json", "/v1.41/images/json":
+		w.Write([]byte(`[{"Id":"aaaaaaaaaaaa"}]`))
+	case "/v1.41/volumes":
+		w.Write([]byte(`{"Volumes":null}`))
+	default:
+		http.NotFound(w, r)
+	}
+})
+
+// Only an explicit docker (with or without +k3s) is counted, containerd and
+// incus are "not applicable", and everything else fails closed, in the contents
+// route and in the delete route.
+func TestRuntimeClassificationInTheRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name, list, status string
+		contents           string // body of a 200, or "" for a 502
+		deleteCode         int
+	}{
+		{"docker", "docker", "docker", `{"applicable":true,"containers":1,"images":1,"volumes":0}`, 409},
+		{"docker+k3s", "docker+k3s", "docker+k3s", `{"applicable":true,"containers":1,"images":1,"volumes":0}`, 409},
+		{"Docker upper case", "Docker", "DOCKER", `{"applicable":true,"containers":1,"images":1,"volumes":0}`, 409},
+		{"containerd", "containerd", "containerd", `{"applicable":false}`, 202},
+		{"incus", "incus", "incus", `{"applicable":false}`, 202},
+		{"empty", "", "", "", 502},
+		{"unknown", "podman", "podman", "", 502},
+		{"disagree", "docker", "containerd", "", 502},
+		{"list empty only", "", "docker", "", 502},
+		{"status empty only", "docker", "", "", 502},
+	} {
+		p := runtimeProvider(t, tc.list, tc.status, dockerWith)
+		rec := call(t, NewHandler(testPort, testToken, NewAPI(WithContents(&fakeGate{status: "running"}, p)), nil), "GET", "/api/profiles/dev/contents", "")
+		if tc.contents == "" {
+			wantErr(t, rec, 502, "docker_unavailable")
+		} else if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != tc.contents {
+			t.Fatalf("%s contents: %d %s", tc.name, rec.Code, rec.Body.String())
+		}
+		m := &fakeMgr{}
+		rec = call(t, deleteGuardServer(m, &fakeGate{status: "running"}, p), "POST", deletePath, guardDeleteBody)
+		if rec.Code != tc.deleteCode {
+			t.Fatalf("%s delete: %d %s", tc.name, rec.Code, rec.Body.String())
+		}
+		if tc.deleteCode != 202 && len(m.submitReq) != 0 {
+			t.Fatalf("%s: submit called", tc.name)
+		}
 	}
 }
 

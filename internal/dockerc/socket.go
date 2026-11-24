@@ -50,14 +50,18 @@ func NewColimaResolver(r colima.Runner) SocketResolver {
 		if inst == nil || inst.Status != colima.StatusRunning {
 			return "", ErrVMNotRunning
 		}
-		if !strings.EqualFold(inst.Runtime, "docker") {
-			return "", ErrRuntimeNotDocker
-		}
 		d, err := colima.Status(ctx, r, profile)
 		if err != nil {
 			return "", fmt.Errorf("dockerc: reading status: %w", err)
 		}
-		if !strings.EqualFold(d.Runtime, "docker") {
+		// Both reads must name the same known runtime. Anything else (empty,
+		// unknown, or the two disagreeing) fails closed as unavailable: only an
+		// explicit containerd or incus is "not Docker".
+		listed, reported := NormalizeRuntime(inst.Runtime), NormalizeRuntime(d.Runtime)
+		switch {
+		case listed != reported || !knownRuntime(listed):
+			return "", fmt.Errorf("%w: runtime not recognised", ErrDockerUnavailable)
+		case listed != "docker":
 			return "", ErrRuntimeNotDocker
 		}
 		sock := strings.TrimPrefix(d.DockerSocket, "unix://")
@@ -70,4 +74,20 @@ func NewColimaResolver(r colima.Runner) SocketResolver {
 		}
 		return sock, nil
 	}
+}
+
+// NormalizeRuntime lowercases and trims a runtime name and drops a "+k3s"
+// suffix (the form Colima may use when Kubernetes runs on the runtime).
+func NormalizeRuntime(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return strings.TrimSuffix(s, "+k3s")
+}
+
+// knownRuntime is the allowlist of runtimes the resolver can classify.
+func knownRuntime(r string) bool {
+	switch r {
+	case "docker", "containerd", "incus":
+		return true
+	}
+	return false
 }

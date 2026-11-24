@@ -1279,12 +1279,15 @@ Errors:
 4. `409` `invalid_state`: the state does not allow a delete. `details.status` is the current status (as in 3.4) and, except for a plain refusal, `details.reason` says why:
    1. `docker_not_empty`: the VM is `running` with the Docker runtime and holds at least one container (of any state), image or volume. `details` also carries `containers`, `images` and `volumes` (counts only, never names or ids). Remove the Docker objects first.
    2. `cannot_verify`: the VM is `stopped`. Its Docker engine cannot be read, so it cannot be shown empty. Start it, empty it, then delete it.
-   3. No `reason`: any other status (`starting`, `stopping`, an unknown one) is refused; only `running` (when empty), `broken` and `running` on another runtime are allowed. A `broken` VM is allowed so a half-created or damaged profile can be cleaned up; its Docker contents are not read.
-   A `running` profile whose runtime is not Docker is allowed: there is no engine to count. If the VM stops between the status read and the Docker read, the answer is `409` with `details.status` `stopped`.
-5. `502` `docker_unavailable`: the profile is `running` but its Docker contents could not be read (missing socket, daemon error, timeout, or a failure to resolve the socket). The delete fails closed: nothing is deleted, and no daemon text or path is returned.
+   3. `task_running`: a task job (an image pull) is running on the profile (`details.jobId`; `details.status` is `busy`). Wait for it or cancel it. The manager checks this under the same lock that reserves the slot, so it cannot race the delete.
+   4. No `reason`: any other status (`starting`, `stopping`, an unknown one) is refused.
+   Only these are allowed: `running` with nothing in Docker, `running` on the containerd or incus runtime (there is no Docker engine to count), and `broken`.
+   A `broken` VM is counted best effort: if its Docker can be read and holds something it is refused with `docker_not_empty` like a running one, but if its Docker cannot be read (the expected case for a broken VM) the delete is allowed. So a broken VM whose Docker cannot be read is deletable, which is how a half-created or damaged profile is cleaned up.
+   The runtime is read from `colima list` and `colima status`, lowercased and trimmed, with a `+k3s` suffix dropped. Only `docker` counts as Docker and only `containerd` and `incus` count as not Docker. An empty or unknown runtime, or a list and a status that disagree, fail closed as `502 docker_unavailable`. If the status read says `running` but the VM is no longer found running when Docker is resolved (a stop in between, or a name that differs from the listed one in letter case), the answer is `502 docker_unavailable`, never `409` `stopped`.
+5. `502` `docker_unavailable`: the profile is `running` but its Docker contents could not be read (missing socket, daemon error, timeout, an unrecognised runtime, or a failure to resolve the socket). The delete fails closed: nothing is deleted, and no daemon text or path is returned.
 6. `400` `bad_request`, `502` `colima_failed`, `503` `shutting_down`, `500` `internal_error` as in 3.4.
 
-Order of checks: body shape, busy, profile lookup, confirmation, state (and for a running profile the Docker count), then the job is submitted. The busy check runs before the slow reads (`colima list`, then up to four Docker list calls) so a job that began meanwhile is seen. The job re-reads the status inside the profile slot, right before running `colima delete`, and for a running profile counts the Docker objects again. If the state no longer allows the delete (for example the VM was started or stopped from a terminal in between), the count is not zero, or the count cannot be made (it fails closed, like the route), nothing is deleted and the job ends as `failed` with one closing line in its output. Its action log row says `not run: docker not empty`, `not run: could not check docker contents`, `not run: profile is stopped, docker contents cannot be checked` or `not run: profile state did not allow deleting`, never a Colima exit status.
+Order of checks: body shape, busy, profile lookup, confirmation, state (and for a running profile the Docker count), then the job is submitted. The busy check runs before the slow reads (`colima list`, then three Docker list calls) so a job that began meanwhile is seen. The job re-reads the status inside the profile slot, right before running `colima delete`, and for a running profile counts the Docker objects again. If the state no longer allows the delete (for example the VM was started or stopped from a terminal in between), the count is not zero (for a broken VM, only when Docker can be read), or the count of a running VM cannot be made (it fails closed, like the route; a VM that is no longer found running counts as unreadable), nothing is deleted and the job ends as `failed` with one closing line in its output. Its action log row names the reason, one of `not run: docker not empty`, `not run: could not check docker contents`, `not run: profile is stopped, docker contents cannot be checked` or `not run: profile state did not allow deleting`, never a Colima exit status. A task job that starts after the delete began is not checked again inside the slot (a pull on a VM being deleted fails by itself).
 
 Residual race: the count and `colima delete` are not atomic. A container, image or volume created (for example from a terminal) after the in-slot count and before the VM is removed is deleted with the VM. Like the busy check in 1.3, the guard is best effort against anything outside this backend's own jobs; it cannot be closed by a one-shot check.
 
@@ -1437,7 +1440,7 @@ Docker's error text is never returned. One action log row is written per request
 
 ### 3.37 `GET /api/profiles/{name}/contents`
 
-Token: yes. Request body: none. Counts the Docker objects inside a running profile, so the delete dialog (3.32) can say what blocks a delete. It uses the Docker list reads behind 3.10, 3.12 and 3.13: containers of every state (stopped ones count), images and volumes. It is a read: no busy check and no action log row. It makes four Docker list calls, so clients must ask once when the dialog opens and must not poll it. It returns counts only, never a name or an id.
+Token: yes. Request body: none. Counts the Docker objects inside a running profile, so the delete dialog (3.32) can say what blocks a delete. It counts containers of every state (stopped ones count), images (the list behind 3.12, without intermediate layers) and volumes. It is a read: no busy check and no action log row. It makes three Docker calls (`GET /containers/json?all=1`, `GET /images/json` and `GET /volumes`), so clients must ask once when the dialog opens and must not poll it. Intermediate image layers and build cache are not counted: `colima delete` destroys them too, so they never block a delete. It returns counts only, never a name or an id.
 
 Response `200`, a running profile with the Docker runtime:
 
@@ -1445,7 +1448,7 @@ Response `200`, a running profile with the Docker runtime:
 { "applicable": true, "containers": 3, "images": 5, "volumes": 1 }
 ```
 
-Response `200`, a running profile whose runtime is not Docker (there is no engine to count; a delete is allowed):
+Response `200`, a running profile whose runtime is containerd or incus (there is no engine to count; a delete is allowed):
 
 ```json
 { "applicable": false }
@@ -1454,8 +1457,8 @@ Response `200`, a running profile whose runtime is not Docker (there is no engin
 Errors:
 
 1. `404` `profile_not_found`: the name is unknown or malformed (it never reaches a process or Docker).
-2. `409` `invalid_state`: the profile is not `running` (`details.status`, as in 3.10).
-3. `502` `docker_unavailable`: the Docker socket is missing or not answering, or any of the three reads failed. Nothing partial is returned.
+2. `409` `invalid_state`: the profile is not `running` (`details.status`, as in 3.10; a listed profile whose name differs from the request only in letter case reports its own status).
+3. `502` `docker_unavailable`: the Docker socket is missing or not answering, any of the three reads failed, the runtime is empty, unknown or reported differently by `colima list` and `colima status` (only `docker`, `containerd` and `incus`, each optionally with `+k3s`, are recognised), or the VM is no longer found running when Docker is resolved. Nothing partial is returned.
 4. `502` `colima_failed` and `500` `internal_error` as in 3.4.
 
 The numbers are a snapshot: the three reads are separate calls, and a delete (3.32) counts again on its own, so this answer never authorizes a delete.

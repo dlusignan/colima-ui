@@ -29,7 +29,7 @@ type contentsJSON struct {
 //	GET /api/profiles/{name}/contents
 //
 // It is a read: no busy check and no action log row. The caller (the UI) asks
-// once when a delete dialog opens and must not poll it, because it makes four
+// once when a delete dialog opens and must not poll it, because it makes three
 // Docker list calls.
 func WithContents(gate ProfileGate, docker dockerc.Provider) Option {
 	c := &contentsRoutes{gate: gate, docker: docker}
@@ -49,7 +49,14 @@ func (c *contentsRoutes) get(w http.ResponseWriter, r *http.Request) error {
 	defer cancel()
 
 	gctx, gcancel := context.WithTimeout(ctx, gateTimeout)
-	status, err := c.gate.ProfileStatus(gctx, name)
+	// The delete gate also matches a listed profile that differs only in
+	// letter case and reports its own status, so a running VM is never
+	// reported as stopped.
+	statusOf := c.gate.ProfileStatus
+	if dg, ok := c.gate.(DeleteGate); ok {
+		statusOf = dg.ProfileStatusForDelete
+	}
+	status, err := statusOf(gctx, name)
 	gcancel()
 	switch {
 	case errors.Is(err, ErrInvalidProfileName):
@@ -80,7 +87,10 @@ func (c *contentsRoutes) get(w http.ResponseWriter, r *http.Request) error {
 
 // countContents reads a running profile's Docker counts. It fails closed: a nil
 // provider or any read failure (the daemon text is logged, never returned)
-// becomes a 502 docker_unavailable, and a VM that stopped meanwhile a 409.
+// becomes a 502 docker_unavailable. That includes a VM the resolver no longer
+// finds running although the status read said running (a stop in between, or a
+// name that differs from the listed one in letter case): it is never reported
+// as stopped, because that could be false.
 func countContents(ctx context.Context, p dockerc.Provider, name, route string) (dockerc.Contents, bool, *APIError) {
 	if p == nil {
 		return dockerc.Contents{}, false, dockerUnavailable()
@@ -89,8 +99,6 @@ func countContents(ctx context.Context, p dockerc.Provider, name, route string) 
 	switch {
 	case err == nil:
 		return counts, applicable, nil
-	case errors.Is(err, dockerc.ErrVMNotRunning):
-		return dockerc.Contents{}, false, notRunning("stopped")
 	}
 	slog.Error("docker contents read failed", "route", route, "error", err)
 	return dockerc.Contents{}, false, dockerUnavailable()
