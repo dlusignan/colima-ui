@@ -73,7 +73,7 @@ export const api = {
   /**
    * Deletes a stopped profile as a job (202, follow `jobId` like a stop).
    * 422 `confirmation_required` unless `confirm` equals the name, 409
-   * `profile_running` while the VM runs, 409 `profile_busy` during another job.
+   * `invalid_state` while the VM runs, 409 `profile_busy` during another job.
    */
   deleteProfile: (name: string, body: DeleteProfileRequest) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/delete`, { body }),

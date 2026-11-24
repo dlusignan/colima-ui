@@ -1228,7 +1228,7 @@ Errors:
 1. `404` `profile_not_found`: the name is malformed or no such profile exists. The `default` profile is allowed like any other.
 2. `422` `confirmation_required`: `confirm` is missing or does not equal the name.
 3. `409` `profile_busy`: another job runs on the profile (`details.jobId`).
-4. `409` `profile_running`: the VM is running. The user stops it first; nothing starts.
+4. `409` `invalid_state`: the VM is running (`details.status` is `running`, as in 3.4). The user stops it first; nothing starts.
 5. `400` `bad_request`, `502` `colima_failed`, `503` `shutting_down`, `500` `internal_error` as in 3.4.
 
 Order of checks: body shape, profile lookup, confirmation, busy, running, then the job is submitted.

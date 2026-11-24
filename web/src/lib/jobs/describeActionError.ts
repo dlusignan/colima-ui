@@ -38,6 +38,7 @@ export function describeActionError(
       }
     }
     case 'invalid_state': {
+      if (action === 'delete') return { message: `Stop ${profile} before deleting it.`, refresh: true }
       const status = error.details.status
       return {
         message:
@@ -47,8 +48,6 @@ export function describeActionError(
         refresh: true,
       }
     }
-    case 'profile_running':
-      return { message: `Stop ${profile} before deleting it.`, refresh: true }
     case 'confirmation_required':
       return { message: `The name typed does not match ${profile}.`, refresh: false }
     case 'profile_not_found':

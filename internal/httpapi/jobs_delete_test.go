@@ -81,7 +81,7 @@ func TestDeleteBadBodies(t *testing.T) {
 
 func TestDeleteRunningProfileIsRefused(t *testing.T) {
 	m, g := &fakeMgr{}, &fakeGate{status: "Running"}
-	w := wantErr(t, call(t, jobsServer(m, g), "POST", deletePath, `{"confirm":"dev","deleteData":true}`), 409, "profile_running")
+	w := wantErr(t, call(t, jobsServer(m, g), "POST", deletePath, `{"confirm":"dev","deleteData":true}`), 409, "invalid_state")
 	if w.Error.Details["status"] != "running" {
 		t.Fatalf("details %v", w.Error.Details)
 	}

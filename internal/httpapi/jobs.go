@@ -127,7 +127,7 @@ const deleteBodyLimit = 1 << 10
 // delete serves POST /api/profiles/{name}/delete. The order: the body shape
 // (400), the gate (it validates the name before anything else sees it, 404),
 // the confirmation (422, must equal the path name exactly), Busy (409
-// profile_busy), the running check (409 profile_running, decided
+// profile_busy), the running check (409 invalid_state, decided
 // conservatively: the user stops the VM first), then Submit, which stays
 // authoritative for the slot. Nothing starts before every check has passed, and
 // the launcher always passes --force, so the process never waits on a prompt.
@@ -173,7 +173,7 @@ func (j *jobRoutes) delete(w http.ResponseWriter, r *http.Request) error {
 		return busyError(name, id)
 	}
 	if strings.ToLower(status) == "running" {
-		return newAPIError(http.StatusConflict, "profile_running",
+		return newAPIError(http.StatusConflict, "invalid_state",
 			"Stop the profile before deleting it.", map[string]any{"status": "running"})
 	}
 

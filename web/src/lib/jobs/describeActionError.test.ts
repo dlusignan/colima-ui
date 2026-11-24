@@ -73,8 +73,8 @@ describe('describeActionError', () => {
     )
   })
 
-  it('delete errors: profile_running refreshes, confirmation_required does not', () => {
-    expect(describeActionError(err(409, 'profile_running'), 'delete', 'dev')).toEqual({
+  it('delete errors: invalid_state on a running profile refreshes, confirmation_required does not', () => {
+    expect(describeActionError(err(409, 'invalid_state', { status: 'running' }), 'delete', 'dev')).toEqual({
       message: 'Stop dev before deleting it.',
       refresh: true,
     })

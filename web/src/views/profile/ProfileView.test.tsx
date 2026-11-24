@@ -291,7 +291,7 @@ describe('delete', () => {
   })
 
   it('shows a toast when the server says the profile is running', async () => {
-    vi.spyOn(api, 'deleteProfile').mockRejectedValue(new ApiError(409, 'profile_running', 'x'))
+    vi.spyOn(api, 'deleteProfile').mockRejectedValue(new ApiError(409, 'invalid_state', 'x', { status: 'running' }))
     const { user } = setup([stopped])
     await user.click(await screen.findByRole('button', { name: 'Delete profile dev' }))
     const dialog = await screen.findByRole('alertdialog')
