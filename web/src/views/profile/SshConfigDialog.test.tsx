@@ -33,6 +33,15 @@ function setup() {
 const open = (user: ReturnType<typeof userEvent.setup>) => user.click(screen.getByRole('button', { name: 'SSH config' }))
 
 describe('SshConfigDialog', () => {
+  it('scrolls inside the window when the content is taller than it', async () => {
+    const { get, user } = setup()
+    get.mockResolvedValue(sample)
+    await open(user)
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog.className).toContain('max-h-[85vh]')
+    expect(dialog.className).toContain('overflow-y-auto')
+  })
+
   it('fetches nothing until opened, then shows the table, the raw text and the hint', async () => {
     const { get, user } = setup()
     get.mockResolvedValue(sample)
