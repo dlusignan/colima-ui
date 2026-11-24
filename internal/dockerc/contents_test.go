@@ -3,8 +3,8 @@ package dockerc
 import (
 	"context"
 	"errors"
-	"slices"
 	"net/http"
+	"slices"
 	"sync"
 	"testing"
 )
