@@ -18,6 +18,7 @@ const PROGRESS: Record<JobAction, string> = {
   'kubernetes-delete': 'deleting Kubernetes',
   create: 'creating',
   'image-pull': 'pulling',
+  'cache-prune': 'clearing the cache',
 }
 
 const WARNING_LABEL: Record<string, string> = {

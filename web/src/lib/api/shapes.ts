@@ -51,6 +51,8 @@ import type {
   JobOutputLine,
   JobRef,
   DeleteProfileRequest,
+  CachePruneAccepted,
+  CachePruneRequest,
   PullImageAccepted,
   PullImageRequest,
   MetricEvent,
@@ -245,6 +247,18 @@ export const pullImageAcceptedShape = {
   profile: 'string',
   state: 'string',
 } as const satisfies Record<keyof PullImageAccepted, Kind>
+
+export const cachePruneRequestShape = {
+  confirm: 'string',
+  includeLima: 'boolean',
+} as const satisfies Record<keyof CachePruneRequest, Kind>
+
+export const cachePruneAcceptedShape = {
+  jobId: 'string',
+  action: 'string',
+  profile: 'string',
+  state: 'string',
+} as const satisfies Record<keyof CachePruneAccepted, Kind>
 
 export const tagImageRequestShape = {
   repository: 'string',

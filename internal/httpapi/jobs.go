@@ -231,7 +231,12 @@ func busyError(profile, jobID string) *APIError {
 // submitError maps what Submit returns.
 func submitError(profile string, act operations.Action, err error) error {
 	var busy *operations.BusyError
+	var pruning *operations.CachePruneRunningError
 	switch {
+	case errors.As(err, &pruning):
+		return newAPIError(http.StatusConflict, "invalid_state",
+			"The download cache is being cleared. Wait for it to finish.",
+			map[string]any{"status": "busy", "reason": "cache_prune_running", "jobId": pruning.JobID})
 	case errors.As(err, &busy):
 		return busyError(profile, busy.JobID)
 	case errors.Is(err, operations.ErrClosed):

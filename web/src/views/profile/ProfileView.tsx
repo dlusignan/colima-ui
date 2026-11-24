@@ -36,6 +36,7 @@ const PROGRESS: Record<JobAction, string> = {
   update: 'updating',
   create: 'creating',
   'image-pull': 'pulling',
+  'cache-prune': 'clearing the cache',
 }
 
 function listErrorText(error: unknown): string {

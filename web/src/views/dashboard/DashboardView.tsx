@@ -4,6 +4,7 @@ import { useProfiles } from '@/lib/api/useProfiles'
 import { useJobTracker } from '@/lib/jobs/useJobTracker'
 import { useToast } from '@/lib/toast/useToast'
 import { ProfileTable, ProfileTableSkeleton } from './ProfileTable'
+import { MaintenanceCard } from './MaintenanceCard'
 import { WarningBanners } from '@/components/WarningBanners'
 import { useCreateProfile } from '@/views/create/createProfileContext'
 
@@ -75,6 +76,7 @@ export function DashboardView() {
         </Button>
       </div>
       {body}
+      <MaintenanceCard />
     </section>
   )
 }

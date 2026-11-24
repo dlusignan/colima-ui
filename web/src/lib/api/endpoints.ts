@@ -1,6 +1,8 @@
 import { request } from './client'
 import type {
   ActionList,
+  CachePruneAccepted,
+  CachePruneRequest,
   ConfigUpdate,
   CreateProfileRequest,
   CreateNetworkRequest,
@@ -108,6 +110,14 @@ export const api = {
     request<JobRef>('POST', `/api/profiles/${enc(name)}/kubernetes/delete`, {
       body: { confirm: DELETE_KUBERNETES_CONFIRMATION } satisfies KubernetesConfirmRequest,
     }),
+  /**
+   * Clears Colima's download cache as a global job (202; its `profile` is
+   * empty). 409 `invalid_state` (`details.reason` `assets_in_use`) while a
+   * create or start runs, 409 `conflict` while another prune runs, 422
+   * `confirmation_required` for a wrong confirm.
+   */
+  pruneCache: (body: CachePruneRequest) =>
+    request<CachePruneAccepted>('POST', '/api/colima/cache/prune', { body }),
   getJob: (id: string, signal?: AbortSignal) =>
     request<Job>('GET', `/api/jobs/${enc(id)}`, { signal }),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${enc(id)}/cancel`),

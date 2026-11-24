@@ -30,6 +30,9 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 	if s.Action == operations.ActionImagePull {
 		return entryForPull(s, e)
 	}
+	if s.Action == operations.ActionCachePrune {
+		return entryForCachePrune(s, e)
+	}
 	var detail string
 	switch s.State {
 	case operations.StateSucceeded:
@@ -131,5 +134,47 @@ func entryForPull(s operations.JobSummary, e store.ActionEntry) (store.ActionEnt
 	if d := s.Subject; d != "" && len(d) <= 255 && !strings.ContainsFunc(d, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
 		e.Detail = &d
 	}
+	return e, true
+}
+
+// GlobalProfile is the action log key of a row that belongs to no profile (a
+// cache prune). The store keeps one log per profile name and refuses an empty
+// one. The name starts with an underscore, which no valid profile name can, so
+// it never collides with a real profile.
+const GlobalProfile = "_global"
+
+// entryForCachePrune maps a finished cache prune. The detail names the exact
+// vector from the job's fixed subject (never from output), and says "not run"
+// when colima never started, so a row never claims colima ran when it did not.
+// A cancelled prune may have removed part of the cache.
+func entryForCachePrune(s operations.JobSummary, e store.ActionEntry) (store.ActionEntry, bool) {
+	e.Profile = GlobalProfile
+	vector := "colima prune --force"
+	if s.Subject == operations.PruneSubjectAll {
+		vector += " --all"
+	}
+	var detail string
+	switch s.State {
+	case operations.StateSucceeded:
+		e.Outcome = OutcomeSuccess
+		detail = vector
+	case operations.StateFailed:
+		e.Outcome = OutcomeFailed
+		if s.NotRun {
+			detail = "not run: colima could not be started (" + vector + ")"
+		} else {
+			detail = vector + " did not succeed"
+		}
+	case operations.StateCancelled:
+		e.Outcome = OutcomeCancelled
+		if s.NotRun {
+			detail = "not run: cancelled before colima started (" + vector + ")"
+		} else {
+			detail = vector + " cancelled; some cached files may already be removed"
+		}
+	default:
+		return e, false
+	}
+	e.Detail = &detail
 	return e, true
 }

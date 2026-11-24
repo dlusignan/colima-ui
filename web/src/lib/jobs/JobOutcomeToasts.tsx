@@ -9,6 +9,7 @@ import { logPath } from '@/views/log/logPath'
 /** Names that read better than the API's action keys. */
 const ACTION_LABEL: Record<string, string> = {
   'image-pull': 'image pull',
+  'cache-prune': 'download cache clear',
   'kubernetes-start': 'kubernetes start',
   'kubernetes-stop': 'kubernetes stop',
   'kubernetes-reset': 'kubernetes reset',
@@ -18,7 +19,9 @@ const ACTION_LABEL: Record<string, string> = {
 /** `default: stop succeeded`, `default: start failed (exit 1)`. The action is unknown when the lookup fails. */
 function outcomeTitle(event: JobFinishedEvent, action: string | undefined): string {
   const exit = event.state === 'failed' && event.exitCode != null ? ` (exit ${event.exitCode})` : ''
-  return `${event.profile}: ${(action && ACTION_LABEL[action]) ?? action ?? 'job'} ${event.state}${exit}`
+  // A global job (cache prune) has no profile: no prefix.
+  const prefix = event.profile ? `${event.profile}: ` : ''
+  return `${prefix}${(action && ACTION_LABEL[action]) ?? action ?? 'job'} ${event.state}${exit}`
 }
 
 /**
@@ -36,7 +39,8 @@ export function JobOutcomeToasts(): null {
   useEventListener('job.finished', (event) => {
     if (seen.current.has(event.jobId)) return
     seen.current.add(event.jobId)
-    const path = logPath(event.profile, event.jobId)
+    // The log view is per profile, so a global job has no log link.
+    const path = event.profile ? logPath(event.profile, event.jobId) : null
     void (async () => {
       let action: string | undefined
       try {
@@ -49,7 +53,7 @@ export function JobOutcomeToasts(): null {
       show({
         title: outcomeTitle(event, action),
         key: event.jobId,
-        action: { label: 'View log', href: path, onClick: () => navigate(path) },
+        ...(path && { action: { label: 'View log', href: path, onClick: () => navigate(path) } }),
       })
     })()
   })
