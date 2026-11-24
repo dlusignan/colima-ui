@@ -85,7 +85,8 @@ func NormalizeSubnet(s string) (string, bool) {
 var predefinedNetworks = map[string]bool{"bridge": true, "host": true, "none": true}
 
 // ValidNetworkRef reports whether ref can name a network in a path: an object
-// name (which includes the 12 and 64 character hex IDs).
+// name (which includes the 12 and 64 character hex IDs). Whether a valid ref
+// really names the network Docker found is checked by networkLookup.
 func ValidNetworkRef(ref string) bool { return ValidObjectName(ref) }
 
 // isHexID is true for a 12 or 64 character lowercase hex string, the two forms
