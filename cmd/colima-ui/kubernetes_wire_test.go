@@ -11,6 +11,7 @@ import (
 const k8sList = `{"name":"default","status":"Running","runtime":"docker"}
 {"name":"k8son","status":"Running","runtime":"docker"}
 {"name":"k8soff","status":"Running","runtime":"docker"}
+{"name":"k8sbad","status":"Running","runtime":"docker"}
 {"name":"k8sstopped","status":"Stopped","runtime":"docker"}
 `
 
@@ -100,5 +101,25 @@ func TestAppKubernetesCancelRecordsPartialWarning(t *testing.T) {
 	want := "kubernetes delete: cancelled before it finished; the cluster may be partly changed"
 	if row.Action != "kubernetes-delete" || row.Outcome != "cancelled" || row.Detail == nil || *row.Detail != want {
 		t.Fatalf("row: %#v", row)
+	}
+}
+
+func TestAppKubernetesUnreadableConfigFailsClosed(t *testing.T) {
+	r := &fakeRunner{list: k8sList, script: []string{"x"}}
+	a := testApp(t, r)
+	ts := serve(t, a)
+	if code, body := ts.do(t, "GET", "/api/profiles/k8sbad/kubernetes", ""); code != 500 {
+		t.Fatalf("probe: %d %s", code, body)
+	}
+	for _, c := range []struct{ verb, body string }{
+		{"start", ""}, {"stop", ""},
+		{"reset", `{"confirm":"reset-kubernetes"}`}, {"delete", `{"confirm":"delete-kubernetes"}`},
+	} {
+		if code, body := ts.do(t, "POST", "/api/profiles/k8sbad/kubernetes/"+c.verb, c.body); code != 500 {
+			t.Fatalf("%s: %d %s", c.verb, code, body)
+		}
+	}
+	if r.streamCount() != 0 {
+		t.Fatalf("colima started: %v", r.streams)
 	}
 }

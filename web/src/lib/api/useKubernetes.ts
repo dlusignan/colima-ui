@@ -3,7 +3,7 @@ import { api } from './endpoints'
 import { queryKeys } from './keys'
 
 /**
- * Whether the profile has Kubernetes enabled, read live from Colima. Only asked
+ * Whether the profile has Kubernetes enabled, the configured `kubernetes.enabled` flag from the profile's YAML file (not whether the cluster runs). Only asked
  * while `enabled` (the profile is running: a stopped one answers 409); an error
  * counts as "not known", so the Kubernetes group stays hidden.
  */

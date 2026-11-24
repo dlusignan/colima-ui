@@ -1282,7 +1282,7 @@ Things to know:
 
 ### 3.33 `GET /api/profiles/{name}/kubernetes`
 
-Token: yes. Request body: none. Tells the UI whether to show the Kubernetes actions. The answer is the profile's configured `kubernetes.enabled`, read through the config service. It is not whether the cluster is running: `colima status` reports `kubernetes: false` for a stopped cluster, which would make Start unreachable, so the status output is never used for this. A profile without a configuration file or without the key is not enabled. It is a read: no busy check, no action log row.
+Token: yes. Request body: none. Tells the UI whether to show the Kubernetes actions. The answer is the profile's configured `kubernetes.enabled`, read through the config service. It is not whether the cluster is running: `colima status` reports `kubernetes: false` for a stopped cluster, which would make Start unreachable, so the status output is never used for this. A profile without a configuration file or without the key is not enabled. Because the flag is the configured one, hand-editing the YAML while the VM runs can make it drift from the real cluster: `true` while the VM booted without Kubernetes means Start may run against a VM that has none, and `false` while a cluster is running means the UI cannot stop or delete that cluster. It is a read: no busy check, no action log row.
 
 Response `200`:
 
@@ -1328,6 +1328,7 @@ Things to know:
 
 1. While the in-slot checks run (at most 15 seconds), `GET /api/profiles` and a `409 profile_busy` answer can already show the job id, but `GET /api/jobs/{id}` answers `404 job_not_found` for it until the job exists. Clients should retry a `404` for an id they just received; the web app does.
 2. `reset` and `delete` destroy the cluster's workloads and state. A reset or delete that is cancelled, interrupted by a backend shutdown or fails after colima started may leave the cluster half done; the action log row says so, and the way forward is to run the action again.
+3. A configuration read that fails inside the slot surfaces as `502 colima_failed` with no job and no action log row (the same holds for a failed status read).
 
 Errors:
 

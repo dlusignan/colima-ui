@@ -203,6 +203,7 @@ func TestKubernetesConfirmEnforced(t *testing.T) {
 			"null", `{"Confirm":"` + c.verb + `-kubernetes"}`, `{"CONFIRM":"` + c.verb + `-kubernetes"}`,
 			`{"confirm":"` + c.verb + `-kubernetes","confirm":"` + c.verb + `-kubernetes"}`,
 			`{"confirm":"x","confirm":"` + c.verb + `-kubernetes"}`,
+			`{"confirm":"x","\u0063onfirm":"` + c.verb + `-kubernetes"}`,
 			`{"confirm":5}`, `{"confirm":["x"]}`, `{"confirm":"` + c.verb + `-kubernetes","extra":1}`,
 			`{"confirm":"` + c.verb + `-kubernetes"} {}`, `{"confirm":`, `[]`, `"x"`,
 			`{"confirm":"` + strings.Repeat("a", 2000) + `"}`,

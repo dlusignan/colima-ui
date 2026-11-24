@@ -173,6 +173,10 @@ func newAppWith(runner colimaRunner, getenv func(string) string, homeDir, userCo
 			// A delete and the Kubernetes actions re-read the live status
 			// inside the profile slot; the Kubernetes ones also read the
 			// configured flag from the config service.
+			// The case-insensitive fallback of ProfileStatusForDelete is safe for
+			// Kubernetes too: a name that differs only in case is the same folder on
+			// the default macOS filesystem, and a listed profile reports its own
+			// status, so a stopped VM is never mistaken for a running one.
 			VMStatus:          gate.ProfileStatusForDelete,
 			KubernetesEnabled: kubernetesConfigured(svc),
 		},
@@ -274,7 +278,7 @@ func (a *app) handler() http.Handler {
 	// #138 ssh-config (a read through the colima adapter: no busy check, no action log)
 	opts = append(opts, httpapi.WithSSHConfig(a.gate, sshConfigSource{r: a.runner}))
 
-	// #141 kubernetes (jobs on the manager; the probe reads `colima status`)
+	// #141 kubernetes (jobs on the manager; the probe reads kubernetes.enabled through the config service)
 	opts = append(opts, httpapi.WithKubernetes(a.mgr, a.gate, kubernetesProbe{read: kubernetesConfigured(a.configSvc)}))
 
 	// #39 actions

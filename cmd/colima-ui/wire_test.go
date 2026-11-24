@@ -235,7 +235,7 @@ func testAppAt(t *testing.T, r *fakeRunner) (*app, string) {
 		t.Fatal(err)
 	}
 	// k8son has Kubernetes enabled in its configuration, k8soff has it disabled.
-	for name, yaml := range map[string]string{"k8son": "kubernetes:\n  enabled: true\n", "k8soff": "kubernetes:\n  enabled: false\n"} {
+	for name, yaml := range map[string]string{"k8son": "kubernetes:\n  enabled: true\n", "k8soff": "kubernetes:\n  enabled: false\n", "k8sbad": "kubernetes: [unclosed\n"} {
 		if err := os.MkdirAll(filepath.Join(home, name), 0o755); err != nil {
 			t.Fatal(err)
 		}
