@@ -41,9 +41,10 @@ import (
 //     context that ignores a client hang-up (bounded by the spec timeout), so
 //     a write that has started finishes and is recorded with its real outcome.
 //
-// Two spec flags bend the order: ReadOnly (volume inspect) skips the busy check
-// and the action log row, EmptyBodyIsObject (volume prune) reads an empty body as
-// {} so a missing key is the route's own 422.
+// Three spec flags bend the order: ReadOnly (volume inspect) skips the busy
+// check and the action log row, EmptyBodyIsObject (volume prune) reads an empty
+// body as {} so a missing key is the route's own 422, and NoAudit (pull) leaves
+// the row to the job's observer, which writes it when the job ends.
 //
 // How to add a write route: build a dockerWriter once with newDockerWriter in
 // the route group's WithX option, and in the handler declare the body struct,
@@ -105,6 +106,10 @@ type writeSpec struct {
 	BodyLimit int64
 	// Timeout overrides the default of 30 seconds, for slow calls like pull.
 	Timeout time.Duration
+	// NoAudit makes the route write no action log row itself, because the work
+	// outlives the request and another component records it when it ends
+	// (pull: the job's observer, with the final outcome).
+	NoAudit bool
 	// ReadOnly marks a call that only reads (volume inspect): it skips the
 	// busy check and writes no action log row. Everything else, including the
 	// profile lookup, the body rules and the error mapping, is unchanged.
@@ -210,7 +215,7 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 	if err == nil {
 		err = plan.Run(rctx, client)
 	}
-	if !spec.ReadOnly {
+	if !spec.ReadOnly && !spec.NoAudit {
 		detail := plan.Object
 		if plan.AuditDetail != "" {
 			detail = plan.AuditDetail
@@ -277,6 +282,12 @@ func dockerWriteError(action, object string, err error) error {
 }
 
 func dockerWriteErrorBase(action, object string, err error) error {
+	// A plan's Run may refuse with a ready-made answer (a pull that hit its
+	// concurrency limit): its text is fixed and its details validated.
+	var ae *APIError
+	if errors.As(err, &ae) {
+		return ae
+	}
 	details := map[string]any{}
 	if object != "" {
 		details["name"] = object
