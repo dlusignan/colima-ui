@@ -18,6 +18,7 @@ import type {
   ImageList,
   Job,
   JobRef,
+  DeleteProfileRequest,
   PullImageAccepted,
   Metrics,
   MetricsParams,
@@ -69,6 +70,13 @@ export const api = {
     request<JobRef>('POST', `/api/profiles/${enc(name)}/stop`),
   restartProfile: (name: string) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/restart`),
+  /**
+   * Deletes a stopped profile as a job (202, follow `jobId` like a stop).
+   * 422 `confirmation_required` unless `confirm` equals the name, 409
+   * `profile_running` while the VM runs, 409 `profile_busy` during another job.
+   */
+  deleteProfile: (name: string, body: DeleteProfileRequest) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/delete`, { body }),
   getJob: (id: string, signal?: AbortSignal) =>
     request<Job>('GET', `/api/jobs/${enc(id)}`, { signal }),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${enc(id)}/cancel`),

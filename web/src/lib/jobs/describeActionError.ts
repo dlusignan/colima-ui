@@ -10,12 +10,12 @@ export interface ActionErrorDescription {
 }
 
 /**
- * Turns a failed start, stop or restart into text for the user. Server
+ * Turns a failed start, stop, restart or delete into text for the user. Server
  * `message` text is never parsed; only `code`, `status` and `details`.
  */
 export function describeActionError(
   error: unknown,
-  action: ProfileAction,
+  action: ProfileAction | 'delete',
   profile: string,
 ): ActionErrorDescription {
   if (!(error instanceof ApiError)) {
@@ -47,6 +47,10 @@ export function describeActionError(
         refresh: true,
       }
     }
+    case 'profile_running':
+      return { message: `Stop ${profile} before deleting it.`, refresh: true }
+    case 'confirmation_required':
+      return { message: `The name typed does not match ${profile}.`, refresh: false }
     case 'profile_not_found':
       return { message: `${profile} no longer exists.`, refresh: true }
     case 'colima_failed':

@@ -72,4 +72,15 @@ describe('describeActionError', () => {
       'Could not restart dev.',
     )
   })
+
+  it('delete errors: profile_running refreshes, confirmation_required does not', () => {
+    expect(describeActionError(err(409, 'profile_running'), 'delete', 'dev')).toEqual({
+      message: 'Stop dev before deleting it.',
+      refresh: true,
+    })
+    expect(describeActionError(err(422, 'confirmation_required'), 'delete', 'dev')).toEqual({
+      message: 'The name typed does not match dev.',
+      refresh: false,
+    })
+  })
 })

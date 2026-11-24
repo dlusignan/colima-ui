@@ -31,6 +31,7 @@ function setup(profiles: Profile[] | Error, at = '/profiles/dev') {
         <ToastProvider>
           <Routes>
             <Route path="/profiles/:name" element={<ProfileView />} />
+            <Route path="/" element={<p>dashboard page</p>} />
           </Routes>
           <Toaster />
         </ToastProvider>
@@ -228,5 +229,74 @@ describe('containers table details', () => {
     const created = within(up).getByText(/ago$|just now/, { selector: 'span[title]' })
     expect(created).toHaveAttribute('title', new Date('2026-01-01T00:00:00Z').toLocaleString())
     await expectNoA11yViolations(root)
+  })
+})
+
+describe('delete', () => {
+  it('is disabled with a reason while the profile runs', async () => {
+    setup([running])
+    const button = await screen.findByRole('button', { name: 'Delete profile dev' })
+    expect(isDisabled(button)).toBe(true)
+    expect(screen.getByText('Stop the profile first.')).toBeInTheDocument()
+  })
+
+  it('needs the typed name, sends deleteData false by default and goes back to the dashboard on success', async () => {
+    const del = vi.spyOn(api, 'deleteProfile').mockResolvedValue({ jobId: 'j_9' })
+    const getJob = vi.spyOn(api, 'getJob').mockResolvedValue(
+      jobFixture({ id: 'j_9', profile: 'dev', action: 'delete', state: 'running' }),
+    )
+    const { user, list } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete profile dev' }))
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete profile dev?' })
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus())
+    const confirm = within(dialog).getByRole('button', { name: 'Delete' })
+    expect(isDisabled(confirm) || (confirm as HTMLButtonElement).disabled).toBe(true)
+    expect(within(dialog).getByRole('checkbox', { name: 'Also delete container runtime data' })).not.toBeChecked()
+    await user.type(within(dialog).getByRole('textbox'), 'dev')
+    list.mockResolvedValue({ profiles: [] })
+    getJob.mockResolvedValue(jobFixture({ id: 'j_9', profile: 'dev', action: 'delete', state: 'succeeded', exitCode: 0 }))
+    await user.click(confirm)
+    expect(del).toHaveBeenCalledWith('dev', { confirm: 'dev', deleteData: false })
+    expect(await screen.findByText('dashboard page')).toBeInTheDocument()
+  })
+
+  it('sends deleteData true when the box is checked', async () => {
+    const del = vi.spyOn(api, 'deleteProfile').mockResolvedValue({ jobId: 'j_9' })
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_9', profile: 'dev', action: 'delete' }))
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete profile dev' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Also delete container runtime data' }))
+    await user.type(within(dialog).getByRole('textbox'), 'dev')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(del).toHaveBeenCalledWith('dev', { confirm: 'dev', deleteData: true })
+    expect(await screen.findByText('deleting')).toBeInTheDocument()
+  })
+
+  it('does nothing on a wrong name or on Cancel, and resets the box', async () => {
+    const del = vi.spyOn(api, 'deleteProfile').mockResolvedValue({ jobId: 'j_9' })
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete profile dev' }))
+    let dialog = await screen.findByRole('alertdialog')
+    await user.click(within(dialog).getByRole('checkbox'))
+    await user.type(within(dialog).getByRole('textbox'), 'Dev')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(del).not.toHaveBeenCalled()
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: 'Delete profile dev' }))
+    dialog = await screen.findByRole('alertdialog')
+    expect(within(dialog).getByRole('checkbox')).not.toBeChecked()
+    expect(within(dialog).getByRole('textbox')).toHaveValue('')
+  })
+
+  it('shows a toast when the server says the profile is running', async () => {
+    vi.spyOn(api, 'deleteProfile').mockRejectedValue(new ApiError(409, 'profile_running', 'x'))
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete profile dev' }))
+    const dialog = await screen.findByRole('alertdialog')
+    await user.type(within(dialog).getByRole('textbox'), 'dev')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(await screen.findByText('Stop dev before deleting it.')).toBeInTheDocument()
   })
 })

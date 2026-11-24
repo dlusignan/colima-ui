@@ -1217,7 +1217,11 @@ Request body (at most 1 KiB, strict: exact keys, each at most once):
 2. `deleteData` is optional (default `false`). When `true` the container runtime data (the Docker or containerd disk) is deleted too (`--data`).
 3. Any other key, a repeated key, a wrong type, trailing data and a non-object body are `400 bad_request`.
 
-Response `202`: `{ "jobId": "j_8f3a2c" }`.
+Response `202`:
+
+```json
+{ "jobId": "j_8f3a2c" }
+```
 
 Errors:
 
