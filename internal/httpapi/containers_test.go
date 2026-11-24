@@ -106,6 +106,20 @@ func (f *fakeDockerClient) Logs(_ context.Context, id string, tail int) (dockerc
 	return f.logs, f.logsErr
 }
 
+func (f *fakeDockerClient) CreateVolume(context.Context, string, map[string]string) (dockerc.Volume, error) {
+	return dockerc.Volume{}, nil
+}
+
+func (f *fakeDockerClient) InspectVolume(context.Context, string) (dockerc.VolumeDetail, error) {
+	return dockerc.VolumeDetail{}, nil
+}
+
+func (f *fakeDockerClient) RemoveVolume(context.Context, string) error { return nil }
+
+func (f *fakeDockerClient) PruneVolumes(context.Context) (dockerc.PruneResult, error) {
+	return dockerc.PruneResult{}, nil
+}
+
 type fakeProvider struct {
 	client dockerc.Client
 	err    error

@@ -472,3 +472,14 @@ func checkLeaks(t *testing.T) {
 		}
 	})
 }
+
+func (d *fakeDocker) CreateVolume(context.Context, string, map[string]string) (dockerc.Volume, error) {
+	return dockerc.Volume{}, nil
+}
+func (d *fakeDocker) InspectVolume(context.Context, string) (dockerc.VolumeDetail, error) {
+	return dockerc.VolumeDetail{}, nil
+}
+func (d *fakeDocker) RemoveVolume(context.Context, string) error { return nil }
+func (d *fakeDocker) PruneVolumes(context.Context) (dockerc.PruneResult, error) {
+	return dockerc.PruneResult{}, nil
+}

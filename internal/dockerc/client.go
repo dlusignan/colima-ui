@@ -125,6 +125,20 @@ type Client interface {
 	// stdout and stderr, running or stopped. An unknown container gives
 	// ErrContainerNotFound and an unreadable log driver ErrLogsUnavailable.
 	Logs(ctx context.Context, id string, tail int) (LogResult, error)
+
+	// CreateVolume creates a local volume. name and labels are validated here
+	// (ValidObjectName, ValidLabels); an invalid one gives ErrBadName before
+	// any request. An existing name gives ErrConflict.
+	CreateVolume(ctx context.Context, name string, labels map[string]string) (Volume, error)
+	// InspectVolume reads one volume with its labels and the containers that
+	// mount it. An unknown name gives ErrObjectNotFound.
+	InspectVolume(ctx context.Context, name string) (VolumeDetail, error)
+	// RemoveVolume removes a volume, never with force. A mounted volume gives
+	// *InUseError (an ErrConflict) and an unknown one ErrObjectNotFound.
+	RemoveVolume(ctx context.Context, name string) error
+	// PruneVolumes removes unused volumes. On API v1.41 that includes named
+	// ones (PruneIncludesNamedVolumes).
+	PruneVolumes(ctx context.Context) (PruneResult, error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,

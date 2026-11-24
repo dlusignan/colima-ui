@@ -3,6 +3,8 @@ import type {
   ActionList,
   ConfigUpdate,
   CreateProfileRequest,
+  CreateVolumeRequest,
+  DockerVolume,
   ConfigUpdateResult,
   ContainerList,
   ContainerLogs,
@@ -17,10 +19,15 @@ import type {
   ProfileConfig,
   ProfileCreated,
   ProfileList,
+  VolumeDetail,
   VolumeList,
+  VolumePruneResult,
 } from './types'
 
 const enc = encodeURIComponent
+
+/** The fixed text `POST .../volumes/prune` requires in `confirm` (docs/api.md 3.21). */
+export const PRUNE_VOLUMES_CONFIRMATION = 'delete-unused-volumes'
 
 function withQuery(
   path: string,
@@ -76,6 +83,24 @@ export const api = {
     request<ImageList>('GET', `/api/profiles/${enc(name)}/images`, { signal }),
   getVolumes: (name: string, signal?: AbortSignal) =>
     request<VolumeList>('GET', `/api/profiles/${enc(name)}/volumes`, { signal }),
+  createVolume: (name: string, body: CreateVolumeRequest) =>
+    request<DockerVolume>('POST', `/api/profiles/${enc(name)}/volumes`, { body }),
+  getVolume: (name: string, volume: string, signal?: AbortSignal) =>
+    request<VolumeDetail>('GET', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`, { signal }),
+  /** Never forced: a volume still mounted answers 409 with `details.containers`. */
+  removeVolume: (name: string, volume: string) =>
+    request<void>('DELETE', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`, {
+      expectEmpty: true,
+    }),
+  /**
+   * Irreversible. Removes every unused volume, named ones included. The server
+   * requires the confirmation text, which is sent here so no caller can forget
+   * it: call this only after the user has confirmed.
+   */
+  pruneVolumes: (name: string) =>
+    request<VolumePruneResult>('POST', `/api/profiles/${enc(name)}/volumes/prune`, {
+      body: { confirm: PRUNE_VOLUMES_CONFIRMATION },
+    }),
   getNetworks: (name: string, signal?: AbortSignal) =>
     request<NetworkList>('GET', `/api/profiles/${enc(name)}/networks`, { signal }),
   getActions: (name: string, limit?: number, signal?: AbortSignal) =>

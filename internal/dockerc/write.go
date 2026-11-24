@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,12 @@ import (
 // writeTimeout is the default deadline of one write call. Pull and other
 // slow calls pass their own.
 const writeTimeout = 30 * time.Second
+
+// errUnusableAnswer marks a success status whose body was too large or not the
+// expected JSON. It is always wrapped with ErrDockerUnavailable. A caller whose
+// write is irreversible and has already happened (prune) uses it to tell "Docker
+// did it but the answer is unreadable" from "could not reach Docker".
+var errUnusableAnswer = errors.New("dockerc: unusable answer")
 
 // fixedPath is a constant Docker URL path such as "/volumes/create". The
 // named type makes a caller write fixedPath("...") or pass an untyped constant;
@@ -117,10 +124,10 @@ func (c *httpClient) send(ctx context.Context, method string, timeout time.Durat
 		return c.transportErr(ctx, callCtx)
 	}
 	if int64(len(raw)) > c.maxBody {
-		return fmt.Errorf("%w: response too large", ErrDockerUnavailable)
+		return fmt.Errorf("%w: response too large: %w", ErrDockerUnavailable, errUnusableAnswer)
 	}
 	if err := json.Unmarshal(raw, dst); err != nil {
-		return fmt.Errorf("%w: malformed response", ErrDockerUnavailable)
+		return fmt.Errorf("%w: malformed response: %w", ErrDockerUnavailable, errUnusableAnswer)
 	}
 	return nil
 }

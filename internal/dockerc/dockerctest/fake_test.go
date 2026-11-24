@@ -140,3 +140,30 @@ func TestFakeRecordObjectAndRefValidate(t *testing.T) {
 		t.Fatalf("calls = %+v", got)
 	}
 }
+
+func TestFakeVolumeWritesValidateLikeTheRealClient(t *testing.T) {
+	f := &Fake{CreatedVolume: dockerc.Volume{Name: "ok"}, VolumeDetail: dockerc.VolumeDetail{Name: "ok"}}
+	ctx := context.Background()
+	if _, err := f.CreateVolume(ctx, "../x", nil); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("bad name: %v", err)
+	}
+	if v, err := f.CreateVolume(ctx, "ok", map[string]string{"com.docker.x": "v"}); !errors.Is(err, dockerc.ErrBadName) || v.Name != "" {
+		t.Fatalf("bad label: %v %+v", err, v)
+	}
+	if v, err := f.CreateVolume(ctx, "ok", map[string]string{"k": "v"}); err != nil || v.Name != "ok" {
+		t.Fatalf("ok: %v %+v", err, v)
+	}
+	if _, err := f.InspectVolume(ctx, "a/b"); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("inspect: %v", err)
+	}
+	if err := f.RemoveVolume(ctx, ""); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("remove: %v", err)
+	}
+	if got := len(f.CallsTo("CreateVolume")); got != 3 {
+		t.Fatalf("calls = %d (rejected calls are still recorded)", got)
+	}
+	f.FailWith("PruneVolumes", dockerc.ErrConflict)
+	if r, err := f.PruneVolumes(ctx); !errors.Is(err, dockerc.ErrConflict) || r.Removed != nil {
+		t.Fatalf("prune: %v %+v", err, r)
+	}
+}

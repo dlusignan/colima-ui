@@ -21,6 +21,10 @@ import type {
   ImageList,
   NetworkList,
   VolumeList,
+  CreateVolumeRequest,
+  VolumeDetail,
+  VolumePruneResult,
+  PruneVolumesRequest,
   ConfigUpdate,
   CreateProfileRequest,
   ConfigUpdateResult,
@@ -221,6 +225,34 @@ export const dockerVolumeShape = {
 export const volumeListShape = {
   volumes: { arrayOf: dockerVolumeShape },
 } as const satisfies Record<keyof VolumeList, Kind>
+
+export const createVolumeRequestShape = {
+  name: 'string',
+  labels: 'record',
+} as const satisfies Record<keyof CreateVolumeRequest, Kind>
+
+export const volumeDetailShape = {
+  name: 'string',
+  driver: 'string',
+  createdAt: 'string',
+  sizeBytes: 'number|null',
+  labels: 'record',
+  containers: 'number',
+  containerNames: 'string[]',
+} as const satisfies Record<keyof VolumeDetail, Kind>
+
+export const pruneVolumesRequestShape = {
+  confirm: 'string',
+} as const satisfies Record<keyof PruneVolumesRequest, Kind>
+
+export const volumePruneResultShape = {
+  removed: 'string[]',
+  removedCount: 'number|null',
+  truncated: 'boolean',
+  reclaimedBytes: 'number|null',
+  includesNamedVolumes: 'boolean',
+  resultComplete: 'boolean',
+} as const satisfies Record<keyof VolumePruneResult, Kind>
 
 export const dockerNetworkShape = {
   id: 'string',

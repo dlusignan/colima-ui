@@ -24,6 +24,7 @@ package dockerctest
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"sync"
 
@@ -53,6 +54,11 @@ type Fake struct {
 	EngineInfo    dockerc.Engine
 	Disk          dockerc.DiskUsage
 	LogResult     dockerc.LogResult
+
+	// Results of the volume write methods.
+	CreatedVolume dockerc.Volume
+	VolumeDetail  dockerc.VolumeDetail
+	PruneResult   dockerc.PruneResult
 
 	mu    sync.Mutex
 	calls []Call
@@ -168,6 +174,28 @@ func (f *Fake) Networks(context.Context) ([]dockerc.Network, error) {
 
 func (f *Fake) Logs(_ context.Context, id string, tail int) (dockerc.LogResult, error) {
 	return zeroOnErr(f.LogResult, f.record("Logs", id, tail))
+}
+
+// CreateVolume validates like the real client: the name and the labels, else
+// ErrBadName. The labels are recorded as a copy.
+func (f *Fake) CreateVolume(_ context.Context, name string, labels map[string]string) (dockerc.Volume, error) {
+	err := f.RecordObject("CreateVolume", name, maps.Clone(labels))
+	if err == nil && !dockerc.ValidLabels(labels) {
+		err = dockerc.ErrBadName
+	}
+	return zeroOnErr(f.CreatedVolume, err)
+}
+
+func (f *Fake) InspectVolume(_ context.Context, name string) (dockerc.VolumeDetail, error) {
+	return zeroOnErr(f.VolumeDetail, f.RecordObject("InspectVolume", name))
+}
+
+func (f *Fake) RemoveVolume(_ context.Context, name string) error {
+	return f.RecordObject("RemoveVolume", name)
+}
+
+func (f *Fake) PruneVolumes(context.Context) (dockerc.PruneResult, error) {
+	return zeroOnErr(f.PruneResult, f.record("PruneVolumes"))
 }
 
 // Provider implements dockerc.Provider. It records the profile of every For

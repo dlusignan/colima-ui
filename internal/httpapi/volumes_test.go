@@ -13,7 +13,7 @@ import (
 )
 
 func volumesServer(g ProfileGate, p dockerc.Provider) http.Handler {
-	return NewHandler(testPort, testToken, NewAPI(WithVolumes(g, p)), nil)
+	return NewHandler(testPort, testToken, NewAPI(WithVolumes(g, p, fakeBusy{}, nil)), nil)
 }
 
 const volumesURL = "/api/profiles/synthetic-a/volumes"
