@@ -1,20 +1,25 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
-import { afterEach, describe, expect, it, vi, type MockInstance } from 'vitest'
+import { MemoryRouter } from 'react-router-dom'
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ApiError } from '@/lib/api/client'
 import { api, PRUNE_IMAGES_CONFIRMATION } from '@/lib/api/endpoints'
 import { queryKeys } from '@/lib/api/keys'
-import type { DockerImage, ImageDetail, ImagePruneResult, ImageRemoveResult } from '@/lib/api/types'
+import type { DockerImage, ImageDetail, ImagePruneResult, ImageRemoveResult, Job } from '@/lib/api/types'
 import { Toaster } from '@/lib/toast/Toaster'
 import { ToastProvider } from '@/lib/toast/ToastProvider'
 import { expectNoA11yViolations } from '@/test/axe'
-import { profileFixture } from '@/test/fixtures'
+import { jobFixture, profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
 import { ImagesSection } from './ImagesSection'
 import { imagePruneTitle, removeTitle } from './imageText'
 
-afterEach(() => vi.restoreAllMocks())
+beforeEach(() => window.localStorage.clear())
+afterEach(() => {
+  vi.useRealTimers()
+  vi.restoreAllMocks()
+})
 
 const MiB = 1024 ** 2
 const img = (hex: string, tags: string[], containers: number, sizeBytes: number): DockerImage => ({
@@ -76,7 +81,9 @@ function setup(list: DockerImage[] = images, status: 'running' | 'stopped' = 'ru
   const view = render(
     <QueryClientProvider client={client}>
       <ToastProvider>
-        <ImagesSection profile={profileFixture({ name: 'dev', status })} />
+        <MemoryRouter>
+          <ImagesSection profile={profileFixture({ name: 'dev', status })} />
+        </MemoryRouter>
         <Toaster />
       </ToastProvider>
     </QueryClientProvider>,
@@ -631,10 +638,173 @@ describe('stopped profile', () => {
     expect(screen.getByRole('button', { name: 'Prune images' })).toHaveAttribute('aria-disabled', 'true')
     expect(s.getImages).not.toHaveBeenCalled()
   })
+})
 
-  it('has no pull button (that is a separate issue)', async () => {
-    setup()
+describe('pull image', () => {
+  const ref = 'postgres:18-alpine'
+  const pullJob = (over: Partial<Job> = {}): Job =>
+    jobFixture({ id: 'j_p1', profile: 'dev', action: 'image-pull', output: [{ seq: 1, line: `Pulling ${ref}` }], ...over })
+
+  async function openDialog(s: ReturnType<typeof setup>) {
     await table()
-    expect(screen.queryByRole('button', { name: /pull/i })).not.toBeInTheDocument()
+    await s.user.click(screen.getByRole('button', { name: 'Pull image' }))
+    return within(await screen.findByRole('dialog', { name: 'Pull image' }))
+  }
+
+  it('is disabled with a visible reason while the profile is not running', async () => {
+    setup(images, 'stopped')
+    const button = await screen.findByRole('button', { name: 'Pull image' })
+    expect(button).toHaveAttribute('aria-disabled', 'true')
+    expect(screen.getByText('Start the profile to use these actions.')).toBeInTheDocument()
+  })
+
+  it('shows the hint, passes axe, and sends exactly the reference then closes and shows the running pull', async () => {
+    const s = setup()
+    const pull = vi.spyOn(api, 'pullImage').mockResolvedValue({ jobId: 'j_p1', action: 'image-pull', profile: 'dev', state: 'running' })
+    vi.spyOn(api, 'getJob').mockResolvedValue(pullJob())
+    const d = await openDialog(s)
+    expect(d.getByText(/A tag or a digest is required/)).toBeInTheDocument()
+    expect(d.getByText(/Only public registries work/)).toBeInTheDocument()
+    expect(d.getByText(/registry host as you typed it/)).toBeInTheDocument()
+    await waitFor(() => expect(d.getByLabelText('Image reference')).toHaveFocus())
+    await expectNoA11yViolations(document.body)
+    await s.user.type(d.getByLabelText('Image reference'), `  ${ref}  `)
+    await s.user.click(d.getByRole('button', { name: 'Start pull' }))
+    await waitFor(() => expect(pull).toHaveBeenCalledTimes(1))
+    expect(pull.mock.calls[0]).toEqual(['dev', ref])
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    const row = within(await screen.findByRole('list', { name: 'Running pulls' }))
+    expect(row.getByText(ref)).toBeInTheDocument()
+    expect(row.getByText(`Pulling ${ref}`, { selector: 'span.truncate' })).toBeInTheDocument()
+    expect(row.getByRole('link', { name: `View log of the pull of ${ref}` })).toHaveAttribute('href', '/profiles/dev/log?job=j_p1')
+    expect(JSON.parse(window.localStorage.getItem('colima-ui:image-pulls') ?? '[]')).toEqual([{ profile: 'dev', jobId: 'j_p1', reference: ref }])
+    // No toast for the start: the outcome toast belongs to the job events.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['no tag or digest', 'postgres', /Add a tag or a digest/],
+    ['credentials', 'user@registry.example.test/app:1', /Credentials/],
+    ['uppercase path', 'Team/App:1', /lowercase/],
+  ])('rejects %s on the field and sends nothing', async (_n, value, message) => {
+    const s = setup()
+    const pull = vi.spyOn(api, 'pullImage')
+    const d = await openDialog(s)
+    await s.user.type(d.getByLabelText('Image reference'), value)
+    await s.user.click(d.getByRole('button', { name: 'Start pull' }))
+    expect(await d.findByText(message)).toBeInTheDocument()
+    expect(d.getByLabelText('Image reference')).toBeInvalid()
+    expect(pull).not.toHaveBeenCalled()
+    await expectNoA11yViolations(document.body)
+  })
+
+  it.each([
+    ['a 422 on the field', new ApiError(422, 'invalid_request', 'x', { fields: { reference: 'Not a valid image reference.' } }), 'Not a valid image reference.'],
+    ['the same reference twice', new ApiError(409, 'conflict', 'x', { name: ref }), /already being pulled/],
+    ['the pull limit', new ApiError(409, 'conflict', 'x', { limit: 2 }), /already pulling 2 images/],
+    ['a busy profile', new ApiError(409, 'profile_busy', 'x', { jobId: 'j_9' }), /start, stop or restart is running/],
+  ])('shows %s and keeps the dialog open', async (_n, error, text) => {
+    const s = setup()
+    vi.spyOn(api, 'pullImage').mockRejectedValue(error)
+    const d = await openDialog(s)
+    await s.user.type(d.getByLabelText('Image reference'), ref)
+    await s.user.click(d.getByRole('button', { name: 'Start pull' }))
+    expect(await d.findByText(text)).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.queryByRole('list', { name: 'Running pulls' })).not.toBeInTheDocument()
+  })
+
+  it('toasts a 503', async () => {
+    const s = setup()
+    vi.spyOn(api, 'pullImage').mockRejectedValue(new ApiError(503, 'shutting_down', 'x'))
+    const d = await openDialog(s)
+    await s.user.type(d.getByLabelText('Image reference'), ref)
+    await s.user.click(d.getByRole('button', { name: 'Start pull' }))
+    expect(await screen.findByText('Could not start the pull')).toBeInTheDocument()
+    expect(screen.getByText('The server is shutting down.')).toBeInTheDocument()
+  })
+
+  it('polls every 2 s while running, cancels once, and clears the row and refreshes when the job ends', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    window.localStorage.setItem('colima-ui:image-pulls', JSON.stringify([{ profile: 'dev', jobId: 'j_p1', reference: ref }]))
+    const get = vi.spyOn(api, 'getJob').mockResolvedValue(pullJob())
+    const s = setup()
+    const list = within(await screen.findByRole('list', { name: 'Running pulls' }))
+    expect(get).toHaveBeenCalledTimes(1)
+    get.mockResolvedValue(pullJob({ output: [{ seq: 1, line: `Pulling ${ref}` }, { seq: 2, line: 'abc123: downloading 50%' }] }))
+    await act(() => vi.advanceTimersByTimeAsync(2_100))
+    expect(await list.findByText('abc123: downloading 50%')).toBeInTheDocument()
+    expect(get.mock.calls.length).toBeGreaterThanOrEqual(2)
+
+    let finishCancel: (j: Job) => void = () => {}
+    const cancel = vi.spyOn(api, 'cancelJob').mockReturnValue(new Promise((r) => (finishCancel = r)))
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await user.click(list.getByRole('button', { name: `Cancel the pull of ${ref}` }))
+    const cancelling = await list.findByRole('button', { name: `Cancel the pull of ${ref}` })
+    expect(cancelling).toHaveTextContent('Cancelling…')
+    expect(cancelling).toHaveAttribute('aria-disabled', 'true')
+    expect(list.getByText(/Cancelling pull of/)).toBeInTheDocument()
+    await user.click(cancelling)
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(cancel).toHaveBeenCalledWith('j_p1')
+
+    s.getImages.mockClear()
+    await act(async () => {
+      finishCancel(pullJob({ state: 'cancelled', finishedAt: '2026-01-01T00:01:00Z', output: [{ seq: 3, line: 'Pull cancelled.' }] }))
+    })
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Running pulls' })).not.toBeInTheDocument())
+    refreshed(s.invalidate)
+    await waitFor(() => expect(s.getImages).toHaveBeenCalled())
+    expect(window.localStorage.getItem('colima-ui:image-pulls')).toBe('[]')
+    // The cancel result is the only toast source here: none from this section.
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+  })
+
+  it('removes the row and refreshes when polling sees the job succeed', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    window.localStorage.setItem('colima-ui:image-pulls', JSON.stringify([{ profile: 'dev', jobId: 'j_p1', reference: ref }]))
+    const get = vi.spyOn(api, 'getJob').mockResolvedValue(pullJob())
+    const s = setup()
+    await screen.findByRole('list', { name: 'Running pulls' })
+    get.mockResolvedValue(pullJob({ state: 'succeeded', exitCode: 0, finishedAt: '2026-01-01T00:01:00Z' }))
+    await act(() => vi.advanceTimersByTimeAsync(2_100))
+    await waitFor(() => expect(screen.queryByRole('list', { name: 'Running pulls' })).not.toBeInTheDocument())
+    refreshed(s.invalidate)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('rediscovers a running pull after a reload and forgets one whose job is gone', async () => {
+    window.localStorage.setItem(
+      'colima-ui:image-pulls',
+      JSON.stringify([
+        { profile: 'dev', jobId: 'j_p1', reference: ref },
+        { profile: 'dev', jobId: 'j_gone', reference: 'redis:7' },
+        { profile: 'other', jobId: 'j_o', reference: 'nginx:1' },
+      ]),
+    )
+    const get = vi.spyOn(api, 'getJob').mockImplementation((id) =>
+      id === 'j_p1' ? Promise.resolve(pullJob()) : Promise.reject(new ApiError(404, 'job_not_found', 'x', { jobId: id })),
+    )
+    setup()
+    const list = within(await screen.findByRole('list', { name: 'Running pulls' }))
+    expect(list.getByText(ref)).toBeInTheDocument()
+    await waitFor(() => expect(list.queryByText('redis:7')).not.toBeInTheDocument())
+    expect(get).not.toHaveBeenCalledWith('j_o', expect.anything())
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem('colima-ui:image-pulls') ?? '[]').map((p: { jobId: string }) => p.jobId)).toEqual(['j_p1', 'j_o']),
+    )
+  })
+
+  it('shows the pull banner and a working Cancel without the images table', async () => {
+    window.localStorage.setItem('colima-ui:image-pulls', JSON.stringify([{ profile: 'dev', jobId: 'j_p1', reference: ref }]))
+    vi.spyOn(api, 'getJob').mockResolvedValue(pullJob())
+    vi.spyOn(api, 'cancelJob').mockRejectedValue(new ApiError(500, 'internal_error', 'Boom.'))
+    const s = setup([])
+    const list = within(await screen.findByRole('list', { name: 'Running pulls' }))
+    await s.user.click(list.getByRole('button', { name: `Cancel the pull of ${ref}` }))
+    expect(await screen.findByText('Could not cancel the pull')).toBeInTheDocument()
+    // A failed cancel can be tried again.
+    await waitFor(() => expect(list.getByRole('button', { name: `Cancel the pull of ${ref}` })).toHaveAttribute('aria-disabled', 'false'))
   })
 })

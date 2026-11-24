@@ -63,7 +63,8 @@ export function useJobTracker(profiles: readonly Profile[] | undefined): JobTrac
   const jobs = new Map<string, TrackedJob>()
   entries.forEach(([profile, id], i) => {
     const job = results[i]?.data
-    if (job) {
+    // A task job (an image pull) takes no colima slot: it must never mark the profile busy.
+    if (job && job.action !== 'image-pull') {
       jobs.set(profile, { jobId: id, action: job.action, state: job.state, exitCode: job.exitCode })
     }
   })

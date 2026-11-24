@@ -12,12 +12,15 @@ import { imageLabel, imageRemoveReason, pruneCandidates, shortImageId } from './
 import { containersInUse, imagePruneTitle, partialRemoval, removeTitle } from './imageText'
 import { ImageInspectDialog } from './ImageInspectDialog'
 import { PruneImagesDialog } from './PruneImagesDialog'
+import { PullBanner } from './PullBanner'
+import { PullImageDialog } from './PullImageDialog'
 import { RemoveImageDialog, type RemoveChoice } from './RemoveImageDialog'
 import { RowActions } from './RowActions'
 import { SectionError, noteClass } from './SectionState'
 import { SectionToolbar } from './SectionToolbar'
 import { TagImageDialog } from './TagImageDialog'
 import { useDockerMutation } from './useDockerMutation'
+import { usePullJobs } from './usePullJobs'
 import { plural } from './volumeText'
 
 interface RemoveVars {
@@ -39,6 +42,8 @@ export function ImagesSection({ profile }: { profile: Profile }) {
   const [removing, setRemoving] = useState<string | null>(null)
   const [removingNow, setRemovingNow] = useState<string | null>(null)
   const [pruning, setPruning] = useState(false)
+  const [pulling, setPulling] = useState(false)
+  const pulls = usePullJobs(profile.name)
   const byId = (id: string | null): DockerImage | null =>
     id === null ? null : ((list ?? []).find((i) => shortImageId(i.id) === id) ?? null)
 
@@ -83,6 +88,7 @@ export function ImagesSection({ profile }: { profile: Profile }) {
 
   const unused = pruneCandidates(list ?? [], 'all')
   const toolbarActions: DockerAction[] = [
+    { id: 'pull', label: 'Pull image', onSelect: () => setPulling(true) },
     {
       id: 'prune',
       label: 'Prune images',
@@ -186,7 +192,14 @@ export function ImagesSection({ profile }: { profile: Profile }) {
         actions={toolbarActions}
         disabledReason={running ? undefined : 'Start the profile to use these actions.'}
       />
+      <PullBanner profile={profile.name} pulls={pulls.running} onCancel={pulls.cancel} />
       {body}
+      <PullImageDialog
+        profile={profile.name}
+        open={pulling}
+        onOpenChange={setPulling}
+        onStarted={pulls.track}
+      />
       <TagImageDialog profile={profile.name} image={byId(tagging)} onClose={() => setTagging(null)} />
       <ImageInspectDialog profile={profile.name} image={inspecting} onClose={() => setInspecting(null)} />
       <RemoveImageDialog image={byId(removing)} onClose={() => setRemoving(null)} onConfirm={startRemove} />

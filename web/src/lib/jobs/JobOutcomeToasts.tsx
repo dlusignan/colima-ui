@@ -6,10 +6,13 @@ import { useEventListener } from '@/lib/events/hooks'
 import { useToast } from '@/lib/toast/useToast'
 import { logPath } from '@/views/log/logPath'
 
+/** Names that read better than the API's action keys. */
+const ACTION_LABEL: Record<string, string> = { 'image-pull': 'image pull' }
+
 /** `default: stop succeeded`, `default: start failed (exit 1)`. The action is unknown when the lookup fails. */
 function outcomeTitle(event: JobFinishedEvent, action: string | undefined): string {
   const exit = event.state === 'failed' && event.exitCode != null ? ` (exit ${event.exitCode})` : ''
-  return `${event.profile}: ${action ?? 'job'} ${event.state}${exit}`
+  return `${event.profile}: ${(action && ACTION_LABEL[action]) ?? action ?? 'job'} ${event.state}${exit}`
 }
 
 /**
