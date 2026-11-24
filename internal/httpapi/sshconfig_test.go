@@ -66,7 +66,7 @@ func TestSSHConfigUnknownAndHostileProfileNeverReachColima(t *testing.T) {
 
 func TestSSHConfigStoppedProfileRefusedIs409(t *testing.T) {
 	src := &fakeSSHSource{err: ErrSSHConfigRefused}
-	w := wantErr(t, call(t, sshServer(&fakeGate{status: "Stopped"}, src), "GET", sshURL, ""), 409, "profile_not_running")
+	w := wantErr(t, call(t, sshServer(&fakeGate{status: "Stopped"}, src), "GET", sshURL, ""), 409, "invalid_state")
 	if w.Error.Details["status"] != "stopped" {
 		t.Errorf("details %v", w.Error.Details)
 	}

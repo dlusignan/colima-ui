@@ -101,7 +101,6 @@ Error codes in use:
 | `404` | `not_found` | Unknown path (token present), or a Docker object a write route names does not exist (1.3) | `{}`, or `{"name":"pgdata"}` |
 | `405` | `method_not_allowed` | Known path, wrong method (`Allow` header set) | `{}` |
 | `409` | `profile_busy` | A job is running on that profile | `{"jobId":"<running job>"}` |
-| `409` | `profile_not_running` | The SSH config route on a profile that is not running and that Colima refuses to describe (3.31) | `{"status":"stopped"}` |
 | `409` | `job_not_running` | Cancel on a job that already finished | `{"jobId":"...","state":"succeeded"}` |
 | `409` | `conflict` | A Docker object is in use or protected (1.3) | `{"name":"pgdata"}` |
 | `409` | `invalid_state` | Start on a running profile, stop on a stopped one, container list on a stopped VM, engine route on a running profile that does not use Docker | `{"status":"running"}` |
@@ -1226,12 +1225,12 @@ Response `200`:
 1. `raw` is Colima's text unchanged. It contains the path of the identity file, because showing it is the purpose of the route. It holds no key material, only the path.
 2. `entries` lists every key and value line in the order Colima printed it, `Host` included. Comments and blank lines are skipped, `Key=value` and `Key value` forms are both read, and one pair of double quotes around a value is removed. A key may repeat (for example two `IdentityFile` lines). Clients must tolerate keys they do not know.
 3. The profile name is checked first: an unknown or malformed name is `404` and never reaches a process.
-4. A profile that is not running is not rejected up front. Colima answers whatever it answers; if it refuses, the route returns `409` `profile_not_running` with `details.status`.
+4. A profile that is not running is not rejected up front. Colima answers whatever it answers; if it refuses, the route returns `409` `invalid_state` with `details.status`.
 
 Errors:
 
 1. `404` `profile_not_found`.
-2. `409` `profile_not_running`: Colima refused to print a config and the profile is not running (`details.status`).
+2. `409` `invalid_state`: Colima refused to print a config and the profile is not running (`details.status`).
 3. `502` `colima_failed`: Colima could not be run, failed on a running profile, or printed text that is not an SSH config. The output is logged on the server only.
 
 ## 4. Routes that do not exist

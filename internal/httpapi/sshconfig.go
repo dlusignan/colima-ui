@@ -43,7 +43,7 @@ type SSHConfigSource interface {
 //	GET /api/profiles/{name}/ssh-config
 //
 // It is a read: no busy check and no action log row. A profile that is not
-// running answers 409 profile_not_running when Colima refuses to print a config.
+// running answers 409 invalid_state when Colima refuses to print a config.
 func WithSSHConfig(gate ProfileGate, src SSHConfigSource) Option {
 	s := &sshConfigRoutes{gate: gate, src: src}
 	return func(rt *Router) {
@@ -78,9 +78,7 @@ func (s *sshConfigRoutes) get(w http.ResponseWriter, r *http.Request) error {
 	doc, err := s.src.SSHConfig(ctx, name)
 	switch {
 	case errors.Is(err, ErrSSHConfigRefused) && status != "running":
-		return newAPIError(http.StatusConflict, "profile_not_running",
-			"The profile is "+status+", so it has no SSH config. Start it first.",
-			map[string]any{"status": status})
+		return notRunning(status)
 	case err != nil:
 		slog.Error("ssh-config failed", "route", "ssh-config", "error", err)
 		return errColimaFailed()

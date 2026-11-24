@@ -7,7 +7,7 @@ import { useSshConfig } from '@/lib/api/useSshConfig'
 function errorText(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 0) return 'Could not reach the server.'
-    if (error.code === 'profile_not_running') return 'Start the profile to see its SSH config.'
+    if (error.code === 'invalid_state') return 'Start the profile to see its SSH config.'
     if (error.code === 'profile_not_found') return 'This profile no longer exists.'
   }
   return 'The SSH config could not be loaded.'
@@ -35,7 +35,7 @@ export function SshConfigDialog({ profile }: { profile: string }) {
   if (query.isPending) {
     body = <p className="text-sm text-muted-foreground">Loading SSH config…</p>
   } else if (query.isError) {
-    const retry = !(query.error instanceof ApiError && query.error.code === 'profile_not_running')
+    const retry = !(query.error instanceof ApiError && query.error.code === 'invalid_state')
     body = (
       <div role="alert" className="flex flex-col items-start gap-2 rounded-lg border border-destructive px-3 py-2 text-sm">
         <p>{errorText(query.error)}</p>
