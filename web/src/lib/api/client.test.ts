@@ -99,13 +99,34 @@ describe('request', () => {
     expect(url).not.toContain('force')
 
     fetchMock.mockResolvedValue(
-      jsonResponse(200, { removed: [], reclaimedBytes: 0, includesNamedVolumes: true }),
+      jsonResponse(200, {
+        removed: [],
+        removedCount: 0,
+        truncated: false,
+        reclaimedBytes: 0,
+        includesNamedVolumes: true,
+        resultComplete: true,
+      }),
     )
     await api.pruneVolumes('dev')
     ;[url, init] = fetchMock.mock.calls[3]
     expect(url).toBe('/api/profiles/dev/volumes/prune')
     expect(init.method).toBe('POST')
-    expect(init.body).toBeUndefined()
+    expect(init.body).toBe('{"confirm":"delete-unused-volumes"}')
+  })
+
+  it('accepts an empty 204 only where the caller expects one', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(new Response(null, { status: 204 })))
+    const e = await failure(api.getVolume('dev', 'data'))
+    expect(e.code).toBe('bad_response')
+    const e2 = await failure(request('POST', '/api/x'))
+    expect(e2.code).toBe('bad_response')
+    await expect(request('DELETE', '/api/x', { expectEmpty: true })).resolves.toBeUndefined()
+    // An error status is still an error with expectEmpty.
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, { error: { code: 'conflict', message: 'm', details: {} } }),
+    )
+    expect((await failure(request('DELETE', '/api/x', { expectEmpty: true }))).status).toBe(409)
   })
 
   it('decodes the in-use conflict of a volume removal', async () => {

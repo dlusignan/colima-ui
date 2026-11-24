@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,10 @@ func TestVolumeCreateRefusals(t *testing.T) {
 		{"17 labels", `{"name":"a","labels":` + many + `}`, 422, "invalid_request", "labels"},
 		{"bad key", `{"name":"a","labels":{"k k":"v"}}`, 422, "invalid_request", "labels"},
 		{"reserved key", `{"name":"a","labels":{"com.docker.compose.project":"v"}}`, 422, "invalid_request", "labels"},
+		{"trailing labels data", `{"name":"a","labels":{"k":"v"} {"x":"y"}}`, 400, "bad_request", ""},
+		{"zero width value", `{"name":"a","labels":{"k":"a\u200bb"}}`, 422, "invalid_request", "labels"},
+		{"bidi value", `{"name":"a","labels":{"k":"a\u202eb"}}`, 422, "invalid_request", "labels"},
+		{"zero width key", `{"name":"a","labels":{"k\u200b":"v"}}`, 422, "invalid_request", "labels"},
 		{"control value", `{"name":"a","labels":{"k":"a\nb"}}`, 422, "invalid_request", "labels"},
 		{"long value", `{"name":"a","labels":{"k":"` + strings.Repeat("v", 257) + `"}}`, 422, "invalid_request", "labels"},
 		{"bad name", `{"name":"../a"}`, 422, "invalid_request", "name"},
@@ -149,9 +154,18 @@ func TestVolumeInspect(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"labels":{}`) || !strings.Contains(rec.Body.String(), `"containerNames":[]`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
-	rows := e.audit.Rows()
-	if len(rows) != 2 || rows[0].Action != "docker.volume.inspect" {
-		t.Fatalf("rows = %+v", rows)
+	if rows := e.audit.Rows(); len(rows) != 0 {
+		t.Fatalf("inspect is a read and leaves no row: %+v", rows)
+	}
+	// Not blocked by a running job either, and still a failure when Docker fails.
+	*e.busy = fakeBusy{id: "j_1"}
+	if rec := e.do(t, "GET", volBase+"/data", ""); rec.Code != 200 {
+		t.Fatalf("busy profile: %d", rec.Code)
+	}
+	e.fake.FailWith("InspectVolume", dockerc.ErrObjectNotFound)
+	wantErr(t, e.do(t, "GET", volBase+"/data", ""), 404, "not_found")
+	if rows := e.audit.Rows(); len(rows) != 0 {
+		t.Fatalf("failed inspect left a row: %+v", rows)
 	}
 	// A body on a GET is refused like on any no-body write route.
 	wantErr(t, e.do(t, "GET", volBase+"/data", `{"a":1}`), 400, "bad_request")
@@ -217,33 +231,107 @@ func TestVolumeRemoveErrors(t *testing.T) {
 	}
 }
 
+const pruneOK = `{"confirm":"delete-unused-volumes"}`
+
 func TestVolumePrune(t *testing.T) {
 	e := newVolEnv()
-	e.fake.PruneResult = dockerc.PruneResult{Removed: []string{"a", "b"}, ReclaimedBytes: 1024}
-	for _, body := range []string{"", "{}"} {
-		rec := e.do(t, "POST", volBase+"/prune", body)
-		if rec.Code != 200 {
-			t.Fatalf("%d %s", rec.Code, rec.Body.String())
-		}
-		m := decodeMap(t, rec)
-		if len(m["removed"].([]any)) != 2 || m["reclaimedBytes"] != float64(1024) || m["includesNamedVolumes"] != true {
-			t.Fatalf("body = %v", m)
-		}
+	n, size := 2, int64(1024)
+	e.fake.PruneResult = dockerc.PruneResult{Removed: []string{"a", "b"}, RemovedCount: &n, ReclaimedBytes: &size, Complete: true}
+	rec := e.do(t, "POST", volBase+"/prune", pruneOK)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
 	}
-	e.fake.PruneResult = dockerc.PruneResult{}
-	rec := e.do(t, "POST", volBase+"/prune", "")
+	m := decodeMap(t, rec)
+	if len(m["removed"].([]any)) != 2 || m["removedCount"] != float64(2) || m["truncated"] != false ||
+		m["reclaimedBytes"] != float64(1024) || m["includesNamedVolumes"] != true || m["resultComplete"] != true {
+		t.Fatalf("body = %v", m)
+	}
+	e.fake.PruneResult = dockerc.PruneResult{Complete: true, RemovedCount: new(int), ReclaimedBytes: new(int64)}
+	rec = e.do(t, "POST", volBase+"/prune", " "+pruneOK+"\n")
 	if !strings.Contains(rec.Body.String(), `"removed":[]`) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	rows := e.audit.Rows()
-	if len(rows) != 3 || rows[0].Action != "docker.volume.prune" || rows[0].Detail != nil {
+	if len(rows) != 2 || rows[0].Action != "docker.volume.prune" || rows[0].Detail != nil || rows[0].Outcome != "success" {
 		t.Fatalf("rows = %+v", rows)
 	}
-	// A body (for example a filter) is refused and Docker is not called.
-	e.fake.Reset()
-	wantErr(t, e.do(t, "POST", volBase+"/prune", `{"filters":{"all":["false"]}}`), 400, "bad_request")
-	if len(e.fake.Calls()) != 0 {
-		t.Fatal("docker reached")
+}
+
+// A prune whose answer Docker sent unreadable already deleted the volumes: the
+// route says success with unknown figures and the log row says success.
+func TestVolumePruneUnknownResultIsSuccess(t *testing.T) {
+	e := newVolEnv()
+	e.fake.PruneResult = dockerc.PruneResult{Removed: []string{}}
+	rec := e.do(t, "POST", volBase+"/prune", pruneOK)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+	m := decodeMap(t, rec)
+	if m["removedCount"] != nil || m["reclaimedBytes"] != nil || m["resultComplete"] != false ||
+		m["includesNamedVolumes"] != true || len(m["removed"].([]any)) != 0 {
+		t.Fatalf("body = %v", m)
+	}
+	if rows := e.audit.Rows(); len(rows) != 1 || rows[0].Outcome != "success" {
+		t.Fatalf("rows = %+v", rows)
+	}
+	// Truncation is reported.
+	n := 1500
+	e.fake.PruneResult = dockerc.PruneResult{Removed: []string{"a"}, RemovedCount: &n, Truncated: true}
+	m = decodeMap(t, e.do(t, "POST", volBase+"/prune", pruneOK))
+	if m["truncated"] != true || m["removedCount"] != float64(1500) {
+		t.Fatalf("body = %v", m)
+	}
+}
+
+func TestVolumePruneNeedsTheConfirmation(t *testing.T) {
+	for name, body := range map[string]string{
+		"empty": ``, "spaces": "  \n", "empty object": `{}`, "null confirm": `{"confirm":null}`,
+		"empty string": `{"confirm":""}`, "wrong string": `{"confirm":"yes"}`, "wrong case": `{"confirm":"DELETE-UNUSED-VOLUMES"}`,
+		"trailing space": `{"confirm":"delete-unused-volumes "}`, "true": `{"confirm":"true"}`,
+	} {
+		e := newVolEnv()
+		rec := e.do(t, "POST", volBase+"/prune", body)
+		wantErr(t, rec, 422, "invalid_request")
+		d := decodeMap(t, rec)["error"].(map[string]any)["details"].(map[string]any)
+		if f, _ := d["fields"].(map[string]any); len(f) != 1 || f["confirm"] == nil {
+			t.Fatalf("%s: details = %v", name, d)
+		}
+		if len(e.fake.Calls()) != 0 || len(e.audit.Rows()) != 0 {
+			t.Fatalf("%s: Docker or the log reached", name)
+		}
+	}
+	for name, body := range map[string]string{
+		"extra key":  `{"confirm":"delete-unused-volumes","filters":{"all":["false"]}}`,
+		"only extra": `{"filters":{}}`, "wrong case key": `{"Confirm":"delete-unused-volumes"}`,
+		"duplicate": `{"confirm":"x","confirm":"delete-unused-volumes"}`, "not an object": `"delete-unused-volumes"`,
+		"array": `[]`, "null": `null`, "garbage": `x`, "wrong type": `{"confirm":1}`,
+		"trailing data": pruneOK + ` {}`, "oversize": `{"confirm":"` + strings.Repeat("a", 2000) + `"}`,
+	} {
+		e := newVolEnv()
+		wantErr(t, e.do(t, "POST", volBase+"/prune", body), 400, "bad_request")
+		if len(e.fake.Calls()) != 0 || len(e.audit.Rows()) != 0 {
+			t.Fatalf("%s: Docker or the log reached", name)
+		}
+	}
+	// GET never prunes, and the prune path is a volume name for GET.
+	e := newVolEnv()
+	rec := e.do(t, "GET", volBase+"/prune", "")
+	if rec.Code != 200 || len(e.fake.CallsTo("PruneVolumes")) != 0 || len(e.fake.CallsTo("InspectVolume")) != 1 {
+		t.Fatalf("GET prune: %d, calls %+v", rec.Code, e.fake.Calls())
+	}
+}
+
+func TestVolumeCreateStopsWhenTheCheckFails(t *testing.T) {
+	for name, err := range map[string]error{
+		"docker 500": fmt.Errorf("%w: unexpected status 500", dockerc.ErrDockerUnavailable),
+		"timeout":    fmt.Errorf("dockerc: request timed out: %w", context.DeadlineExceeded),
+	} {
+		e := newVolEnv()
+		e.fake.FailWith("CreateVolume", err)
+		wantErr(t, e.do(t, "POST", volBase, `{"name":"a"}`), 502, "docker_unavailable")
+		if rows := e.audit.Rows(); len(rows) != 1 || rows[0].Outcome != "failed" {
+			t.Fatalf("%s: rows = %+v", name, rows)
+		}
 	}
 }
 
@@ -252,9 +340,8 @@ func TestVolumePrune(t *testing.T) {
 func TestVolumeRoutesSharedRules(t *testing.T) {
 	routes := []struct{ method, path, body string }{
 		{"POST", volBase, `{"name":"a"}`},
-		{"GET", volBase + "/a", ""},
 		{"DELETE", volBase + "/a", ""},
-		{"POST", volBase + "/prune", ""},
+		{"POST", volBase + "/prune", pruneOK},
 	}
 	setups := []struct {
 		name   string
@@ -287,7 +374,7 @@ func TestVolumeRoutesSharedRules(t *testing.T) {
 	wantErr(t, e.do(t, "POST", volBase, `{"name":"a"}`), 502, "docker_unavailable")
 	e = newVolEnv()
 	e.provider.Err = dockerc.ErrRuntimeNotDocker
-	wantErr(t, e.do(t, "POST", volBase+"/prune", ""), 409, "invalid_state")
+	wantErr(t, e.do(t, "POST", volBase+"/prune", pruneOK), 409, "invalid_state")
 	e = newVolEnv()
 	e.fake.FailWith("CreateVolume", dockerc.ErrConflict)
 	wantErr(t, e.do(t, "POST", volBase, `{"name":"a"}`), 409, "conflict")
@@ -337,5 +424,28 @@ func TestVolumeRoutesNeedToken(t *testing.T) {
 	}
 	if len(e.fake.Calls()) != 0 {
 		t.Fatal("docker reached without a token")
+	}
+}
+
+func TestParseLabelsRefusesTrailingData(t *testing.T) {
+	for _, raw := range []string{`{"k":"v"} {"x":"y"}`, `{"k":"v"}x`, `{"k":"v"} []`} {
+		if _, err := parseLabels([]byte(raw)); err == nil {
+			t.Errorf("accepted %q", raw)
+		}
+	}
+	if m, err := parseLabels([]byte(" {\"k\":\"v\"} ")); err != nil || m["k"] != "v" {
+		t.Fatalf("%v %v", m, err)
+	}
+}
+
+func TestVolumeInspectStillNeedsARunningKnownProfile(t *testing.T) {
+	e := newVolEnv()
+	e.gate.status = "Stopped"
+	wantErr(t, e.do(t, "GET", volBase+"/a", ""), 409, "invalid_state")
+	e = newVolEnv()
+	e.gate.err = ErrProfileNotFound
+	wantErr(t, e.do(t, "GET", volBase+"/a", ""), 404, "profile_not_found")
+	if len(e.fake.Calls()) != 0 {
+		t.Fatal("docker reached")
 	}
 }

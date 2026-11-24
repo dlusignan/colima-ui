@@ -26,6 +26,9 @@ import type {
 
 const enc = encodeURIComponent
 
+/** The fixed text `POST .../volumes/prune` requires in `confirm` (docs/api.md 3.21). */
+export const PRUNE_VOLUMES_CONFIRMATION = 'delete-unused-volumes'
+
 function withQuery(
   path: string,
   params: Record<string, string | number | undefined>,
@@ -86,10 +89,18 @@ export const api = {
     request<VolumeDetail>('GET', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`, { signal }),
   /** Never forced: a volume still mounted answers 409 with `details.containers`. */
   removeVolume: (name: string, volume: string) =>
-    request<void>('DELETE', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`),
-  /** Irreversible. Removes every unused volume, named ones included. */
+    request<void>('DELETE', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`, {
+      expectEmpty: true,
+    }),
+  /**
+   * Irreversible. Removes every unused volume, named ones included. The server
+   * requires the confirmation text, which is sent here so no caller can forget
+   * it: call this only after the user has confirmed.
+   */
   pruneVolumes: (name: string) =>
-    request<VolumePruneResult>('POST', `/api/profiles/${enc(name)}/volumes/prune`),
+    request<VolumePruneResult>('POST', `/api/profiles/${enc(name)}/volumes/prune`, {
+      body: { confirm: PRUNE_VOLUMES_CONFIRMATION },
+    }),
   getNetworks: (name: string, signal?: AbortSignal) =>
     request<NetworkList>('GET', `/api/profiles/${enc(name)}/networks`, { signal }),
   getActions: (name: string, limit?: number, signal?: AbortSignal) =>

@@ -2,13 +2,17 @@ package dockerc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // volDocker is a fake engine for the volume write methods. It records every
@@ -197,22 +201,132 @@ func TestInspectVolumeHasNoPathAndGetsUsersAndSize(t *testing.T) {
 	}
 }
 
-func TestPruneVolumesSendsNoFiltersAndCleansNames(t *testing.T) {
-	d := &volDocker{pruneBody: `{"VolumesDeleted":["b","a","../evil","` + strings.Repeat("z", 129) + `"],"SpaceReclaimed":-5}`}
+func prune(t *testing.T, body string) (PruneResult, []string, error) {
+	t.Helper()
+	d := &volDocker{pruneBody: body}
 	res, err := newVolClient(t, d).PruneVolumes(context.Background())
+	return res, d.requests(), err
+}
+
+func TestPruneVolumesSendsNoFiltersAndCleansNames(t *testing.T) {
+	res, reqs, err := prune(t, `{"VolumesDeleted":["b","a","../evil","`+strings.Repeat("z", 129)+`"],"SpaceReclaimed":-5}`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := d.requests(); len(got) != 1 || got[0] != "POST /v1.41/volumes/prune?" {
-		t.Fatalf("requests = %v", got)
+	if len(reqs) != 1 || reqs[0] != "POST /v1.41/volumes/prune?" {
+		t.Fatalf("requests = %v", reqs)
 	}
-	if strings.Join(res.Removed, ",") != "a,b" || res.ReclaimedBytes != 0 {
+	// Two of the four names are unusable: they are not listed, and the result
+	// says the list is short.
+	if strings.Join(res.Removed, ",") != "a,b" || *res.RemovedCount != 4 || !res.Truncated ||
+		*res.ReclaimedBytes != 0 || !res.Complete {
 		t.Fatalf("result = %+v", res)
 	}
-	d = &volDocker{pruneBody: `{"VolumesDeleted":null,"SpaceReclaimed":7}`}
-	res, _ = newVolClient(t, d).PruneVolumes(context.Background())
-	if res.Removed == nil || len(res.Removed) != 0 || res.ReclaimedBytes != 7 {
+	res, _, _ = prune(t, `{"VolumesDeleted":null,"SpaceReclaimed":7}`)
+	if res.Removed == nil || len(res.Removed) != 0 || *res.RemovedCount != 0 || res.Truncated || *res.ReclaimedBytes != 7 || !res.Complete {
 		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestPruneVolumesCapsTheListAndSaysSo(t *testing.T) {
+	var names []string
+	for i := 0; i < maxPrunedNames+5; i++ {
+		names = append(names, fmt.Sprintf("v%05d", i))
+	}
+	j, _ := json.Marshal(map[string]any{"VolumesDeleted": names, "SpaceReclaimed": 1})
+	res, _, err := prune(t, string(j))
+	if err != nil || len(res.Removed) != maxPrunedNames || *res.RemovedCount != maxPrunedNames+5 || !res.Truncated {
+		t.Fatalf("err = %v, result = %d names, count %v, truncated %v", err, len(res.Removed), res.RemovedCount, res.Truncated)
+	}
+}
+
+// After a 200 the volumes are gone: an unreadable answer is a success with an
+// unknown result, never an error.
+func TestPruneVolumesUnreadableAnswerAfter200IsSuccess(t *testing.T) {
+	for name, body := range map[string]string{
+		"not json":        `not json`,
+		"truncated json":  `{"VolumesDeleted":["a"`,
+		"wrong type":      `{"VolumesDeleted":[1,2]}`,
+		"empty body":      ``,
+		"names not array": `{"VolumesDeleted":"a"}`,
+	} {
+		res, _, err := prune(t, body)
+		if err != nil {
+			t.Errorf("%s: err = %v", name, err)
+			continue
+		}
+		if res.Complete || res.RemovedCount != nil || res.ReclaimedBytes != nil || len(res.Removed) != 0 || res.Removed == nil {
+			t.Errorf("%s: result = %+v", name, res)
+		}
+	}
+	// Oversize answer.
+	d := &volDocker{pruneBody: `{"VolumesDeleted":["` + strings.Repeat("a", 200) + `"]}`}
+	c := newVolClient(t, d)
+	c.maxBody = 50
+	res, err := c.PruneVolumes(context.Background())
+	if err != nil || res.Complete || res.RemovedCount != nil {
+		t.Fatalf("oversize: %v %+v", err, res)
+	}
+}
+
+func TestPruneVolumesSpaceBeyondInt64KeepsTheNames(t *testing.T) {
+	for _, space := range []string{`9223372036854775808`, `1e30`, `null`, `"7"`, `1.5`} {
+		res, _, err := prune(t, `{"VolumesDeleted":["a","b"],"SpaceReclaimed":`+space+`}`)
+		if err != nil || res.Complete || res.ReclaimedBytes != nil || *res.RemovedCount != 2 || len(res.Removed) != 2 {
+			t.Errorf("space %s: %v %+v", space, err, res)
+		}
+	}
+	res, _, _ := prune(t, `{"VolumesDeleted":["a"],"SpaceReclaimed":9223372036854775807}`)
+	if !res.Complete || *res.ReclaimedBytes != 9223372036854775807 {
+		t.Fatalf("max int64: %+v", res)
+	}
+}
+
+func TestPruneVolumesErrorStatusesStayErrors(t *testing.T) {
+	for _, code := range []int{500, 404, 409} {
+		sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(code) }))
+		if _, err := newHTTPClient(sock).PruneVolumes(context.Background()); err == nil {
+			t.Errorf("status %d gave no error", code)
+		}
+	}
+}
+
+// The existence check before create must fail closed: if it cannot answer,
+// no create is sent.
+func TestCreateVolumeStopsWhenTheExistenceCheckFails(t *testing.T) {
+	var posts atomic.Int32
+	var mode atomic.Int32 // 0 = 500, 1 = hang
+	block := make(chan struct{})
+	t.Cleanup(func() { close(block) })
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			posts.Add(1)
+			w.WriteHeader(201)
+			return
+		}
+		if mode.Load() == 1 {
+			select {
+			case <-block:
+			case <-r.Context().Done():
+			}
+			return
+		}
+		w.WriteHeader(500)
+	}))
+	c := newHTTPClient(sock)
+	_, err := c.CreateVolume(context.Background(), "v1", nil)
+	if !errors.Is(err, ErrDockerUnavailable) {
+		t.Fatalf("500: err = %v", err)
+	}
+	mode.Store(1)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err = c.CreateVolume(ctx, "v1", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("hang: err = %v", err)
+	}
+	if posts.Load() != 0 {
+		t.Fatalf("%d create requests were sent", posts.Load())
 	}
 }
 
@@ -252,7 +366,7 @@ func TestVolumeWritesRefuseHostileInputOnTheRealClient(t *testing.T) {
 		{strings.Repeat("k", 64): "v"}, {"com.docker.compose.project": "v"}, {"COM.DOCKER.x": "v"},
 		{"io.docker.x": "v"}, {"org.dockerproject.x": "v"},
 		{"k": "a\nb"}, {"k": "a\x00b"}, {"k": "a\x7fb"}, {"k": "\xff\xfe"}, {"k": strings.Repeat("v", 257)},
-		{"k": "a\u0085b"}, {"k": "a b"}, {"Env": "1", "env": "2"},
+		{"k": "a\u0085b"}, {"k": "a\u2028b"}, {"k": "a\u200bb"}, {"k": "a\u202eb"}, {"k": "\ufeff"}, {"k\u200b": "v"}, {"Env": "1", "env": "2"},
 	}
 	many := map[string]string{}
 	for i := 0; i < 17; i++ {

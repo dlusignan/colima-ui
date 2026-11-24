@@ -53,6 +53,12 @@ export function decodeError(status: number, body: unknown): ApiError {
 }
 
 export interface RequestOptions {
+  /**
+   * The route answers 204 with no body on success (Docker write routes such as
+   * a volume removal). Only then is an empty 204 a success; a route that is
+   * typed to return JSON and answers 204 is still a bad_response.
+   */
+  expectEmpty?: boolean
   body?: unknown
   signal?: AbortSignal
 }
@@ -86,9 +92,7 @@ export async function request<T>(
     throw new ApiError(0, 'network_error', 'Could not reach the server.')
   }
 
-  // A 204 has no body by contract (Docker write routes such as a volume
-  // removal): success, nothing to parse.
-  if (res.status === 204) return undefined as T
+  if (options.expectEmpty && res.status === 204) return undefined as T
 
   let parsed: unknown
   let parseFailed = false

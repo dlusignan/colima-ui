@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -36,10 +37,15 @@ type VolumeDetail struct {
 	ContainerNames []string          // containers, running or not, that mount it; never nil
 }
 
-// PruneResult is the outcome of a volume prune.
+// PruneResult is the outcome of a volume prune. Docker has already removed the
+// volumes when this is built, so an answer that cannot be read is not an error:
+// it is a result with Complete false.
 type PruneResult struct {
-	Removed        []string // never nil, sorted, valid names only
-	ReclaimedBytes int64
+	Removed        []string // valid names only, sorted, at most maxPrunedNames; never nil
+	RemovedCount   *int     // how many volumes Docker says it deleted; nil when unknown
+	Truncated      bool     // Removed lists fewer names than RemovedCount
+	ReclaimedBytes *int64   // nil when unknown
+	Complete       bool     // false when RemovedCount or ReclaimedBytes is unknown
 }
 
 // InUseError wraps ErrConflict with the number of containers that mount the
@@ -199,24 +205,38 @@ func (c *httpClient) RemoveVolume(ctx context.Context, name string) error {
 
 // PruneVolumes removes unused volumes. On API v1.41 that means every unused
 // volume, named ones included (see PruneIncludesNamedVolumes). No filters are
-// sent.
+// sent. A 200 means the prune ran; if its body is then too large, not JSON, or
+// carries a SpaceReclaimed that does not fit an int64, the call still succeeds
+// and reports what is unknown (PruneResult.Complete), because failing here
+// would tell the user nothing happened after their data is gone.
 func (c *httpClient) PruneVolumes(ctx context.Context) (PruneResult, error) {
 	var raw struct {
-		Deleted []string `json:"VolumesDeleted"`
-		Space   int64    `json:"SpaceReclaimed"`
+		Deleted []string        `json:"VolumesDeleted"`
+		Space   json.RawMessage `json:"SpaceReclaimed"`
 	}
-	if err := c.post(ctx, pruneTimeout, fixedTarget("/volumes/prune"), nil, nil, &raw, 200); err != nil {
+	err := c.post(ctx, pruneTimeout, fixedTarget("/volumes/prune"), nil, nil, &raw, 200)
+	if errors.Is(err, errUnusableAnswer) {
+		return PruneResult{Removed: []string{}}, nil
+	}
+	if err != nil {
 		return PruneResult{}, err
 	}
-	out := PruneResult{Removed: []string{}, ReclaimedBytes: raw.Space}
-	if out.ReclaimedBytes < 0 {
-		out.ReclaimedBytes = 0
+	count := len(raw.Deleted)
+	out := PruneResult{Removed: []string{}, RemovedCount: &count, Complete: true}
+	if n, perr := strconv.ParseInt(strings.TrimSpace(string(raw.Space)), 10, 64); perr == nil {
+		if n < 0 {
+			n = 0
+		}
+		out.ReclaimedBytes = &n
+	} else {
+		out.Complete = false
 	}
 	for _, n := range raw.Deleted {
 		if ValidObjectName(n) && len(out.Removed) < maxPrunedNames {
 			out.Removed = append(out.Removed, n)
 		}
 	}
+	out.Truncated = len(out.Removed) < count
 	sort.Strings(out.Removed)
 	return out, nil
 }

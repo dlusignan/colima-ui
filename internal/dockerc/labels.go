@@ -3,6 +3,7 @@ package dockerc
 import (
 	"regexp"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -37,13 +38,14 @@ func ValidLabelKey(key string) bool {
 }
 
 // ValidLabelValue reports whether v is an allowed label value: valid UTF-8,
-// at most 256 bytes, no control characters. It may be empty.
+// at most 256 bytes, no control characters and no Unicode format characters (category Cf: zero
+// width and bidirectional controls, which hide or reorder text). It may be empty.
 func ValidLabelValue(v string) bool {
 	if len(v) > MaxLabelValueLen || !utf8.ValidString(v) {
 		return false
 	}
 	for _, r := range v {
-		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == ' ' || r == ' ' {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r < 0xa0) || r == '\u2028' || r == '\u2029' || unicode.Is(unicode.Cf, r) {
 			return false
 		}
 	}

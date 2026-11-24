@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -39,11 +40,20 @@ type volumeDetailJSON struct {
 
 // volumePruneJSON is the prune answer. IncludesNamedVolumes is always true on
 // the pinned API v1.41: every unused volume goes, not only anonymous ones.
+// RemovedCount and ReclaimedBytes are null, and ResultComplete false, when the
+// prune ran but Docker's answer could not be read; the volumes are gone anyway.
+// Truncated is true when Removed lists fewer names than RemovedCount.
 type volumePruneJSON struct {
 	Removed              []string `json:"removed"`
-	ReclaimedBytes       int64    `json:"reclaimedBytes"`
+	RemovedCount         *int     `json:"removedCount"`
+	Truncated            bool     `json:"truncated"`
+	ReclaimedBytes       *int64   `json:"reclaimedBytes"`
 	IncludesNamedVolumes bool     `json:"includesNamedVolumes"`
+	ResultComplete       bool     `json:"resultComplete"`
 }
+
+// pruneConfirmation is the fixed string a prune request must carry.
+const pruneConfirmation = "delete-unused-volumes"
 
 const (
 	// pruneRouteTimeout covers a prune of many or large volumes.
@@ -128,6 +138,9 @@ func parseLabels(raw json.RawMessage) (map[string]string, error) {
 	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
 		return nil, bad
 	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, bad
+	}
 	if !dockerc.ValidLabels(out) {
 		return nil, bad
 	}
@@ -169,12 +182,14 @@ func (v *volumesRoutes) create(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
-// inspect: GET /api/profiles/{name}/volumes/{volume}. It goes through the
-// write rules like the other volume routes, so it also leaves an action row.
+// inspect: GET /api/profiles/{name}/volumes/{volume}. It shares the profile,
+// body, validation and error rules of the write routes but is a read: no busy
+// check and no action log row (ReadOnly), so a screen asking for it leaves no
+// trace in the log.
 func (v *volumesRoutes) inspect(w http.ResponseWriter, r *http.Request) error {
 	var out volumeDetailJSON
 	return v.w.serve(w, r, writeSpec{
-		Action: "docker.volume.inspect",
+		Action: "docker.volume.inspect", ReadOnly: true,
 		Plan: func() (writePlan, error) {
 			name, err := requireObjectName("volume", r.PathValue("volume"))
 			if err != nil {
@@ -223,12 +238,22 @@ func (v *volumesRoutes) remove(w http.ResponseWriter, r *http.Request) error {
 	})
 }
 
-// prune: POST /api/profiles/{name}/volumes/prune. No body, no filters.
+// prune: POST /api/profiles/{name}/volumes/prune. It deletes data for good, so
+// the body must be {"confirm":"delete-unused-volumes"}: an empty body, a missing
+// key or any other string is a 422 naming confirm and Docker is not reached.
+// No filters exist.
 func (v *volumesRoutes) prune(w http.ResponseWriter, r *http.Request) error {
+	var in struct{ Confirm string }
 	var out volumePruneJSON
 	return v.w.serve(w, r, writeSpec{
-		Action: "docker.volume.prune", Timeout: pruneRouteTimeout,
+		Action: "docker.volume.prune", Timeout: pruneRouteTimeout, EmptyBodyIsObject: true,
+		BodyLimit: 1 << 10, Body: map[string]any{"confirm": &in.Confirm},
 		Plan: func() (writePlan, error) {
+			if in.Confirm != pruneConfirmation {
+				return writePlan{}, errInvalidRequest(map[string]string{
+					"confirm": "Send the confirmation text to delete all unused volumes.",
+				})
+			}
 			return writePlan{Result: &out, Run: func(ctx context.Context, c dockerc.Client) error {
 				res, err := c.PruneVolumes(ctx)
 				if err != nil {
@@ -239,7 +264,8 @@ func (v *volumesRoutes) prune(w http.ResponseWriter, r *http.Request) error {
 					removed = []string{}
 				}
 				out = volumePruneJSON{
-					Removed: removed, ReclaimedBytes: res.ReclaimedBytes,
+					Removed: removed, RemovedCount: res.RemovedCount, Truncated: res.Truncated,
+					ReclaimedBytes: res.ReclaimedBytes, ResultComplete: res.Complete,
 					IncludesNamedVolumes: dockerc.PruneIncludesNamedVolumes,
 				}
 				return nil

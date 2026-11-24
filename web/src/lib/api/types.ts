@@ -230,12 +230,23 @@ export interface VolumeDetail {
 /**
  * Answer of `POST /api/profiles/{name}/volumes/prune`. On the pinned Docker API
  * v1.41 every unused volume is removed, named ones included, and
- * `includesNamedVolumes` says so. Irreversible.
+ * `includesNamedVolumes` says so. Irreversible. When Docker ran the prune but
+ * its answer was unreadable, `resultComplete` is false and `removedCount` and
+ * `reclaimedBytes` are null: the volumes are gone, only the figures are unknown.
+ * `truncated` is true when `removed` lists fewer names than `removedCount`.
  */
 export interface VolumePruneResult {
   removed: string[]
-  reclaimedBytes: number
+  removedCount: number | null
+  truncated: boolean
+  reclaimedBytes: number | null
   includesNamedVolumes: boolean
+  resultComplete: boolean
+}
+
+/** Body of `POST /api/profiles/{name}/volumes/prune`. */
+export interface PruneVolumesRequest {
+  confirm: string
 }
 
 export interface NetworkList {

@@ -113,7 +113,7 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.20) use `name`, `labels` and `volume` (the path parameter). Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
+For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
 
 ## 3. Routes
 
@@ -139,7 +139,7 @@ There are 23 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `POST` | `/api/profiles/{name}/volumes` | Create a volume (3.18) |
 | `GET` | `/api/profiles/{name}/volumes/{volume}` | Inspect one volume (3.19) |
 | `DELETE` | `/api/profiles/{name}/volumes/{volume}` | Remove a volume, never forced (3.20) |
-| `POST` | `/api/profiles/{name}/volumes/prune` | Remove all unused volumes, named ones included (3.21) |
+| `POST` | `/api/profiles/{name}/volumes/prune` | Remove all unused volumes, named ones included; needs a confirmation text (3.21) |
 | `GET` | `/api/profiles/{name}/networks` | Docker networks |
 | `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
@@ -781,7 +781,7 @@ Errors: the shared ones of 1.3, plus `409 conflict` (`details.name`) when a volu
 
 ### 3.19 `GET /api/profiles/{name}/volumes/{volume}`
 
-Token: yes. Request body: none. Inspects one volume. It goes through the Docker write rules (1.3) like the other volume routes, so it also checks the busy state and leaves an action log row `docker.volume.inspect` with the volume name.
+Token: yes. Request body: none. Inspects one volume. It follows the profile, body, validation and error rules of 1.3 but it is a read: it does not check the busy state (it works while a job runs) and it writes no action log row. Clients should still not poll it: it is meant to be asked for when the user opens a volume, and it can be slow because the size comes from the engine's disk usage report.
 
 Response `200`:
 
@@ -814,25 +814,51 @@ Errors: the shared ones of 1.3, plus `404 not_found` for an unknown volume, `409
 
 ### 3.21 `POST /api/profiles/{name}/volumes/prune`
 
-Token: yes. Request body: none (empty or `{}`; any key, including a filter, is `400`). Removes unused volumes. **This deletes data and cannot be undone.** Action log row `docker.volume.prune` with no detail. It has a 2 minute budget.
+Token: yes. Removes unused volumes. **This deletes data and cannot be undone.** Because of that the request must carry a fixed confirmation text. Action log row `docker.volume.prune` with no detail. It has a 2 minute budget.
+
+Request:
+
+```json
+{
+  "confirm": "delete-unused-volumes"
+}
+```
+
+- `confirm` must be exactly `delete-unused-volumes`. An empty body, `{}`, a missing or `null` key and any other string answer `422 invalid_request` with `details.fields` holding `confirm`; Docker is not reached and no log row is written. Any other key (including a filter), a repeated key, trailing data and a non-object body are `400 bad_request`. The body is at most 1 KiB.
 
 Response `200`:
 
 ```json
 {
-  "removed": ["scratch", "9f2c0d1e4b7a"],
+  "removed": ["scratch", "9f2c0d1e4b7a3c5d8e6f0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5"],
+  "removedCount": 2,
+  "truncated": false,
   "reclaimedBytes": 104857600,
-  "includesNamedVolumes": true
+  "includesNamedVolumes": true,
+  "resultComplete": true
 }
 ```
 
-- `removed` lists the volumes Docker deleted (sorted, `[]` when there was nothing to remove). Names that do not follow the object name rule of 1.3 are left out of the list, never echoed.
+- `removed` lists the volumes Docker deleted (sorted, `[]` when there was nothing to remove), at most 1000 names. Names that do not follow the object name rule of 1.3 are never listed or echoed.
+- `removedCount` is the number of volumes Docker says it deleted. `truncated` is `true` when `removed` lists fewer names than `removedCount` (more than 1000 volumes, or names that were left out). Names are never dropped without `truncated` being set.
 - `reclaimedBytes` is the space Docker says it freed, at least `0`.
 - `includesNamedVolumes` is `true`: on the Docker API version this backend pins (v1.41) the prune removes every volume that no container uses, **named volumes included**, not only anonymous ones. A volume you created by name and have not attached yet is removed too.
+- `resultComplete` is `false` when Docker ran the prune (it answered `200`) but its answer could not be read in full: the body was too large or not the expected JSON, or `SpaceReclaimed` does not fit a 64-bit integer. The volumes are already gone, so the route still answers `200` and writes a `success` row; it reports what it does not know as `null` (`removedCount`, `reclaimedBytes`) and `removed` may be empty or short. A client must show this as "the prune ran, the figures are unknown", never as a failure:
 
-How this was verified. The v1.41 API description of `POST /volumes/prune` lists `label` as the only filter and no `all` filter. The API version history for v1.42 says: "`POST /volumes/prune` will now only prune "anonymous" volumes (volumes which were not given a name) by default. A new filter parameter `all` can be set to a truth-y value (`true`, `1`) to get the old behavior." The backend sends `/v1.41/volumes/prune` with no filters, so it gets the pre-1.42 behaviour: all unused volumes. A newer engine keeps that behaviour for a client that asks for v1.41 (the engine answers each request according to the version in its URL). The check was made against the published documentation only; nothing was pruned on any engine to test it. A unit test pins the API version and fails if it changes, so moving the pin forces this decision to be made again.
+```json
+{
+  "removed": [],
+  "removedCount": null,
+  "truncated": false,
+  "reclaimedBytes": null,
+  "includesNamedVolumes": true,
+  "resultComplete": false
+}
+```
 
-Errors: the shared ones of 1.3.
+How the v1.41 behaviour was verified. The v1.41 API description of `POST /volumes/prune` lists `label` as the only filter and no `all` filter. The API version history for v1.42 says: "`POST /volumes/prune` will now only prune "anonymous" volumes (volumes which were not given a name) by default. A new filter parameter `all` can be set to a truth-y value (`true`, `1`) to get the old behavior." The backend sends `/v1.41/volumes/prune` with no filters, so it gets the pre-1.42 behaviour: all unused volumes. A newer engine keeps that behaviour for a client that asks for v1.41 (the engine answers each request according to the version in its URL). The check was made against the published documentation only; nothing was pruned on any engine to test it. A unit test pins the API version and fails if it changes, so moving the pin forces this decision to be made again.
+
+Errors: the shared ones of 1.3, plus the `422` and `400` above.
 
 ## 4. Routes that do not exist
 

@@ -1,8 +1,10 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -38,6 +40,10 @@ import (
 //     log row for the attempt, then the answer. From here on the work runs on a
 //     context that ignores a client hang-up (bounded by the spec timeout), so
 //     a write that has started finishes and is recorded with its real outcome.
+//
+// Two spec flags bend the order: ReadOnly (volume inspect) skips the busy check
+// and the action log row, EmptyBodyIsObject (volume prune) reads an empty body as
+// {} so a missing key is the route's own 422.
 //
 // How to add a write route: build a dockerWriter once with newDockerWriter in
 // the route group's WithX option, and in the handler declare the body struct,
@@ -99,6 +105,14 @@ type writeSpec struct {
 	BodyLimit int64
 	// Timeout overrides the default of 30 seconds, for slow calls like pull.
 	Timeout time.Duration
+	// ReadOnly marks a call that only reads (volume inspect): it skips the
+	// busy check and writes no action log row. Everything else, including the
+	// profile lookup, the body rules and the error mapping, is unchanged.
+	ReadOnly bool
+	// EmptyBodyIsObject makes an empty body mean {} for a route with Body keys,
+	// so that a missing key is the route's own 422 and not a 400. Any other
+	// malformed body is still a 400.
+	EmptyBodyIsObject bool
 	// Plan validates the decoded values and returns the call to make. It must
 	// not touch Docker. Return an *APIError (errInvalidRequest) to refuse.
 	Plan func() (writePlan, error)
@@ -144,7 +158,7 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 	if status = strings.ToLower(status); status != "running" {
 		return notRunning(status)
 	}
-	if id, running := d.busy.Busy(name); running {
+	if id, running := d.busy.Busy(name); running && !spec.ReadOnly {
 		return busyError(name, id)
 	}
 
@@ -156,6 +170,16 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 		limit := spec.BodyLimit
 		if limit <= 0 {
 			limit = defaultBodyLimit
+		}
+		if spec.EmptyBodyIsObject {
+			b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
+			if err != nil {
+				return errBadRequest("Request body is not valid.")
+			}
+			if len(bytes.TrimSpace(b)) == 0 {
+				b = []byte("{}")
+			}
+			r.Body = io.NopCloser(bytes.NewReader(b))
 		}
 		if err := decodeStrictObject(w, r, limit, spec.Body); err != nil {
 			return err
@@ -182,7 +206,9 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 	if err == nil {
 		err = plan.Run(rctx, client)
 	}
-	d.record(r.Context(), name, spec.Action, plan.Object, err)
+	if !spec.ReadOnly {
+		d.record(r.Context(), name, spec.Action, plan.Object, err)
+	}
 	if err != nil {
 		return dockerWriteError(spec.Action, plan.Object, err)
 	}
