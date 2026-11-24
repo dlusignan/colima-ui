@@ -3,7 +3,7 @@
 import type { ProfileAction, Profile } from '@/lib/api/types'
 
 /** Confirmation wording for Stop and Restart; the command palette reuses it. */
-export const CONFIRM: Record<'stop' | 'restart', { description: (n: string) => string; label: string }> = {
+export const CONFIRM: Record<'stop' | 'restart' | 'update', { description: (n: string) => string; label: string }> = {
   stop: {
     label: 'Stop',
     description: (n) => `Stop ${n}? Its containers stop until you start it again.`,
@@ -12,6 +12,11 @@ export const CONFIRM: Record<'stop' | 'restart', { description: (n: string) => s
     label: 'Restart',
     description: (n) =>
       `Restart ${n}? Its containers stop and start again, so anything running in them is interrupted.`,
+  },
+  update: {
+    label: 'Update runtime',
+    description: (n) =>
+      `Update the container runtime of ${n}? The runtime restarts its services, so containers may restart briefly.`,
   },
 }
 
@@ -24,5 +29,6 @@ export function actionsDisabled(
     start: locked || status === 'running',
     stop: locked || status === 'stopped',
     restart: locked,
+    update: locked || status !== 'running',
   }
 }

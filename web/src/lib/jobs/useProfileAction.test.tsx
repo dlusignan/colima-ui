@@ -22,6 +22,7 @@ describe('useProfileAction', () => {
     ['start', 'startProfile'],
     ['stop', 'stopProfile'],
     ['restart', 'restartProfile'],
+    ['update', 'updateProfile'],
   ] as const)('%s calls the matching route', async (action, method) => {
     const spy = vi.spyOn(api, method).mockResolvedValue({ jobId: 'j_5' })
     const { result } = renderHook(() => useProfileAction('synthetic-a'), {

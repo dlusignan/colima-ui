@@ -42,7 +42,9 @@ export function describeActionError(
       return {
         message:
           typeof status === 'string'
-            ? `${profile} is already ${status}.`
+            ? action === 'update'
+              ? `${profile} is ${status}, so its runtime cannot be updated.`
+              : `${profile} is already ${status}.`
             : `${profile} is not in a state that allows ${action}.`,
         refresh: true,
       }

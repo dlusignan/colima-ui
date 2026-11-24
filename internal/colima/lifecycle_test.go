@@ -103,6 +103,7 @@ func TestStopAndRestartArgv(t *testing.T) {
 		{"stop", func(s Streamer) (Process, error) { return Stop(context.Background(), s, "synthetic-a", false) }, "stop -p synthetic-a"},
 		{"stop force", func(s Streamer) (Process, error) { return Stop(context.Background(), s, "synthetic-a", true) }, "stop -p synthetic-a --force"},
 		{"restart", func(s Streamer) (Process, error) { return Restart(context.Background(), s, "synthetic-a", false) }, "restart -p synthetic-a"},
+		{"update", func(s Streamer) (Process, error) { return Update(context.Background(), s, "synthetic-a") }, "update -p synthetic-a"},
 		{"restart force", func(s Streamer) (Process, error) { return Restart(context.Background(), s, "synthetic-a", true) }, "restart -p synthetic-a --force"},
 	}
 	for _, c := range cases {

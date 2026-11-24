@@ -70,6 +70,8 @@ export const api = {
     request<JobRef>('POST', `/api/profiles/${enc(name)}/stop`),
   restartProfile: (name: string) =>
     request<JobRef>('POST', `/api/profiles/${enc(name)}/restart`),
+  updateProfile: (name: string) =>
+    request<JobRef>('POST', `/api/profiles/${enc(name)}/update`),
   getJob: (id: string, signal?: AbortSignal) =>
     request<Job>('GET', `/api/jobs/${enc(id)}`, { signal }),
   cancelJob: (id: string) => request<Job>('POST', `/api/jobs/${enc(id)}/cancel`),

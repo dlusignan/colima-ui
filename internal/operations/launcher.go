@@ -13,6 +13,8 @@ const (
 	ActionStart   Action = "start"
 	ActionStop    Action = "stop"
 	ActionRestart Action = "restart"
+	// ActionUpdate refreshes the container runtime of a running profile.
+	ActionUpdate Action = "update"
 	// ActionCreate starts a profile that does not exist yet, with the options
 	// in Request.Options. The route that submits it checks existence.
 	ActionCreate Action = "create"
