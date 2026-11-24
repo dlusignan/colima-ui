@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ConfirmDialog'
+import { DeleteProfileDialog } from '@/components/DeleteProfileDialog'
 import type { ProfileAction, Profile } from '@/lib/api/types'
 import { actionsDisabled, CONFIRM } from './profileActionRules'
 
@@ -9,12 +10,14 @@ interface ProfileActionsProps {
   busy: boolean
   unavailable: boolean
   onAction: (action: ProfileAction) => void
+  /** Called once the delete dialog is confirmed (typed name, Docker contents checked). */
+  onDelete: (deleteData: boolean) => void
   /** Adds Update runtime, which is on the profile page only. */
   showUpdate?: boolean
 }
 
-/** Start, Stop and Restart for one row. Stop and Restart ask for confirmation. */
-export function ProfileActions({ profile, busy, unavailable, onAction, showUpdate }: ProfileActionsProps) {
+/** Start, Stop, Restart and Delete for one row. Stop, Restart and Delete ask for confirmation. */
+export function ProfileActions({ profile, busy, unavailable, onAction, onDelete, showUpdate }: ProfileActionsProps) {
   const { name, status } = profile
   const disabled = actionsDisabled(status, busy || unavailable)
 
@@ -58,6 +61,7 @@ export function ProfileActions({ profile, busy, unavailable, onAction, showUpdat
       </Button>
       {confirmed('stop')}
       {confirmed('restart')}
+      <DeleteProfileDialog profile={profile} busy={busy} unavailable={unavailable} onDelete={onDelete} />
       {showUpdate && confirmed('update')}
     </div>
   )

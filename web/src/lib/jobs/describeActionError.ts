@@ -38,7 +38,19 @@ export function describeActionError(
       }
     }
     case 'invalid_state': {
-      if (action === 'delete') return { message: `Stop ${profile} before deleting it.`, refresh: true }
+      if (action === 'delete') {
+        // Fixed texts keyed on the reason; server text is never shown.
+        switch (error.details.reason) {
+          case 'docker_not_empty':
+            return { message: 'Docker elements must be removed before this VM can be deleted.', refresh: false }
+          case 'cannot_verify':
+            return { message: 'Start the profile first so its Docker contents can be checked.', refresh: true }
+          case 'task_running':
+            return { message: `A task is running on ${profile}. Wait for it to finish, then delete it.`, refresh: true }
+          default:
+            return { message: `${profile} is not in a state that allows deleting.`, refresh: true }
+        }
+      }
       const status = error.details.status
       return {
         message:
@@ -58,6 +70,11 @@ export function describeActionError(
       return {
         message:
           'Colima could not run the command. See the log for details if a job was created.',
+        refresh: false,
+      }
+    case 'docker_unavailable':
+      return {
+        message: `The Docker contents of ${profile} could not be read, so it was not deleted.`,
         refresh: false,
       }
     case 'shutting_down':

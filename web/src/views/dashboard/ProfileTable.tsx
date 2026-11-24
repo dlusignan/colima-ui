@@ -33,6 +33,7 @@ function Row({ profile, tracker, unavailable, onError }: RowProps) {
       pending={runner.pending}
       unavailable={unavailable}
       onAction={runner.run}
+      onDelete={runner.runDelete}
     />
   )
 }

@@ -10,8 +10,6 @@ import { useKubernetes } from '@/lib/api/useKubernetes'
 import { useProfiles } from '@/lib/api/useProfiles'
 import type { JobAction } from '@/lib/api/types'
 import { queryKeys } from '@/lib/api/keys'
-import { describeActionError } from '@/lib/jobs/describeActionError'
-import { useDeleteProfile } from '@/lib/jobs/useDeleteProfile'
 import { useKubernetesAction } from '@/lib/jobs/useKubernetesAction'
 import { useJobTracker } from '@/lib/jobs/useJobTracker'
 import { useProfileActionRunner } from '@/lib/jobs/useProfileActionRunner'
@@ -19,7 +17,6 @@ import { useToast } from '@/lib/toast/useToast'
 import { logPath } from '@/views/log/logPath'
 import { ActionsPanel } from './ActionsPanel'
 import { ContainersPanel } from './ContainersPanel'
-import { DeleteProfileDialog } from './DeleteProfileDialog'
 import { KubernetesActions } from './KubernetesActions'
 import { ProfileSummary } from './ProfileSummary'
 import { SshConfigDialog } from './SshConfigDialog'
@@ -59,7 +56,6 @@ export function ProfileView() {
   )
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const deletion = useDeleteProfile(name)
   const deleteJob = tracker.jobs.get(name)
   const deleted = deleteJob?.action === 'delete' && deleteJob.state === 'succeeded'
 
@@ -80,22 +76,6 @@ export function ProfileView() {
   useEffect(() => {
     if (k8sJobFinished) void queryClient.invalidateQueries({ queryKey: queryKeys.kubernetes(name) })
   }, [k8sJobFinished, name, queryClient])
-
-  const requestDelete = (deleteData: boolean) => {
-    if (deletion.isPending) return
-    deletion.mutate(
-      { deleteData },
-      {
-        onSuccess: ({ jobId }) => tracker.adopt(name, jobId),
-        onError: (error) => {
-          const d = describeActionError(error, 'delete', name)
-          if (d.trackJobId) tracker.adopt(name, d.trackJobId)
-          if (d.refresh) void queryClient.invalidateQueries({ queryKey: queryKeys.profiles })
-          if (d.message) toast.error({ title: d.message, key: `action-error:${d.message}` })
-        },
-      },
-    )
-  }
 
   if (profiles.isPending) {
     return (
@@ -129,7 +109,7 @@ export function ProfileView() {
 
   const job = tracker.jobs.get(name)
   const running = job?.state === 'running'
-  const busy = runner.pending || k8sRunner.pending || deletion.isPending || running || profile.activeJobId != null
+  const busy = runner.pending || k8sRunner.pending || running || profile.activeJobId != null
   const unavailable = (profile.warnings ?? []).some((w) => w.code === 'colima_unavailable')
   const logJobId = job?.jobId ?? profile.activeJobId
 
@@ -147,7 +127,7 @@ export function ProfileView() {
       <section aria-label="Status" className="flex flex-col gap-2 rounded-lg border border-border px-3 py-3">
         <div className="flex flex-wrap items-center gap-4">
           <StatusDot status={profile.status} label={running && job ? PROGRESS[job.action] : undefined} />
-          <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={runner.run} showUpdate />
+          <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={runner.run} onDelete={runner.runDelete} showUpdate />
           <SshConfigDialog profile={name} />
           {kubernetes.data?.enabled === true && (
             <KubernetesActions
@@ -174,17 +154,6 @@ export function ProfileView() {
       <ProfileSummary profile={profile} />
       <ContainersPanel profile={profile} busy={busy} unavailable={unavailable} />
       <ActionsPanel profile={name} />
-      <section aria-labelledby="danger-heading" className="flex flex-col gap-2">
-        <h3 id="danger-heading" className="text-base font-semibold">
-          Danger zone
-        </h3>
-        <DeleteProfileDialog
-          profile={profile}
-          busy={busy}
-          unavailable={unavailable}
-          onDelete={requestDelete}
-        />
-      </section>
     </div>
   )
 }

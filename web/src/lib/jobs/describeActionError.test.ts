@@ -73,11 +73,23 @@ describe('describeActionError', () => {
     )
   })
 
-  it('delete errors: invalid_state on a running profile refreshes, confirmation_required does not', () => {
-    expect(describeActionError(err(409, 'invalid_state', { status: 'running' }), 'delete', 'dev')).toEqual({
-      message: 'Stop dev before deleting it.',
-      refresh: true,
+  it('delete errors: fixed texts per reason, never server text', () => {
+    const d = (details: Record<string, unknown>) =>
+      describeActionError(err(409, 'invalid_state', details), 'delete', 'dev')
+    expect(d({ status: 'running', reason: 'docker_not_empty', containers: 2 })).toEqual({
+      message: 'Docker elements must be removed before this VM can be deleted.',
+      refresh: false,
     })
+    expect(d({ status: 'stopped', reason: 'cannot_verify' }).message).toBe(
+      'Start the profile first so its Docker contents can be checked.',
+    )
+    expect(d({ status: 'busy', reason: 'task_running', jobId: 'j_1' }).message).toBe(
+      'A task is running on dev. Wait for it to finish, then delete it.',
+    )
+    expect(d({ status: 'starting' })).toEqual({ message: 'dev is not in a state that allows deleting.', refresh: true })
+    expect(describeActionError(err(502, 'docker_unavailable'), 'delete', 'dev').message).toBe(
+      'The Docker contents of dev could not be read, so it was not deleted.',
+    )
     expect(describeActionError(err(422, 'confirmation_required'), 'delete', 'dev')).toEqual({
       message: 'The name typed does not match dev.',
       refresh: false,

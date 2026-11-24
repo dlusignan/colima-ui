@@ -71,7 +71,8 @@ describe('table', () => {
     expect(isDisabled(b('Start prod'))).toBe(false)
     expect(isDisabled(b('Stop prod'))).toBe(true)
     expect(isDisabled(b('Restart prod'))).toBe(false)
-    for (const a of ['Start', 'Stop', 'Restart']) expect(isDisabled(b(`${a} odd`))).toBe(false)
+    for (const a of ['Start', 'Stop', 'Restart', 'Delete']) expect(isDisabled(b(`${a} odd`))).toBe(false)
+    for (const n of ['dev', 'prod']) expect(isDisabled(b(`Delete ${n}`))).toBe(false)
   })
 
   it('disables every button while the profile has a job and links the log', async () => {
@@ -255,5 +256,27 @@ describe('states', () => {
     ])
     await screen.findByRole('table', { name: 'Colima profiles' })
     expect(screen.getAllByText('Colima 0.9.1 is outside the tested line.', { selector: 'p' })).toHaveLength(1)
+  })
+})
+
+describe('delete', () => {
+  it('deletes from a row, stays on the dashboard and tracks the job', async () => {
+    vi.spyOn(api, 'getContents').mockResolvedValue({ applicable: true, containers: 0, images: 0, volumes: 0 })
+    const del = vi.spyOn(api, 'deleteProfile').mockResolvedValue({ jobId: 'j_9' })
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_9', profile: 'dev', action: 'delete', state: 'running' }))
+    const { user } = setup([running, stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete dev' }))
+    const dialog = await screen.findByRole('alertdialog', { name: 'Delete profile dev?' })
+    await user.type(within(dialog).getByRole('textbox'), 'dev')
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }))
+    expect(del).toHaveBeenCalledExactlyOnceWith('dev', { confirm: 'dev', deleteData: false })
+    expect(await screen.findByText('deleting')).toBeInTheDocument()
+  })
+
+  it('a stopped row says to start it first', async () => {
+    vi.spyOn(api, 'getContents').mockRejectedValue(new ApiError(409, 'invalid_state', 'x', { status: 'stopped' }))
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Delete prod' }))
+    expect(await screen.findByText('Start the profile first so its Docker contents can be checked.')).toBeInTheDocument()
   })
 })
