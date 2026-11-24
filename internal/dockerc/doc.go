@@ -2,7 +2,13 @@
 // a Colima VM. It is a small hand-rolled HTTP client over the Unix socket that
 // Colima exposes per profile, pinned to API version 1.41 (one-shot stats needs
 // 1.41 or newer, and the pin keeps the /system/df JSON shape stable). It is
-// read-only: list containers, read one stats sample, read disk usage.
+// mostly read: list containers, read one stats sample, read disk usage. Writes
+// go through the unexported post and delete helpers (write.go), which map
+// Docker's status to typed errors (ErrObjectNotFound, ErrConflict,
+// ErrInvalidRequest, ErrDaemon) and drop the daemon's error text. Every write
+// URL is built with ObjectPath or RefPath, after ValidObjectName or
+// ValidImageRef, and the helpers refuse any path with a "." or ".." segment.
+// The HTTP client never follows a redirect.
 //
 // The exported interface (Client, Provider) uses only plain value types, so
 // consumers such as the metrics sampler and the containers route can fake it.

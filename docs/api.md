@@ -43,6 +43,28 @@ In the route tables below, "Token" is "yes" for every route under `/api`.
 | `502` | Colima or Docker failed or is not reachable |
 | `503` | The backend is shutting down |
 
+### 1.3 Docker write routes
+
+Routes that change Docker objects (volumes, networks, images) live under `/api/profiles/{name}/...` and all follow the same rules, in this order. The first rule that fails answers; nothing reaches Docker before the last step.
+
+1. **Profile.** `404 profile_not_found` for an unknown or malformed profile name, `409 invalid_state` when the VM is not running (`details.status` names the state).
+2. **Busy check.** `409 profile_busy` (with `details.jobId`) while a start, stop or restart job runs on the profile, the same answer as the config route. The check is advisory: a job can start right after it.
+3. **Body.** The body is a JSON object with the route's own keys, at most 1 MiB unless the route says otherwise. Unknown keys, repeated keys, keys in the wrong case, a `null` or non-object body, trailing data and a body over the limit are `400 bad_request`. A route that takes no body accepts an empty body or `{}` and nothing else.
+4. **Validation.** Object names (volumes, networks) match `[a-zA-Z0-9][a-zA-Z0-9_.-]*` and are at most 128 characters. Image references follow Docker's reference grammar (`[domain[:port]/]path[:tag][@digest]`, lowercase path, at most 255 characters). The same rules apply to path parameters and body values, so `..`, `/`, `%`, spaces and control characters never reach a Docker URL. A failure is `422 invalid_request` with `details.fields` mapping the rejected key or path parameter to a fixed message, never to the request value.
+5. **Docker call.** One fixed, typed call. Docker's own error text is never returned; only the fixed message and, for 404 and 409, `details.name` with the validated object name:
+
+| Docker answer | Status | `code` | `details` |
+| --- | --- | --- | --- |
+| Object does not exist | `404` | `not_found` | `{"name":"pgdata"}` |
+| In use (409) or predefined and protected (403) | `409` | `conflict` | `{"name":"pgdata"}` |
+| Request values rejected (400) | `422` | `invalid_request` | `{"fields":{}}` |
+| Socket missing or not answering, timeout, Docker 5xx | `502` | `docker_unavailable` | `{}` |
+| Profile does not use the Docker runtime | `409` | `invalid_state` | `{"runtime":"not_docker"}` |
+
+6. **Audit.** Every attempt that reaches step 5 appends one row to the action log (3.11) with the route's action name (`docker.<resource>.<verb>`, for example `docker.volume.remove`), the outcome `success` or `failed`, and as `detail` only the object name or reference. Requests refused in steps 1 to 4 write no row, so a hostile name never lands in the log. The row never contains body content, registry credentials or paths. A failed append is logged on the server and never changes the answer.
+
+A successful write answers `200` with a JSON body, or `204` with none, as each route documents.
+
 ## 2. Error body
 
 Every error response, from any route and from the middleware, has this shape. It is defined here once and every route's error table refers to it by status and `code`.
@@ -72,12 +94,14 @@ Error codes in use:
 | `403` | `forbidden_origin` | Origin not allowed | `{}` |
 | `404` | `profile_not_found` | No profile with that name, or a malformed name | `{"name":"dev"}`, or `{}` when the name is malformed |
 | `404` | `job_not_found` | No job with that id | `{"jobId":"j_x"}` |
-| `404` | `not_found` | Unknown path (token present) | `{}` |
+| `404` | `not_found` | Unknown path (token present), or a Docker object a write route names does not exist (1.3) | `{}`, or `{"name":"pgdata"}` |
 | `405` | `method_not_allowed` | Known path, wrong method (`Allow` header set) | `{}` |
 | `409` | `profile_busy` | A job is running on that profile | `{"jobId":"<running job>"}` |
 | `409` | `job_not_running` | Cancel on a job that already finished | `{"jobId":"...","state":"succeeded"}` |
+| `409` | `conflict` | A Docker object is in use or protected (1.3) | `{"name":"pgdata"}` |
 | `409` | `invalid_state` | Start on a running profile, stop on a stopped one, container list on a stopped VM, engine route on a running profile that does not use Docker | `{"status":"running"}` |
 | `422` | `validation_failed` | Configuration values rejected | `{"fields":{"cpu":"must be between 1 and 16"}}` |
+| `422` | `invalid_request` | A Docker write route rejected a name, reference or value (1.3) | `{"fields":{"name":"Not a valid Docker name."}}` |
 | `500` | `internal_error` | Unexpected server error; the text never carries internal detail | `{}` |
 | `502` | `colima_failed` | Colima could not be run or returned an error | `{}` |
 | `502` | `docker_unavailable` | The Docker socket is missing or not answering | `{}` |
