@@ -27,6 +27,7 @@ import type {
   EngineInfo,
   KubernetesConfirmRequest,
   KubernetesStatus,
+  ProfileContents,
   SshConfig,
   SshConfigEntry,
   ImageList,
@@ -449,6 +450,13 @@ export const sshConfigShape = {
 export const kubernetesStatusShape = {
   enabled: 'boolean',
 } as const satisfies Record<keyof KubernetesStatus, Kind>
+
+export const profileContentsShape = {
+  applicable: 'boolean',
+  containers: 'number',
+  images: 'number',
+  volumes: 'number',
+} as const satisfies Record<keyof ProfileContents, Kind>
 
 export const kubernetesConfirmRequestShape = {
   confirm: 'string',

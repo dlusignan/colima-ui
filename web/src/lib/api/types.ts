@@ -95,6 +95,18 @@ export interface KubernetesStatus {
   enabled: boolean
 }
 
+/**
+ * Answer of `GET /api/profiles/{name}/contents` (docs/api.md 3.37): counts of
+ * Docker objects in a running profile. When `applicable` is false the profile
+ * does not use Docker and the counts are absent.
+ */
+export interface ProfileContents {
+  applicable: boolean
+  containers?: number
+  images?: number
+  volumes?: number
+}
+
 /** Body of the reset and delete routes (docs/api.md 3.34). */
 export interface KubernetesConfirmRequest {
   confirm: string
