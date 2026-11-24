@@ -430,3 +430,52 @@ func TestWriteTimeoutMovesOn(t *testing.T) {
 		t.Fatalf("error lines = %d, want 1:\n%s", n, lb.String())
 	}
 }
+
+func TestImagePullRowsUseTheDockerActionNameAndTheReference(t *testing.T) {
+	cases := map[operations.State]string{
+		operations.StateSucceeded: "success", operations.StateFailed: "failed", operations.StateCancelled: "cancelled",
+	}
+	for state, outcome := range cases {
+		fs := &fakeSink{}
+		r := New(fs)
+		s := summary(operations.ActionImagePull, state, intp(1))
+		s.Subject = "postgres:18-alpine"
+		r.JobFinished(s)
+		if err := r.Close(ctxT(t)); err != nil {
+			t.Fatal(err)
+		}
+		rows := fs.snapshot()
+		if len(rows) != 1 || rows[0].Action != "docker.image.pull" || rows[0].Outcome != outcome ||
+			rows[0].Detail == nil || *rows[0].Detail != "postgres:18-alpine" || rows[0].Profile != "synthetic-dev" {
+			t.Fatalf("%s: rows = %+v", state, rows)
+		}
+	}
+}
+
+func TestImagePullRowDropsAnUnprintableSubject(t *testing.T) {
+	for _, subj := range []string{"a\nb", "a\x1b[31m", "é", strings.Repeat("a", 300), ""} {
+		fs := &fakeSink{}
+		r := New(fs)
+		s := summary(operations.ActionImagePull, operations.StateSucceeded, intp(0))
+		s.Subject = subj
+		r.JobFinished(s)
+		if err := r.Close(ctxT(t)); err != nil {
+			t.Fatal(err)
+		}
+		if rows := fs.snapshot(); len(rows) != 1 || rows[0].Detail != nil {
+			t.Fatalf("subject %q: rows = %+v", subj, rows)
+		}
+	}
+}
+
+func TestImagePullRunningWritesNothing(t *testing.T) {
+	fs := &fakeSink{}
+	r := New(fs)
+	r.JobFinished(summary(operations.ActionImagePull, operations.StateRunning, nil))
+	if err := r.Close(ctxT(t)); err != nil {
+		t.Fatal(err)
+	}
+	if len(fs.snapshot()) != 0 {
+		t.Fatal("row written for a running pull")
+	}
+}
