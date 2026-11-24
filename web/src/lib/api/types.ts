@@ -417,6 +417,17 @@ export interface EngineInfo {
   diskUsage: EngineDiskUsage
 }
 
+export interface SshConfigEntry {
+  key: string
+  value: string
+}
+
+/** Body of `GET /api/profiles/{name}/ssh-config`. */
+export interface SshConfig {
+  raw: string
+  entries: SshConfigEntry[]
+}
+
 export type ActionOutcome = 'success' | 'failed' | 'cancelled'
 
 export interface ActionEntry {
