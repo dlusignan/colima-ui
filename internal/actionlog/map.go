@@ -27,6 +27,9 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 		StartedAt: s.StartedAt,
 		Action:    string(s.Action),
 	}
+	if s.Action == operations.ActionImagePull {
+		return entryForPull(s, e)
+	}
 	var detail string
 	switch s.State {
 	case operations.StateSucceeded:
@@ -75,4 +78,29 @@ func entryForConfig(profile string, fields []string, now time.Time) (e store.Act
 		Outcome:   OutcomeSuccess,
 		Detail:    &detail,
 	}, true
+}
+
+// ActionImagePull is the action name of a finished image pull, the same name
+// the synchronous Docker write routes use.
+const ActionImagePull = "docker.image.pull"
+
+// entryForPull maps a finished image pull. The detail is the reference the
+// submitter validated, never output; a subject that is not plain printable
+// ASCII is left out instead of stored.
+func entryForPull(s operations.JobSummary, e store.ActionEntry) (store.ActionEntry, bool) {
+	e.Action = ActionImagePull
+	switch s.State {
+	case operations.StateSucceeded:
+		e.Outcome = OutcomeSuccess
+	case operations.StateFailed:
+		e.Outcome = OutcomeFailed
+	case operations.StateCancelled:
+		e.Outcome = OutcomeCancelled
+	default:
+		return e, false
+	}
+	if d := s.Subject; d != "" && len(d) <= 255 && !strings.ContainsFunc(d, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+		e.Detail = &d
+	}
+	return e, true
 }

@@ -33,6 +33,9 @@ type httpClient struct {
 	statsTimeout     time.Duration
 	diskUsageTimeout time.Duration
 	logsTimeout      time.Duration
+	// pullTimeout bounds a whole pull; pullIdle ends one that goes quiet.
+	pullTimeout time.Duration
+	pullIdle    time.Duration
 	// lockKey identifies the engine (its socket) for tagLocks.
 	lockKey string
 }
@@ -62,6 +65,8 @@ func newHTTPClient(socket string) *httpClient {
 		statsTimeout:     statsTimeout,
 		diskUsageTimeout: diskUsageTimeout,
 		logsTimeout:      logsTimeout,
+		pullTimeout:      pullTimeout,
+		pullIdle:         pullIdleTimeout,
 		lockKey:          socket,
 	}
 }

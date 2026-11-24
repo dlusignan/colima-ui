@@ -16,6 +16,11 @@ var (
 	ErrSlowSubscriber = errors.New("operations: subscriber too slow, dropped")
 	// ErrUnknownAction is returned by ColimaLauncher for an unknown Action.
 	ErrUnknownAction = errors.New("operations: unknown action")
+	// ErrTooManyTasks means the task's limit group already runs its maximum.
+	ErrTooManyTasks = errors.New("operations: too many running tasks")
+	// ErrDuplicateTask means an identical task (same profile, action and
+	// subject) is already running.
+	ErrDuplicateTask = errors.New("operations: identical task already running")
 	// ErrIDExhausted means the ID generator kept returning IDs already in use.
 	ErrIDExhausted = errors.New("operations: could not generate a unique job id")
 )
