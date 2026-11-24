@@ -86,6 +86,16 @@ describe('JobOutcomeToasts', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('default: image pull cancelled')
   })
 
+  it('names a global cache clear without a profile prefix or a log link', async () => {
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_c', profile: '', action: 'cache-prune' }))
+    const { stream } = setup()
+    await emit(stream, finished({ jobId: 'j_c', profile: '', state: 'succeeded' }))
+    const toast = await screen.findByRole('status')
+    expect(toast).toHaveTextContent('download cache clear succeeded')
+    expect(toast).not.toHaveTextContent(/^:/)
+    expect(within(toast).queryByRole('link', { name: 'View log' })).not.toBeInTheDocument()
+  })
+
   it('keeps a failed job as an error toast with the exit code', async () => {
     vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_2', action: 'start' }))
     const { stream } = setup()

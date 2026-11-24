@@ -86,9 +86,10 @@ export type ProfileAction = 'start' | 'stop' | 'restart' | 'update'
 /**
  * What a job can be doing: a profile action, creating the profile (POST
  * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's
- * start/stop slot, and its output is progress text rather than process output).
+ * start/stop slot, and its output is progress text rather than process output),
+ * or clearing Colima's download cache (3.33; a global job with an empty profile).
  */
-export type JobAction = ProfileAction | 'delete' | 'create' | 'image-pull'
+export type JobAction = ProfileAction | 'delete' | 'create' | 'image-pull' | 'cache-prune'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {
@@ -205,6 +206,22 @@ export interface DeleteProfileRequest {
 /** The 202 answer of an image pull: a job to follow like start and stop. */
 export interface PullImageAccepted extends JobRef {
   action: 'image-pull'
+  profile: string
+  state: 'running'
+}
+
+/**
+ * Body of `POST /api/colima/cache/prune` (docs/api.md 3.33). `confirm` must be
+ * the exact text `delete-cached-assets`; `includeLima` adds `--all`.
+ */
+export interface CachePruneRequest {
+  confirm: string
+  includeLima?: boolean
+}
+
+/** The 202 answer of a cache prune: a global job (its profile is the empty string). */
+export interface CachePruneAccepted extends JobRef {
+  action: 'cache-prune'
   profile: string
   state: 'running'
 }

@@ -117,7 +117,7 @@ For `422`, `details.fields` maps each rejected field name to a message. The volu
 
 ## 3. Routes
 
-There are 35 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 36 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -156,6 +156,7 @@ There are 35 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
 | `GET` | `/api/profiles/{name}/ssh-config` | SSH settings of a profile's VM (3.31) |
+| `POST` | `/api/colima/cache/prune` | Clear Colima's cached downloads as a global job; needs a confirmation text (3.33) |
 | `GET` | `/api/events` | Server Sent Events stream |
 
 ### 3.1 `GET /healthz`
@@ -1275,9 +1276,56 @@ Things to know:
 3. A cancelled, interrupted (backend shutdown) or failed delete can leave a half-deleted profile that Colima lists as `broken`. Delete it again; that is why `broken` is allowed.
 
 
+### 3.33 `POST /api/colima/cache/prune`
+
+Token: yes. Deletes Colima's cached downloaded assets (VM images) with `colima prune --force` as a job (action `cache-prune`), plus `--all` when `includeLima` is true, which also deletes Lima's cached assets. The cache is shared by every profile, so the route has no profile in its path and the job's `profile` is the empty string. `--force` is always passed so the process never waits on a prompt the UI cannot answer; the confirmation lives in this request instead. The only effect is that the next create or start may download its assets again. The vector is fixed: no other argument or flag can be sent.
+
+Request body (at most 1 KiB, strict: exact keys, each at most once, case sensitive):
+
+```json
+{ "confirm": "delete-cached-assets", "includeLima": false }
+```
+
+1. `confirm` must equal `delete-cached-assets` exactly (case and spacing count). An empty body, `{}`, a missing or `null` key, an empty string and any other string answer `422 confirmation_required`; no process starts.
+2. `includeLima` is optional (default `false`; `null` counts as absent). `true` adds `--all`.
+3. Any other key (including a key with different letter case), a repeated key, a wrong type, trailing data, a body over 1 KiB and a non-object body are `400 bad_request`.
+
+Response `202`:
+
+```json
+{
+  "jobId": "j_8f3a2c",
+  "action": "cache-prune",
+  "profile": "",
+  "state": "running"
+}
+```
+
+`GET /api/jobs/{id}` (3.5) then returns the job, `POST /api/jobs/{id}/cancel` (3.6) cancels it, and `job.output` and `job.finished` (5.3) carry its output and its end, all with `action` `cache-prune` and `profile` `""`. A client that filters the event stream by profile does not see these events; one without a filter does.
+
+The job:
+
+1. It is a task job like an image pull (3.30): it holds no profile slot, so it never blocks or is blocked by start, stop, restart or delete, and it is allowed while profiles run. Its output is Colima's own output, streamed as it comes, followed on failure or cancel by one fixed closing line of the backend's own.
+2. At most one cache prune runs at a time across the whole backend. A second request answers `409 conflict` until the first has ended and its final state is recorded, a moment after it finishes.
+3. It is refused while a **create or start** job runs on any profile, because those download the very assets a prune removes. A start from a terminal is not seen. The refusal is checked in the same step that reserves the single prune place, so a start submitted a moment earlier is always seen. A start submitted after the prune began is not refused: the prune only removes cached files that no process holds open, and a start that needs a removed file downloads it again.
+4. Cancelling kills the Colima process and the job ends `cancelled` once the process is gone. **A cancelled or interrupted prune can leave the cache partly cleared**: some files may already be removed. That is harmless, the next create or start downloads what is missing, and the last output line says so (`Cache prune cancelled. Some cached files may already have been removed.`). When the backend shuts down a running prune is cancelled and awaited like other jobs.
+5. Action log row `cache-prune` with the outcome `success`, `failed` or `cancelled`, written when the job ends. The detail is the vector that ran (`colima prune --force` or `colima prune --force --all`), so `--all` is always visible. When Colima could not be started the detail starts with `not run:` and never claims an exit status; a cancelled prune says `some cached files may already be removed`. The row belongs to no profile, so it is stored under the reserved key `_global` (a name no profile can have). No route reads it yet: `GET /api/profiles/{name}/actions` (3.11) only serves real profiles.
+6. A failed job has the exit code `1`: the backend does not pass Colima's status through for tasks. Colima's output can contain paths of the cache folder; like every job output it is for the token holder only.
+
+Errors:
+
+1. `422` `confirmation_required`: `confirm` is missing or not the exact text.
+2. `400` `bad_request`: the body rules above.
+3. `409` `invalid_state` with `details.reason` `assets_in_use`, `details.status` `starting` and `details.jobId`: a create or start job is running on some profile. Nothing starts.
+4. `409` `conflict`: a cache prune is already running.
+5. `503` `shutting_down`: the backend is stopping and accepts no new jobs.
+6. `500` `internal_error`: unexpected failure.
+
+Order of checks: body shape (400), confirmation (422), then the job is submitted and the create/start check and the single-prune check happen together (409). Colima is not run before every check has passed.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32), and Colima's download cache can be cleared (3.33), but no other Colima maintenance command (`template`, `update` of the Colima binary itself) is reachable. Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 
