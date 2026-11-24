@@ -26,8 +26,9 @@ type networkJSON struct {
 }
 
 // networkDetailJSON is the inspect answer. It has no options, labels or other
-// container fields, and no free text from the engine: subnets and addresses
-// are re-parsed, container names are plain names or short ids.
+// container fields. Subnets and addresses are re-parsed, and the network and
+// container names are plain object names or short ids (anything else is
+// replaced), JSON-encoded like every other string.
 type networkDetailJSON struct {
 	ID         string                 `json:"id"`
 	Name       string                 `json:"name"`
@@ -116,6 +117,9 @@ func (n *networksRoutes) create(w http.ResponseWriter, r *http.Request) error {
 			name, err := requireObjectName("name", in.Name)
 			if err != nil {
 				return writePlan{}, err
+			}
+			if dockerc.ReservedNetworkName(name) {
+				return writePlan{}, errInvalidRequest(map[string]string{"name": "That network name is reserved by Docker."})
 			}
 			subnet := ""
 			if in.Subnet != nil {

@@ -135,7 +135,7 @@ func TestNormalizeSubnetTable(t *testing.T) {
 	bad := []string{
 		"", " ", "garbage", "172.28.0.0", "172.28.0.0/", "/16", "172.28.0.0/33", "172.28.0.0/-1", "172.28.0.0/16/16",
 		"172.28.0.0/16 ", " 172.28.0.0/16", "172.28.0.0/16\n", "172.28.0.0 /16", "172.28.0.0/1 6",
-		"0.0.0.0/0", "::/0", "0.0.0.0/8", "0.0.0.0/16", "::/64", "::/128",
+		"0.0.0.0/0", "::/0", "0.0.0.0/8", "0.1.0.0/16", "192.168.5.0/24", "192.168.5.128/25", "192.168.0.0/16", "192.168.4.0/23", "0.0.0.0/16", "::/64", "::/128",
 		"127.0.0.0/8", "127.0.0.0/16", "127.0.0.1/24", "::1/128", "::1/64",
 		"169.254.0.0/16", "169.254.1.0/24", "fe80::/64", "fe80::/10", "fe80::1/64",
 		"224.0.0.0/8", "224.0.0.0/4", "239.1.0.0/16", "ff00::/8", "ff02::/64",
@@ -209,7 +209,7 @@ func TestCreateNetworkRefusesExistingNameWithoutCreate(t *testing.T) {
 // If the existence check cannot answer, nothing is created.
 func TestCreateNetworkStopsWhenTheExistenceCheckFails(t *testing.T) {
 	var posts atomic.Int32
-	var mode atomic.Int32 // 0 = 500, 1 = hang, 2 = garbage 200, 3 = 400
+	var mode atomic.Int32 // 0 = 500, 1 = hang, 2 = garbage 200
 	block := make(chan struct{})
 	t.Cleanup(func() { close(block) })
 	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +233,7 @@ func TestCreateNetworkStopsWhenTheExistenceCheckFails(t *testing.T) {
 		}
 	}))
 	c := newHTTPClient(sock)
-	for _, m := range []int32{0, 2, 3} {
+	for _, m := range []int32{0, 2} {
 		mode.Store(m)
 		if _, err := c.CreateNetwork(context.Background(), "n1", false, ""); err == nil || errors.Is(err, ErrConflict) {
 			t.Fatalf("mode %d: err = %v", m, err)
@@ -320,7 +320,7 @@ func TestInspectNetworkIsBoundedAndCarriesNoFreeText(t *testing.T) {
 	for _, r := range d.requests() {
 		if strings.Contains(r, "/containers/json") {
 			v, _ := url.ParseQuery(r[strings.Index(r, "?")+1:])
-			if v.Get("all") != "1" || v.Get("filters") != `{"network":["`+netFullID+`"]}` {
+			if v.Get("all") != "1" || v.Get("filters") != `{"network":["`+netFullID+`","synthetic-net"]}` {
 				t.Fatalf("filter query = %q", r)
 			}
 			seen = true
@@ -549,5 +549,76 @@ func TestNetworkWritesRefuseHostileInputOnTheRealClient(t *testing.T) {
 	}
 	if got := d.requests(); len(got) != 0 {
 		t.Fatalf("requests reached the socket: %v", got)
+	}
+}
+
+// Docker answers 400 for an ambiguous ID prefix or two networks of one name:
+// that is "no such single network", not a Docker failure.
+func TestNetworkLookup400IsNotFound(t *testing.T) {
+	var posts, deletes atomic.Int32
+	sock := startFakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST":
+			posts.Add(1)
+			w.WriteHeader(201)
+			io.WriteString(w, `{}`)
+		case r.Method == "DELETE":
+			deletes.Add(1)
+		default:
+			w.WriteHeader(400)
+		}
+	}))
+	c := newHTTPClient(sock)
+	ctx := context.Background()
+	if _, err := c.InspectNetwork(ctx, "cafe"); !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("inspect: %v", err)
+	}
+	if err := c.RemoveNetwork(ctx, "aa"); !errors.Is(err, ErrObjectNotFound) {
+		t.Fatalf("remove: %v", err)
+	}
+	if deletes.Load() != 0 {
+		t.Fatal("DELETE sent")
+	}
+	// A create of a short hex-looking name is not a false 502: it goes ahead
+	// (CheckDuplicate guards the rest).
+	if _, err := c.CreateNetwork(ctx, "db", false, ""); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if posts.Load() != 1 {
+		t.Fatalf("posts = %d", posts.Load())
+	}
+}
+
+// A 12-hex name that only prefixes another network's ID is free.
+func TestCreateNetworkIDPrefixMatchIsNotADuplicate(t *testing.T) {
+	d := &netDocker{exists: true} // answers the default network, named synthetic-net, ID 0123456789ab...
+	if _, err := newNetClient(t, d).CreateNetwork(context.Background(), netShortID, false, ""); err != nil {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateNetworkRefusesReservedNames(t *testing.T) {
+	d := &netDocker{}
+	c := newNetClient(t, d)
+	for _, n := range []string{"bridge", "host", "none", "Bridge", "HOST", "None", "ingress", "Ingress", "INGRESS"} {
+		if _, err := c.CreateNetwork(context.Background(), n, false, ""); !errors.Is(err, ErrBadName) {
+			t.Errorf("%q: %v", n, err)
+		}
+	}
+	if len(d.requests()) != 0 {
+		t.Fatalf("requests = %v", d.requests())
+	}
+}
+
+// Docker names are filtered like container names: a name that is not a plain
+// object name is replaced by the short ID.
+func TestInspectNetworkNameFallsBackToShortID(t *testing.T) {
+	d := &netDocker{exists: true, inspect: `{"Id":"` + netFullID + `","Name":"` + netShortID + `","Driver":"bridge","Scope":"local"}`}
+	got, err := newNetClient(t, d).InspectNetwork(context.Background(), netShortID)
+	if err != nil || got.Name != netShortID {
+		t.Fatalf("%v %+v", err, got)
+	}
+	if containerLabel("bad name\n", netFullID) != netShortID {
+		t.Fatal("no fallback")
 	}
 }

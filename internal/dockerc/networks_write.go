@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/netip"
 	"net/url"
 	"sort"
@@ -12,8 +14,10 @@ import (
 
 // Bounds of a subnet a client may ask for. A bridge network needs room for a
 // gateway and a few containers, and a range wider than /8 would swallow most
-// private address space. Docker still decides about overlaps with other
-// networks and with the VM's own routes.
+// private address space. Docker checks a new subnet against its other
+// networks but NOT against the host's or the VM's routes, so the one range
+// Colima itself uses (192.168.5.0/24, the Lima user-mode network that carries
+// the VM's DNS and gateway) is refused here.
 const (
 	MinSubnetBitsV4 = 8
 	MaxSubnetBitsV4 = 28
@@ -24,14 +28,15 @@ const (
 )
 
 // refusedRanges are address ranges no user network may overlap: "this
-// network", loopback, link-local, multicast and the reserved class E block
-// for IPv4; unspecified/reserved, loopback, IPv4-mapped, link-local and
+// network" (0.0.0.0/8, never a valid host range), loopback, link-local,
+// 192.168.5.0/24 (Colima's own VM network, a user network there would cut the
+// VM off), multicast and the reserved class E block for IPv4; unspecified/reserved, loopback, IPv4-mapped, link-local and
 // multicast for IPv6. A prefix that merely overlaps one is refused, so a
 // short prefix cannot hide a refused range inside it.
 var refusedRanges = func() []netip.Prefix {
 	var out []netip.Prefix
 	for _, s := range []string{
-		"0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "224.0.0.0/4", "240.0.0.0/4",
+		"0.0.0.0/8", "127.0.0.0/8", "169.254.0.0/16", "192.168.5.0/24", "224.0.0.0/4", "240.0.0.0/4",
 		"::/8", "::ffff:0:0/96", "fe80::/10", "ff00::/8",
 	} {
 		out = append(out, netip.MustParsePrefix(s))
@@ -83,6 +88,13 @@ func NormalizeSubnet(s string) (string, bool) {
 // the client refuses first. The comparison ignores case so that "Bridge" is
 // not removable by accident either.
 var predefinedNetworks = map[string]bool{"bridge": true, "host": true, "none": true}
+
+// ReservedNetworkName is true for the names a user network may not take:
+// the predefined bridge, host and none and the swarm ingress network, in any
+// letter case (the same names RemoveNetwork refuses to remove).
+func ReservedNetworkName(name string) bool {
+	return predefinedNetworks[strings.ToLower(name)] || strings.EqualFold(name, "ingress")
+}
 
 // ValidNetworkRef reports whether ref can name a network in a path: an object
 // name (which includes the 12 and 64 character hex IDs). Whether a valid ref
@@ -172,11 +184,23 @@ func (c *httpClient) networkLookup(ctx context.Context, ref string) (rawNetwork,
 		return rawNetwork{}, err
 	}
 	var raw rawNetwork
-	if err := c.get(ctx, c.listTimeout, p, nil, &raw); err != nil {
+	// Docker answers 400 for an ambiguous ID prefix or for two networks with
+	// the same name: no single network is meant, so it is "not found" here.
+	resp, callCtx, cancel, err := c.do(ctx, c.listTimeout, p, nil, map[int]error{400: ErrObjectNotFound})
+	if err != nil {
 		if errors.Is(err, ErrContainerNotFound) {
 			return rawNetwork{}, ErrObjectNotFound
 		}
 		return rawNetwork{}, err
+	}
+	defer cancel()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBody+1))
+	if err != nil {
+		return rawNetwork{}, c.transportErr(ctx, callCtx)
+	}
+	if int64(len(body)) > c.maxBody || json.Unmarshal(body, &raw) != nil {
+		return rawNetwork{}, fmt.Errorf("%w: malformed response", ErrDockerUnavailable)
 	}
 	if raw.Name != ref && !(isHexID(ref) && strings.HasPrefix(raw.ID, ref)) {
 		return rawNetwork{}, ErrObjectNotFound
@@ -191,7 +215,11 @@ func (c *httpClient) networkLookup(ctx context.Context, ref string) (rawNetwork,
 // reports on the network: the endpoints of the inspect answer (with addresses)
 // plus the containers the container list says use it (without addresses).
 func (c *httpClient) attachedContainers(ctx context.Context, raw rawNetwork) ([]NetworkContainer, error) {
-	f, err := json.Marshal(map[string][]string{"network": {raw.ID}})
+	// The filter values are ORed. A container that was created but never
+	// started has no network ID yet, only the network name it was configured
+	// with, so both are asked for. A container configured with a network by ID
+	// is only seen once it has started; that cannot be guaranteed here.
+	f, err := json.Marshal(map[string][]string{"network": {raw.ID, raw.Name}})
 	if err != nil {
 		return nil, ErrBadName
 	}
@@ -274,7 +302,7 @@ func (c *httpClient) InspectNetwork(ctx context.Context, ref string) (NetworkDet
 		return NetworkDetail{}, err
 	}
 	d := NetworkDetail{
-		ID: shortID(raw.ID), Name: raw.Name, Driver: raw.Driver, Scope: raw.Scope, Internal: raw.Internal,
+		ID: shortID(raw.ID), Name: containerLabel(raw.Name, raw.ID), Driver: raw.Driver, Scope: raw.Scope, Internal: raw.Internal,
 		Subnets: []NetworkSubnet{}, Containers: users,
 	}
 	for _, e := range raw.IPAM.Config {
@@ -301,7 +329,7 @@ func (c *httpClient) InspectNetwork(ctx context.Context, ref string) (NetworkDet
 // same name. Two creates racing for one name can still both pass; Docker's own
 // check is documented as best effort.
 func (c *httpClient) CreateNetwork(ctx context.Context, name string, internal bool, subnet string) (Network, error) {
-	if !ValidObjectName(name) {
+	if !ValidObjectName(name) || ReservedNetworkName(name) {
 		return Network{}, ErrBadName
 	}
 	body := map[string]any{
@@ -318,8 +346,12 @@ func (c *httpClient) CreateNetwork(ctx context.Context, name string, internal bo
 			body["EnableIPv6"] = true
 		}
 	}
-	if _, err := c.networkLookup(ctx, name); err == nil {
-		return Network{}, ErrConflict
+	// Only an exact name match is a duplicate: a lookup that found a network
+	// through an ID prefix is not.
+	if found, err := c.networkLookup(ctx, name); err == nil {
+		if found.Name == name {
+			return Network{}, ErrConflict
+		}
 	} else if !errors.Is(err, ErrObjectNotFound) {
 		return Network{}, err
 	}

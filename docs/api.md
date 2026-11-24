@@ -878,14 +878,20 @@ Request:
 }
 ```
 
-- `name` is required and follows the object name rule of 1.3.
+- `name` is required and follows the object name rule of 1.3. The names `bridge`, `host`, `none` and `ingress` are refused in any letter case (`422`, `details.fields.name`), like their removal.
 - `internal` is optional (absent and `null` mean `false`). An internal network has no route to the outside.
 - `subnet` is optional (absent and `null` mean that Docker chooses). It is one CIDR, IPv4 or IPv6, and nothing else: no list, no gateway, no IP range. Anything that fails the rules below is `422 invalid_request` with `details.fields` holding the single key `subnet` and a fixed message; the answer never repeats the value.
   1. It must be ASCII text of at most 64 characters, with no spaces, control or format characters, no zone and no bare address, and an IPv4-mapped IPv6 address (`::ffff:...`) is refused.
   2. The prefix length must be 8 to 28 for IPv4 and 48 to 120 for IPv6. That refuses `/0` and ranges too wide to be a network, and ranges too small to hold a gateway and containers.
-  3. The range must not overlap loopback (`127.0.0.0/8`, `::1`), the unspecified or "this network" range (`0.0.0.0/8`, `::/8`), link-local (`169.254.0.0/16`, `fe80::/10`), multicast (`224.0.0.0/4`, `ff00::/8`) or the reserved block `240.0.0.0/4`. Overlap is what counts, so a short prefix cannot contain a refused range.
+  3. The range must not overlap any of these, and overlap is what counts, so a short prefix cannot contain a refused range (`192.168.0.0/16` is refused because it contains `192.168.5.0/24`):
+     1. `127.0.0.0/8` and `::1`, loopback.
+     2. `0.0.0.0/8` and `::/8`, the unspecified or "this network" range, never valid for hosts (this also refuses `0.1.0.0/16`).
+     3. `169.254.0.0/16` and `fe80::/10`, link-local.
+     4. `224.0.0.0/4` and `ff00::/8`, multicast.
+     5. `240.0.0.0/4`, reserved, and `::ffff:0:0/96`, IPv4-mapped.
+     6. `192.168.5.0/24`, the user-mode network Colima's VM uses for its own gateway and DNS. A network on it would cut the VM off.
   4. **Host bits are ignored.** `172.28.0.5/16` is read as `172.28.0.0/16`, and the masked form is what is sent to Docker, so Docker never stores something other than what was checked.
-  Docker still decides about overlaps with other networks and with the VM's own routes; its refusal is `409 conflict`.
+  Docker checks the new range against its other networks only and answers `409 conflict` on an overlap there. It does not check the host's or the VM's routes: apart from `192.168.5.0/24` above, a range that collides with something else on the VM or the host's network is not detected.
 - No driver and no options are accepted (`driver`, `options`, `attachable`, `enableIPv6`, `gateway` and the like are unknown keys, `400`). The network is always created with the `bridge` driver. The Docker request carries exactly: the name, the driver `bridge`, `Internal`, `CheckDuplicate: true`, at most one IPAM subnet, and `EnableIPv6: true` only when that subnet is IPv6 (Docker ignores an IPv6 subnet on a network without IPv6). It never carries driver options, labels, `Attachable`, `Ingress` or a swarm scope.
 
 Response `201`, the same fields as a list entry (3.14):
@@ -903,7 +909,7 @@ Response `201`, the same fields as a list entry (3.14):
 
 If Docker answered `201` but its answer could not be read, the network exists and the route still answers `201` with `"id": ""`: the list (3.14) has the id.
 
-Errors: the shared ones of 1.3, plus `409 conflict` (`details.name`) when a network with that name exists, and `422` for `name` or `subnet`. Duplicate names are refused in two ways. The backend first looks the name up (an inspect; `404` means free) and does not create anything if that lookup fails for any other reason. The create request also carries `CheckDuplicate`, because on Docker API v1.41 a create without it makes a second network with the same name, which then cannot be addressed by name. Docker's own documentation calls that check best effort, so two creates of one name racing each other can both pass and leave two networks with that name; the list shows both by id. This was checked against the published API description only; no network was created on any engine to test it.
+Errors: the shared ones of 1.3, plus `409 conflict` (`details.name`) when a network with that exact name exists, and `422` for `name` or `subnet`. Duplicate names are refused in two ways. The backend first looks the name up (an inspect) and does not create anything if that lookup fails for any reason other than "no such network". Only a network whose name equals the requested one counts as a duplicate: a name that merely starts an existing network's id is free, and so is a lookup Docker answers with `400` (an ambiguous id prefix or two networks of one name, where no single network is meant). The create request also carries `CheckDuplicate`, because on Docker API v1.41 a create without it makes a second network with the same name, which then cannot be addressed by name. Docker's own documentation calls that check best effort, so two creates of one name racing each other can both pass and leave two networks with that name; the list shows both by id. This was checked against the published API description only; no network was created on any engine to test it.
 
 ### 3.23 `GET /api/profiles/{name}/networks/{network}`
 
@@ -924,8 +930,10 @@ Response `200`:
 ```
 
 - `subnets` lists the network's address ranges in canonical form, `gateway` is `""` when there is none. Ranges the engine reports in a form that is not a CIDR are left out.
-- `containers` lists every container that is attached: those the engine reports as connected (with their addresses, without the prefix length) and those the container list says use the network, stopped ones included (with empty addresses). It is sorted by name. A container name that is not a plain name is replaced by its short id. Nothing else about a container is returned.
+- `containers` lists the containers that are attached: those the engine reports as connected (with their addresses, without the prefix length) and those the container list says use the network, found by the network's id or name, stopped and never-started ones included (with empty addresses). A never-started container that was configured with the network by id rather than by name cannot be found before it starts, so the list is a best effort, not a guarantee. It is sorted by name. A container name that is not a plain name is replaced by its short id. Nothing else about a container is returned.
 - Options, labels, endpoint ids and MAC addresses are never returned.
+- A name and a 12 character id look alike: Docker resolves names before id prefixes, so a network whose name is a 12 character hex string is the one found for that text, not the network with that id. A client must send the network's name (the UI of issue #123 sends the name). A text that two networks match (an ambiguous id prefix, or two networks of one name) is `404`.
+- `name` is the network's name when it is a plain object name, else its short id. All other strings are re-parsed or fixed values.
 - Text that is neither a valid name nor a 12 or 64 character hex id is `422` (`details.fields.network`). Docker also resolves a name by any id prefix; the backend does not: if the network Docker finds is not the one the text names exactly (its name, or a 12 or 64 character id prefix), the answer is `404`.
 
 Errors: the shared ones of 1.3, plus `404 not_found` (`details.name`) for an unknown network and `422 invalid_request` (`details.fields.network`).
@@ -937,7 +945,7 @@ Token: yes. Request body: none. Removes one network, found by name or id as in 3
 The removal is never forced: no `force` parameter exists and the backend never sends one. Before removing, it looks the network up and refuses, without sending any remove request:
 
 1. The predefined networks `bridge`, `host` and `none`, matched by name in any letter case (so also when reached by id), and the swarm `ingress` network: `409 conflict` with `details.name`.
-2. A network with attached containers, running or stopped: `409 conflict` with `details.name` and `details.containers` (the number of containers; no names, no addresses). If a container attaches after that check, Docker refuses itself and the answer is the same `409` without `details.containers`.
+2. A network with attached containers, running, stopped or created but not started (found as in 3.23, with the same best-effort limit): `409 conflict` with `details.name` and `details.containers` (the number of containers; no names, no addresses). If a container attaches after that check, Docker refuses itself and the answer is the same `409` without `details.containers`.
 
 The remove request then goes to the network's full id, as Docker reported it in the lookup, never to the text of the URL.
 

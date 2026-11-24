@@ -207,6 +207,9 @@ func (f *Fake) PruneVolumes(context.Context) (dockerc.PruneResult, error) {
 // subnet, else ErrBadName.
 func (f *Fake) CreateNetwork(_ context.Context, name string, internal bool, subnet string) (dockerc.Network, error) {
 	err := f.RecordObject("CreateNetwork", name, internal, subnet)
+	if err == nil && dockerc.ReservedNetworkName(name) {
+		err = dockerc.ErrBadName
+	}
 	if err == nil && subnet != "" {
 		if _, ok := dockerc.NormalizeSubnet(subnet); !ok {
 			err = dockerc.ErrBadName
