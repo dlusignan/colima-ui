@@ -222,6 +222,9 @@ func (m *Manager) pump(j *job, proc colima.Process) {
 	if nr, ok := proc.(interface{ NotRun() bool }); ok && nr.NotRun() {
 		j.mu.Lock()
 		j.notRun = true
+		if rr, ok := proc.(interface{ NotRunReason() string }); ok {
+			j.notRunReason = rr.NotRunReason()
+		}
 		j.mu.Unlock()
 	}
 	j.finish(state, code, exit.Tail, m.opts.Now())

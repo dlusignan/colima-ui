@@ -1,6 +1,7 @@
 package actionlog
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dlusignan/colima-ui/internal/operations"
@@ -40,11 +41,30 @@ func TestDeleteRowsNoteRuntimeData(t *testing.T) {
 }
 
 func TestRefusedDeleteRowSaysItDidNotRun(t *testing.T) {
-	s := summary(operations.ActionDelete, operations.StateFailed, intp(1))
-	s.NotRun = true
-	s.DeleteData = true
-	e, ok := entryForJob(s)
-	if !ok || e.Outcome != OutcomeFailed || e.Detail == nil || *e.Detail != "not run: profile was not stopped; with runtime data" {
-		t.Fatalf("%+v %v", e, ok)
+	for reason, want := range map[string]string{
+		"":                                "not run: profile state did not allow deleting",
+		"something else":                  "not run: profile state did not allow deleting",
+		operations.NotRunState:            "not run: profile state did not allow deleting",
+		operations.NotRunDockerNotEmpty:   "not run: docker not empty",
+		operations.NotRunDockerUnreadable: "not run: could not check docker contents",
+		operations.NotRunCannotVerify:     "not run: profile is stopped, docker contents cannot be checked",
+	} {
+		for _, data := range []bool{false, true} {
+			s := summary(operations.ActionDelete, operations.StateFailed, intp(1))
+			s.NotRun = true
+			s.NotRunReason = reason
+			s.DeleteData = data
+			e, ok := entryForJob(s)
+			w := want
+			if data {
+				w += "; with runtime data"
+			}
+			if !ok || e.Outcome != OutcomeFailed || e.Detail == nil || *e.Detail != w {
+				t.Fatalf("%q: %+v %v", reason, e, ok)
+			}
+			if strings.Contains(*e.Detail, "colima exited") {
+				t.Fatalf("%q: row claims colima ran", reason)
+			}
+		}
 	}
 }

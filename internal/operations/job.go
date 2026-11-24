@@ -37,7 +37,11 @@ type JobSummary struct {
 	// NotRun is set on a job whose process refused to run (a delete whose
 	// in-slot status check failed): colima never started, so exit codes in the
 	// summary say nothing about colima.
-	NotRun       bool
+	NotRun bool
+	// NotRunReason says why a NotRun job refused (one of the NotRun*
+	// constants); empty when NotRun is false. It is a fixed token, never text
+	// from Docker or Colima.
+	NotRunReason string
 	State        State
 	StartedAt    time.Time
 	FinishedAt   *time.Time
@@ -57,7 +61,9 @@ type job struct {
 	deleteData bool
 	// notRun mirrors JobSummary.NotRun, set before the final state.
 	notRun bool
-	cancel context.CancelFunc
+	// notRunReason mirrors JobSummary.NotRunReason.
+	notRunReason string
+	cancel       context.CancelFunc
 	// groupKey and dupKey are the task limits this job holds ("" for none).
 	groupKey string
 	dupKey   string
@@ -142,6 +148,7 @@ func (j *job) summary() JobSummary {
 		Subject:      j.subject,
 		DeleteData:   j.deleteData,
 		NotRun:       j.notRun,
+		NotRunReason: j.notRunReason,
 		State:        j.state,
 		StartedAt:    j.startedAt,
 		Output:       j.ring.after(0),

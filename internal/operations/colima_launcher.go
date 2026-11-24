@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
+	"github.com/dlusignan/colima-ui/internal/dockerc"
 )
 
 // ColimaLauncher runs requests through the colima adapter. Start uses empty
@@ -18,14 +19,24 @@ import (
 //
 // VMStatus is the live status read for a profile ("running", "stopped", ...).
 // A delete re-reads it inside the profile slot, after the route's own check,
-// because the route's read can be slow and the VM may have started meanwhile:
-// only "stopped" and "broken" pass, anything else ends as a failed job with a
-// closing line and colima is never run. A nil VMStatus skips the check (tests
-// of the argument vector); production wiring always sets it.
+// because the route's read can be slow and the VM may have changed meanwhile.
+// Only a broken VM, or a running one whose Docker engine holds nothing (or
+// that does not use Docker), may be deleted; anything else ends as a failed
+// job with a closing line and colima is never run. A nil VMStatus skips the
+// check (tests of the argument vector); production wiring always sets it.
+//
+// DockerContents counts the Docker objects of a running profile (applicable
+// is false for another runtime). A delete of a running profile counts again
+// inside the slot, just before colima runs, and fails closed: a nil hook, an
+// error or a VM that is no longer running means colima is not run. The count
+// and `colima delete` are not atomic, so a container created in between is
+// not seen.
 type ColimaLauncher struct {
 	S        colima.Streamer
 	Limits   colima.Limits
 	VMStatus func(ctx context.Context, profile string) (string, error)
+	// DockerContents is the in-slot count of a delete (see above).
+	DockerContents func(ctx context.Context, profile string) (c dockerc.Contents, applicable bool, err error)
 	// KubernetesEnabled reports whether the profile's configuration enables
 	// Kubernetes (the config service, never a YAML parse here). The Kubernetes
 	// actions fail closed: with VMStatus or KubernetesEnabled nil they never
@@ -33,21 +44,31 @@ type ColimaLauncher struct {
 	KubernetesEnabled func(profile string) (bool, error)
 }
 
-// statusTimeout bounds the in-slot status read of a delete.
-const statusTimeout = 15 * time.Second
+// statusTimeout bounds the in-slot status read of a delete, and contentsTimeout
+// its Docker count.
+const (
+	statusTimeout   = 15 * time.Second
+	contentsTimeout = 20 * time.Second
+)
 
-// deletableStatus is the allowlist of statuses a delete may start from.
-func deletableStatus(status string) bool {
-	switch strings.ToLower(status) {
-	case "stopped", "broken":
-		return true
-	}
-	return false
-}
+// Reasons a delete refused inside the slot (JobSummary.NotRunReason).
+const (
+	// NotRunState: the status no longer allowed a delete (for example starting).
+	NotRunState = "state"
+	// NotRunCannotVerify: the profile is stopped, so its Docker data cannot be read.
+	NotRunCannotVerify = "cannot_verify"
+	// NotRunDockerNotEmpty: the engine holds containers, images or volumes.
+	NotRunDockerNotEmpty = "docker_not_empty"
+	// NotRunDockerUnreadable: the count failed (or no count source was wired).
+	NotRunDockerUnreadable = "docker_unreadable"
+)
 
 // refusedProcess is a finished process that printed one line and failed, so a
 // refusal inside the slot shows up as a failed job with a readable log.
-type refusedProcess struct{ lines chan string }
+type refusedProcess struct {
+	lines  chan string
+	reason string
+}
 
 func newRefusedProcess(line string) *refusedProcess {
 	ch := make(chan string, 1)
@@ -55,6 +76,16 @@ func newRefusedProcess(line string) *refusedProcess {
 	close(ch)
 	return &refusedProcess{lines: ch}
 }
+
+// newRefusedDelete is a refusal with a reason token for the action log.
+func newRefusedDelete(reason, line string) *refusedProcess {
+	p := newRefusedProcess(line)
+	p.reason = reason
+	return p
+}
+
+// NotRunReason is the fixed reason token, copied to JobSummary.NotRunReason.
+func (p *refusedProcess) NotRunReason() string { return p.reason }
 
 func (p *refusedProcess) Lines() <-chan string { return p.lines }
 func (p *refusedProcess) Wait() (colima.Exit, error) {
@@ -77,11 +108,48 @@ func (l ColimaLauncher) launchDelete(ctx context.Context, r Request) (colima.Pro
 		if err != nil {
 			return nil, fmt.Errorf("operations: status before delete: %w", err)
 		}
-		if !deletableStatus(status) {
-			return newRefusedProcess("Not deleted: the profile is not stopped. Stop it, then delete it again."), nil
+		if p := l.refuseDelete(ctx, r.Profile, status); p != nil {
+			return p, nil
 		}
 	}
 	return colima.Delete(ctx, l.S, r.Profile, r.DeleteData)
+}
+
+// refuseDelete returns a refusal for a delete that must not run, or nil when it
+// may. The allowlist: broken passes; running passes only when Docker holds
+// nothing (or is not the runtime); stopped, starting, unknown and anything
+// else is refused.
+func (l ColimaLauncher) refuseDelete(ctx context.Context, profile, status string) *refusedProcess {
+	switch strings.ToLower(status) {
+	case "broken":
+		return nil
+	case "stopped":
+		return newRefusedDelete(NotRunCannotVerify,
+			"Not deleted: the profile is stopped, so what Docker holds cannot be checked. Start it, remove its containers, images and volumes, then delete it again.")
+	case "running":
+	default:
+		return newRefusedDelete(NotRunState,
+			"Not deleted: the profile is not running or broken. Wait for it to settle, then delete it again.")
+	}
+	unreadable := newRefusedDelete(NotRunDockerUnreadable,
+		"Not deleted: could not check what Docker holds in this profile. Try again.")
+	if l.DockerContents == nil {
+		return unreadable
+	}
+	cctx, cancel := context.WithTimeout(ctx, contentsTimeout)
+	defer cancel()
+	counts, applicable, err := l.DockerContents(cctx, profile)
+	switch {
+	case errors.Is(err, dockerc.ErrVMNotRunning):
+		return newRefusedDelete(NotRunCannotVerify,
+			"Not deleted: the profile stopped, so what Docker holds cannot be checked. Start it, then delete it again.")
+	case err != nil:
+		return unreadable
+	case applicable && !counts.Empty():
+		return newRefusedDelete(NotRunDockerNotEmpty,
+			"Not deleted: Docker in this profile still holds containers, images or volumes. Remove them, then delete it again.")
+	}
+	return nil
 }
 
 // Launch implements Launcher.

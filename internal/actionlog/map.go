@@ -41,7 +41,7 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 		e.Outcome = OutcomeFailed
 		if s.NotRun {
 			// Colima never started, so its exit status would be a lie.
-			detail = "not run: profile was not stopped"
+			detail = notRunDeleteDetail(s.NotRunReason)
 			if s.Action.IsKubernetes() {
 				detail = "not run: profile was not running or Kubernetes is not enabled"
 			}
@@ -69,6 +69,20 @@ func entryForJob(s operations.JobSummary) (e store.ActionEntry, ok bool) {
 		e.Detail = &detail
 	}
 	return e, true
+}
+
+// notRunDeleteDetail says why a delete never ran colima. The reason is a fixed
+// token set by the launcher, so the row never holds text from Docker or Colima.
+func notRunDeleteDetail(reason string) string {
+	switch reason {
+	case operations.NotRunDockerNotEmpty:
+		return "not run: docker not empty"
+	case operations.NotRunDockerUnreadable:
+		return "not run: could not check docker contents"
+	case operations.NotRunCannotVerify:
+		return "not run: profile is stopped, docker contents cannot be checked"
+	}
+	return "not run: profile state did not allow deleting"
 }
 
 // kubernetesDetail names the verb in the row ("kubernetes reset: ...") and

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
+	"github.com/dlusignan/colima-ui/internal/dockerc"
 )
 
 // argsStreamer is a colima.Streamer fake: no binary is ever run.
@@ -133,16 +134,23 @@ func TestColimaLauncherDeleteArgv(t *testing.T) {
 	}
 }
 
+func emptyDocker(context.Context, string) (dockerc.Contents, bool, error) {
+	return dockerc.Contents{}, true, nil
+}
+
 func TestColimaLauncherDeleteRechecksStatusInsideTheSlot(t *testing.T) {
 	for _, c := range []struct {
 		status string
 		runs   bool
+		reason string
 	}{
-		{"stopped", true}, {"Broken", true},
-		{"running", false}, {"Running", false}, {"starting", false}, {"unknown", false}, {"", false},
+		{"Broken", true, ""}, {"broken", true, ""}, {"running", true, ""}, {"Running", true, ""},
+		{"stopped", false, NotRunCannotVerify}, {"Stopped", false, NotRunCannotVerify},
+		{"starting", false, NotRunState}, {"unknown", false, NotRunState}, {"", false, NotRunState},
 	} {
 		s := &argsStreamer{}
-		l := ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return c.status, nil }}
+		l := ColimaLauncher{S: s, DockerContents: emptyDocker,
+			VMStatus: func(context.Context, string) (string, error) { return c.status, nil }}
 		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev", DeleteData: true})
 		if err != nil {
 			t.Fatalf("%q: %v", c.status, err)
@@ -151,15 +159,127 @@ func TestColimaLauncherDeleteRechecksStatusInsideTheSlot(t *testing.T) {
 			t.Fatalf("%q: streamer calls %v, want run=%v", c.status, s.args, c.runs)
 		}
 		if !c.runs {
-			var lines []string
-			for l := range p.Lines() {
-				lines = append(lines, l)
+			refusedLines(t, c.status, p, c.reason)
+		}
+	}
+}
+
+// refusedLines drains a refused process and checks it printed one line, failed,
+// carries the reason token and says it never ran colima.
+func refusedLines(t *testing.T, label string, p colima.Process, reason string) {
+	t.Helper()
+	var lines []string
+	for l := range p.Lines() {
+		lines = append(lines, l)
+	}
+	exit, werr := p.Wait()
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "Not deleted") || exit.ExitCode != 1 || werr != nil {
+		t.Fatalf("%q: lines %v exit %+v %v", label, lines, exit, werr)
+	}
+	nr, ok := p.(interface {
+		NotRun() bool
+		NotRunReason() string
+	})
+	if !ok || !nr.NotRun() || nr.NotRunReason() != reason {
+		t.Fatalf("%q: not-run marker %v reason %q, want %q", label, ok, nr.NotRunReason(), reason)
+	}
+	p.Cancel()
+}
+
+func TestColimaLauncherDeleteCountsDockerInsideTheSlot(t *testing.T) {
+	running := func(context.Context, string) (string, error) { return "running", nil }
+	for _, c := range []struct {
+		name   string
+		hook   func(context.Context, string) (dockerc.Contents, bool, error)
+		runs   bool
+		reason string
+	}{
+		{"empty", emptyDocker, true, ""},
+		{"not docker", func(context.Context, string) (dockerc.Contents, bool, error) { return dockerc.Contents{}, false, nil }, true, ""},
+		{"container", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{Containers: 1}, true, nil
+		}, false, NotRunDockerNotEmpty},
+		{"image", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{Images: 1}, true, nil
+		}, false, NotRunDockerNotEmpty},
+		{"volume", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{Volumes: 1}, true, nil
+		}, false, NotRunDockerNotEmpty},
+		{"read error", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{}, false, errors.New("boom")
+		}, false, NotRunDockerUnreadable},
+		{"docker unavailable", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{}, false, dockerc.ErrDockerUnavailable
+		}, false, NotRunDockerUnreadable},
+		{"vm stopped meanwhile", func(context.Context, string) (dockerc.Contents, bool, error) {
+			return dockerc.Contents{}, false, dockerc.ErrVMNotRunning
+		}, false, NotRunCannotVerify},
+		{"no hook wired", nil, false, NotRunDockerUnreadable},
+	} {
+		s := &argsStreamer{}
+		l := ColimaLauncher{S: s, VMStatus: running, DockerContents: c.hook}
+		p, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if (len(s.args) == 1) != c.runs {
+			t.Fatalf("%s: streamer calls %v, want run=%v", c.name, s.args, c.runs)
+		}
+		if !c.runs {
+			refusedLines(t, c.name, p, c.reason)
+		}
+	}
+}
+
+// A broken VM is deleted without reading Docker.
+func TestColimaLauncherDeleteBrokenSkipsTheCount(t *testing.T) {
+	s := &argsStreamer{}
+	l := ColimaLauncher{S: s,
+		VMStatus: func(context.Context, string) (string, error) { return "broken", nil },
+		DockerContents: func(context.Context, string) (dockerc.Contents, bool, error) {
+			t.Fatal("docker read for a broken profile")
+			return dockerc.Contents{}, false, nil
+		}}
+	if _, err := l.Launch(context.Background(), Request{Action: ActionDelete, Profile: "dev"}); err != nil || len(s.args) != 1 {
+		t.Fatalf("err %v args %v", err, s.args)
+	}
+}
+
+// The route saw an empty engine; a container appears before the slot count.
+// Through the manager the job fails, colima never starts, and the summary says
+// why.
+func TestDeleteRefusedWhenDockerFlipsBetweenRouteAndSlot(t *testing.T) {
+	s := &argsStreamer{}
+	var reads int
+	hook := func(context.Context, string) (dockerc.Contents, bool, error) {
+		reads++
+		if reads == 1 { // the route's read
+			return dockerc.Contents{}, true, nil
+		}
+		return dockerc.Contents{Containers: 1}, true, nil
+	}
+	if c, ok, _ := hook(context.Background(), "dev"); !c.Empty() || !ok {
+		t.Fatal("first read must be empty")
+	}
+	m := New(Options{Launcher: ColimaLauncher{S: s, DockerContents: hook,
+		VMStatus: func(context.Context, string) (string, error) { return "running", nil }}})
+	sum, err := m.Submit(Request{Action: ActionDelete, Profile: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.After(5 * time.Second)
+	for {
+		got, _ := m.Get(sum.ID)
+		if got.State == StateFailed {
+			if !got.NotRun || got.NotRunReason != NotRunDockerNotEmpty || len(s.args) != 0 {
+				t.Fatalf("summary %+v args %v", got, s.args)
 			}
-			exit, werr := p.Wait()
-			if len(lines) != 1 || !strings.Contains(lines[0], "not stopped") || exit.ExitCode != 1 || werr != nil {
-				t.Fatalf("%q: lines %v exit %+v %v", c.status, lines, exit, werr)
-			}
-			p.Cancel()
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("state %s", got.State)
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
 }
@@ -179,7 +299,7 @@ func TestColimaLauncherDeleteStatusErrorStartsNothing(t *testing.T) {
 // released, so the user can stop the profile and try again.
 func TestRefusedDeleteIsAFailedJob(t *testing.T) {
 	s := &argsStreamer{}
-	m := New(Options{Launcher: ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return "running", nil }}})
+	m := New(Options{Launcher: ColimaLauncher{S: s, VMStatus: func(context.Context, string) (string, error) { return "stopped", nil }}})
 	sum, err := m.Submit(Request{Action: ActionDelete, Profile: "dev"})
 	if err != nil {
 		t.Fatal(err)
