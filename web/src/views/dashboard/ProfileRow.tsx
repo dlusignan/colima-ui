@@ -1,5 +1,4 @@
 import { Link } from 'react-router-dom'
-import { Button } from '@/components/ui/button'
 import { StatusDot } from '@/components/StatusDot'
 import { formatBytes } from '@/lib/format'
 import type { JobAction, Profile, ProfileAction } from '@/lib/api/types'
@@ -36,14 +35,12 @@ interface ProfileRowProps {
   pending: boolean
   unavailable: boolean
   onAction: (action: ProfileAction) => void
-  onDismiss: () => void
 }
 
-export function ProfileRow({ profile, job, pending, unavailable, onAction, onDismiss }: ProfileRowProps) {
+export function ProfileRow({ profile, job, pending, unavailable, onAction }: ProfileRowProps) {
   const running = job?.state === 'running'
   const busy = pending || running || profile.activeJobId != null
   const label = running && job ? PROGRESS[job.action] : undefined
-  const finished = job && job.state !== 'running' ? job : undefined
   const logJobId = job?.jobId ?? profile.activeJobId
 
   return (
@@ -55,23 +52,6 @@ export function ProfileRow({ profile, job, pending, unavailable, onAction, onDis
       </th>
       <td className="px-3 py-2">
         <StatusDot status={profile.status} label={label} />
-        {finished && (
-          <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-            <span>
-              {finished.action} {finished.state}
-              {finished.exitCode != null && finished.state === 'failed' ? ` (exit ${finished.exitCode})` : ''}
-            </span>
-            <Button
-              size="xs"
-              variant="ghost"
-              focusableWhenDisabled
-              aria-label={`Dismiss ${profile.name} outcome`}
-              onClick={onDismiss}
-            >
-              Dismiss
-            </Button>
-          </div>
-        )}
       </td>
       <td className="px-3 py-2 font-mono">{profile.runtime || '—'}</td>
       <td className="px-3 py-2 font-mono">{orDash(profile.cpus, String)}</td>
@@ -96,7 +76,7 @@ export function ProfileRow({ profile, job, pending, unavailable, onAction, onDis
       <td className="px-3 py-2">
         <div className="flex items-center gap-2">
           <ProfileActions profile={profile} busy={busy} unavailable={unavailable} onAction={onAction} />
-          {(running || finished || profile.activeJobId) && (
+          {(job || profile.activeJobId) && (
             <Link
               className="text-xs underline underline-offset-4"
               to={logPath(profile.name, logJobId)}

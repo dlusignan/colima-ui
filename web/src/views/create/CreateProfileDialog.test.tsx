@@ -9,6 +9,7 @@ import { expectNoA11yViolations } from '@/test/axe'
 import { profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
 import { DashboardView } from '@/views/dashboard/DashboardView'
+import { ToastProvider } from '@/lib/toast/ToastProvider'
 import { CreateProfileProvider } from './CreateProfileProvider'
 
 afterEach(() => vi.restoreAllMocks())
@@ -25,13 +26,15 @@ function setup() {
   const view = render(
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter>
-        <CreateProfileProvider>
-          <Routes>
-            <Route path="/" element={<DashboardView />} />
-            <Route path="*" element={<p>other page</p>} />
-          </Routes>
-          <Where />
-        </CreateProfileProvider>
+        <ToastProvider>
+          <CreateProfileProvider>
+            <Routes>
+              <Route path="/" element={<DashboardView />} />
+              <Route path="*" element={<p>other page</p>} />
+            </Routes>
+            <Where />
+          </CreateProfileProvider>
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )

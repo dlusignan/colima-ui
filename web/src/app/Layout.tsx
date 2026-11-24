@@ -4,6 +4,7 @@ import { CommandPalette } from '@/components/CommandPalette'
 import { ShortcutsDialog } from '@/components/ShortcutsDialog'
 import { Button } from '@/components/ui/button'
 import { ThemeSwitcher } from '@/components/ThemeSwitcher'
+import { JobOutcomeToasts } from '@/lib/jobs/JobOutcomeToasts'
 import { EventStreamProvider } from '@/lib/events/EventStreamProvider'
 import { Toaster } from '@/lib/toast/Toaster'
 import { ToastProvider } from '@/lib/toast/ToastProvider'
@@ -41,6 +42,7 @@ export function Layout() {
           <AuthGate>
             <EventStreamProvider>
               <CreateProfileProvider>
+                <JobOutcomeToasts />
                 <CommandPalette onOpenHelp={() => setHelpOpen(true)} />
                 <ErrorBoundary key={pathname}>
                   <Outlet />

@@ -9,6 +9,8 @@ import type { Profile } from '@/lib/api/types'
 import { expectNoA11yViolations } from '@/test/axe'
 import { jobFixture, profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
+import { Toaster } from '@/lib/toast/Toaster'
+import { ToastProvider } from '@/lib/toast/ToastProvider'
 import { ProfileView } from './ProfileView'
 
 afterEach(() => vi.restoreAllMocks())
@@ -26,9 +28,12 @@ function setup(profiles: Profile[] | Error, at = '/profiles/dev') {
   const view = render(
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter initialEntries={[at]}>
-        <Routes>
-          <Route path="/profiles/:name" element={<ProfileView />} />
-        </Routes>
+        <ToastProvider>
+          <Routes>
+            <Route path="/profiles/:name" element={<ProfileView />} />
+          </Routes>
+          <Toaster />
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -153,27 +158,36 @@ describe('controls', () => {
     await waitFor(() => expect(restart).toHaveBeenCalledWith('dev'))
   })
 
-  it('shows an error that can be dismissed', async () => {
+  it('shows an error toast and no inline error box', async () => {
     vi.spyOn(api, 'startProfile').mockRejectedValue(new ApiError(409, 'invalid_state', 'x', { status: 'running' }))
     const { user } = setup([stopped])
     await user.click(await screen.findByRole('button', { name: 'Start dev' }))
-    const alert = await screen.findByText('dev is already running.')
-    expect(alert).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /dismiss error/i }))
-    expect(screen.queryByText('dev is already running.')).not.toBeInTheDocument()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('dev is already running.')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('region', { name: 'Notifications' })).toContainElement(alert)
+    expect(screen.queryByRole('button', { name: /dismiss error/i })).not.toBeInTheDocument()
   })
 
-  it('holds a failed outcome with a dismiss button', async () => {
+  it('profile_busy shows the busy message as an error toast', async () => {
+    vi.spyOn(api, 'startProfile').mockRejectedValue(new ApiError(409, 'profile_busy', 'x', { jobId: 'j_9' }))
+    vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_9', profile: 'dev', action: 'restart' }))
+    const { user } = setup([stopped])
+    await user.click(await screen.findByRole('button', { name: 'Start dev' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Another job is already running on dev.')
+    expect(screen.queryByRole('button', { name: /dismiss error/i })).not.toBeInTheDocument()
+  })
+
+  it('adds no outcome line under the status when a job fails', async () => {
     vi.spyOn(api, 'startProfile').mockResolvedValue({ jobId: 'j_2' })
     vi.spyOn(api, 'getJob').mockResolvedValue(
       jobFixture({ id: 'j_2', profile: 'dev', action: 'start', state: 'failed', exitCode: 1 }),
     )
     const { user } = setup([stopped])
     await user.click(await screen.findByRole('button', { name: 'Start dev' }))
-    expect(await screen.findByText(/start failed \(exit 1\)/, {}, { timeout: 4000 })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open log' })).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Dismiss dev outcome' }))
-    expect(screen.queryByText(/start failed \(exit/)).not.toBeInTheDocument()
+    expect(await screen.findByRole('link', { name: 'Open log' }, { timeout: 4000 })).toBeInTheDocument()
+    expect(screen.queryByText(/start failed/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /outcome/i })).not.toBeInTheDocument()
   }, 10_000)
 })
 
