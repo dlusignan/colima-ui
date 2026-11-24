@@ -113,11 +113,11 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`; the network routes (3.22 to 3.25) use `name`, `subnet`, `network` (the path parameter) and `confirm`; the image routes (3.26 to 3.29) use `image` (the path parameter), `repository`, `tag` and `confirm`. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
+For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.21) use `name`, `labels`, `volume` (the path parameter) and `confirm`; the network routes (3.22 to 3.25) use `name`, `subnet`, `network` (the path parameter) and `confirm`; the image routes (3.26 to 3.29) use `image` (the path parameter), `repository`, `tag` and `confirm`; the container action routes (3.36) use `id` (the path parameter). Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
 
 ## 3. Routes
 
-There are 41 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 44 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -154,6 +154,9 @@ There are 41 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `POST` | `/api/profiles/{name}/networks/prune` | Remove all unused networks; needs a confirmation text (3.25) |
 | `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
+| `POST` | `/api/profiles/{name}/containers/{id}/start` | Start a stopped container (3.36) |
+| `POST` | `/api/profiles/{name}/containers/{id}/stop` | Stop a running container with Docker's default grace period (3.36) |
+| `POST` | `/api/profiles/{name}/containers/{id}/restart` | Restart a container with Docker's default grace period (3.36) |
 | `GET` | `/api/profiles/{name}/actions` | Recent action log entries |
 | `GET` | `/api/profiles/{name}/ssh-config` | SSH settings of a profile's VM (3.31) |
 | `GET` | `/api/profiles/{name}/kubernetes` | Whether Kubernetes is enabled in a running profile's configuration (3.33) |
@@ -487,7 +490,7 @@ Response `200`, newest first:
 }
 ```
 
-- `action` is a string such as `start`, `stop`, `restart`, `delete`, `create`, `config_change`, `docker.image.pull` or `kubernetes-reset`. Clients must tolerate new values. The `detail` of a Kubernetes row names the verb (`kubernetes reset`, `kubernetes stop: colima exited with status 1`); a reset or delete that was cancelled or failed after colima ran adds `; the cluster may be partly changed`, and one that never ran says `not run: profile was not running or Kubernetes is not enabled`.
+- `action` is a string such as `start`, `stop`, `restart`, `delete`, `create`, `config_change`, `docker.image.pull`, `docker.container.restart` or `kubernetes-reset`. Clients must tolerate new values. The `detail` of a Kubernetes row names the verb (`kubernetes reset`, `kubernetes stop: colima exited with status 1`); a reset or delete that was cancelled or failed after colima ran adds `; the cluster may be partly changed`, and one that never ran says `not run: profile was not running or Kubernetes is not enabled`.
 - `outcome` is `success`, `failed` or `cancelled`.
 - `detail` is a short string or `null`.
 - Entries carry no job id. Finished job output is not kept across a restart (see the C4 decisions table), so there is nothing to reopen.
@@ -1389,9 +1392,39 @@ Errors:
 
 Order of checks: body shape (400), confirmation (422), then the job is submitted and the create/start check and the single-prune check happen together (409). Colima is not run before every check has passed.
 
+### 3.36 `POST /api/profiles/{name}/containers/{id}/{start|stop|restart}`
+
+Token: yes. Starts, stops or restarts one container. It follows the Docker write rules in 1.3 (profile, busy check, body, validation, one fixed Docker call, action log row) with these specifics.
+
+1. **No body.** The request carries no data. An empty body is the only accepted one: a body of any kind, `{}` included, is `400 bad_request`, and the retry is the same request.
+2. **The id.** `{id}` is a container id of 12 to 64 lowercase hex characters, as the `id` field of 3.10 (12 characters) or the full id. A container name, anything uppercase, anything shorter or longer, and any character that is not `0-9a-f` is `422 invalid_request` with `details.fields.id`, before Docker is contacted. The request text is never echoed. A short id is a prefix on Docker's side. Docker's `404` (nothing matches) and `400` (no single container is meant, for example an ambiguous prefix) are both `404 not_found` here.
+3. **The call.** `POST /containers/{id}/start`, `/stop` or `/restart` on the pinned API v1.41, with no query: stop and restart send no `t` parameter, so Docker applies the container's own stop timeout, 10 seconds unless the container sets another. The route has a 60 second budget. The client cannot change the grace period.
+4. **The answer.** Docker's `204` means it did the work and Docker's `304` means the container was already in that state (start on a running container, stop on a stopped one). Restart has no already-state, so a successful restart is always `changed: true`.
+
+Response `200`:
+
+```json
+{ "changed": true }
+```
+
+`changed` is `false` for the `304` case: the request succeeded and nothing changed.
+
+Errors, on top of the shared ones of 1.3:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `404` | `not_found` | Docker does not know the id (`details.name` is the validated id), including an id that matches more than one container |
+| `409` | `conflict` | Docker refused because of the container's state, for example start on a paused container (`details.name` is the validated id) |
+| `409` | `invalid_state` | The VM is not running (`details.status`), or the profile does not use Docker (`details.runtime`) |
+| `409` | `profile_busy` | A start, stop or restart job is running on the profile (advisory, see 1.3) |
+| `422` | `invalid_request` | The id is not a container id (`details.fields.id`) |
+| `502` | `docker_unavailable` | The socket is missing or not answering, Docker answered with an error, or it did not answer in time |
+
+Docker's error text is never returned. One action log row is written per request that reaches Docker, with the action `docker.container.start`, `docker.container.stop` or `docker.container.restart`, and as `detail` the first 12 characters of the id followed by `changed=true` or `changed=false`. The `304` case is a `success` row with `changed=false`; a failure of any kind is a `failed` row with `changed=false`, which as in 1.3 does not prove that nothing happened after a timeout or a dropped socket. A refused request (steps 1 to 4 of 1.3, a body, an invalid id) writes no row.
+
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands (the Kubernetes routes of 3.34 run four fixed verbs, and none of them enables or configures Kubernetes), container control, profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32), and Colima's download cache can be cleared (3.35), but no other Colima maintenance command (`template`, `update` of the Colima binary itself) is reachable. Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands (the Kubernetes routes of 3.34 run four fixed verbs, and none of them enables or configures Kubernetes), container control other than start, stop and restart (3.36), profile renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be renamed here (Colima has no rename); a whole profile can be deleted (3.32), and Colima's download cache can be cleared (3.35), but no other Colima maintenance command (`template`, `update` of the Colima binary itself) is reachable. Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. Volumes can be created, inspected, removed and pruned (3.18 to 3.21), but volume drivers, driver options, copying data in or out, and the volume's host path are not available. Networks can be created (bridge driver only), inspected, removed and pruned (3.22 to 3.25), but other drivers, driver and IPAM options beyond one subnet, and connecting or disconnecting containers are not available. Images can be tagged, inspected, removed, pruned (3.26 to 3.29) and pulled by tag or digest from public registries (3.30), but push, save, load, import, build, registry login and credentials (private registries), pulling every tag of a repository, and choosing a platform are not available. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 

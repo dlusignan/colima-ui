@@ -249,6 +249,15 @@ export interface CachePruneAccepted extends JobRef {
   state: 'running'
 }
 
+/**
+ * The 200 answer of `POST /api/profiles/{name}/containers/{id}/{start|stop|restart}`
+ * (docs/api.md 3.36). `changed` is false when Docker said the container was
+ * already in that state.
+ */
+export interface ContainerActionResult {
+  changed: boolean
+}
+
 /** Body of `POST /api/profiles/{name}/images/{image}/tag`. Both fields are required. */
 export interface TagImageRequest {
   /** No tag, no digest; a registry host and path are allowed (docs/api.md 3.26). */
