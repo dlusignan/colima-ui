@@ -41,4 +41,32 @@ describe('ProfileActions', () => {
       unmount()
     }
   })
+
+  it('update runtime shows only when asked, is enabled only when running and confirms first', async () => {
+    const onAction = vi.fn()
+    const { rerender } = render(
+      <ProfileActions profile={profileFixture({ name: 'dev' })} busy={false} unavailable={false} onAction={onAction} />,
+    )
+    expect(screen.queryByRole('button', { name: 'Update runtime dev' })).toBeNull()
+
+    rerender(
+      <ProfileActions profile={profileFixture({ name: 'dev', status: 'stopped' })} busy={false} unavailable={false} onAction={onAction} showUpdate />,
+    )
+    expect(off('Update runtime dev')).toBe(true)
+
+    rerender(
+      <ProfileActions profile={profileFixture({ name: 'dev', status: 'running' })} busy unavailable={false} onAction={onAction} showUpdate />,
+    )
+    expect(off('Update runtime dev')).toBe(true)
+
+    rerender(
+      <ProfileActions profile={profileFixture({ name: 'dev', status: 'running' })} busy={false} unavailable={false} onAction={onAction} showUpdate />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Update runtime dev' }))
+    expect(onAction).not.toHaveBeenCalled()
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog).toHaveTextContent('containers may restart briefly')
+    await userEvent.click(screen.getByRole('button', { name: 'Update runtime' }))
+    expect(onAction).toHaveBeenCalledWith('update')
+  })
 })

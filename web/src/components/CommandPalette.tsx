@@ -28,8 +28,8 @@ interface ActionRequest {
   action: ProfileAction
 }
 
-const VERB: Record<ProfileAction, string> = { start: 'Starting', stop: 'Stopping', restart: 'Restarting' }
-const LABEL: Record<ProfileAction, string> = { start: 'Start', stop: 'Stop', restart: 'Restart' }
+const VERB: Record<ProfileAction, string> = { start: 'Starting', stop: 'Stopping', restart: 'Restarting', update: 'Updating' }
+const LABEL: Record<ProfileAction, string> = { start: 'Start', stop: 'Stop', restart: 'Restart', update: 'Update runtime' }
 
 /**
  * Runs the latest request for one profile. It stays mounted after the request:
@@ -77,7 +77,7 @@ export function CommandPalette({ onOpenHelp }: { onOpenHelp: () => void }) {
 
   const [open, setOpen] = useState(false)
   const [pick, setPick] = useState<ProfileAction | null>(null)
-  const [confirm, setConfirm] = useState<{ profile: string; action: 'stop' | 'restart' } | null>(null)
+  const [confirm, setConfirm] = useState<{ profile: string; action: 'stop' | 'restart' | 'update' } | null>(null)
   const [requests, setRequests] = useState<Record<string, ActionRequest>>({})
   const [failures, setFailures] = useState<Failure[]>([])
   const [announcement, setAnnouncement] = useState('')

@@ -54,7 +54,7 @@ var jobIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // WithJobs registers the operation routes:
 //
-//	POST /api/profiles/{name}/start|stop|restart
+//	POST /api/profiles/{name}/start|stop|restart|update
 //	GET  /api/jobs/{id}
 //	POST /api/jobs/{id}/cancel
 func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
@@ -63,6 +63,7 @@ func WithJobs(mgr JobsDeps, gate ProfileGate) Option {
 		rt.Handle("POST /api/profiles/{name}/start", j.action(operations.ActionStart))
 		rt.Handle("POST /api/profiles/{name}/stop", j.action(operations.ActionStop))
 		rt.Handle("POST /api/profiles/{name}/restart", j.action(operations.ActionRestart))
+		rt.Handle("POST /api/profiles/{name}/update", j.action(operations.ActionUpdate))
 		rt.Handle("GET /api/jobs/{id}", j.get)
 		rt.Handle("POST /api/jobs/{id}/cancel", j.cancel)
 	}
@@ -106,6 +107,10 @@ func (j *jobRoutes) action(act operations.Action) apiHandler {
 			(act == operations.ActionStop && status == "stopped") {
 			return newAPIError(http.StatusConflict, "invalid_state",
 				"The profile is already "+status+".", map[string]any{"status": status})
+		}
+
+		if act == operations.ActionUpdate && status != "running" {
+			return notRunning(status)
 		}
 
 		sum, err := j.mgr.Submit(operations.Request{Action: act, Profile: name})

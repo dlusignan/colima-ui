@@ -82,7 +82,7 @@ export interface ProfileCreated {
 }
 
 /** What a profile's buttons can start. */
-export type ProfileAction = 'start' | 'stop' | 'restart'
+export type ProfileAction = 'start' | 'stop' | 'restart' | 'update'
 /**
  * What a job can be doing: a profile action, creating the profile (POST
  * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's

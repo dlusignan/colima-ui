@@ -26,6 +26,8 @@ func (l ColimaLauncher) Launch(ctx context.Context, r Request) (colima.Process, 
 		return colima.Stop(ctx, l.S, r.Profile, false)
 	case ActionRestart:
 		return colima.Restart(ctx, l.S, r.Profile, false)
+	case ActionUpdate:
+		return colima.Update(ctx, l.S, r.Profile)
 	}
 	return nil, ErrUnknownAction
 }

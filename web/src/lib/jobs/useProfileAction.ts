@@ -11,6 +11,8 @@ function call(action: ProfileAction, name: string): Promise<JobRef> {
       return api.stopProfile(name)
     case 'restart':
       return api.restartProfile(name)
+    case 'update':
+      return api.updateProfile(name)
   }
 }
 

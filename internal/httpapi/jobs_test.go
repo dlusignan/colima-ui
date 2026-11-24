@@ -112,6 +112,7 @@ func TestJobRoutesNeedToken(t *testing.T) {
 		{"POST", "/api/profiles/default/start"},
 		{"POST", "/api/profiles/default/stop"},
 		{"POST", "/api/profiles/default/restart"},
+		{"POST", "/api/profiles/default/update"},
 		{"GET", "/api/jobs/j_1"},
 		{"POST", "/api/jobs/j_1/cancel"},
 	} {
@@ -141,6 +142,7 @@ func TestActionAccepted(t *testing.T) {
 		{"stop", operations.ActionStop, "broken"},
 		{"restart", operations.ActionRestart, "running"},
 		{"restart", operations.ActionRestart, "stopped"},
+		{"update", operations.ActionUpdate, "running"},
 	} {
 		t.Run(c.path+" from "+c.status, func(t *testing.T) {
 			m, g := &fakeMgr{}, &fakeGate{status: c.status}
@@ -193,6 +195,25 @@ func TestActionInvalidState(t *testing.T) {
 			t.Fatal("submit called on invalid state")
 		}
 	}
+}
+
+func TestUpdateRefusedUnlessRunning(t *testing.T) {
+	for _, status := range []string{"stopped", "broken", "unknown"} {
+		m, g := &fakeMgr{}, &fakeGate{status: status}
+		w := wantErr(t, call(t, jobsServer(m, g), "POST", "/api/profiles/dev/update", ""), 409, "invalid_state")
+		if w.Error.Details["status"] != status {
+			t.Fatalf("details %v", w.Error.Details)
+		}
+		if len(m.submitReq) != 0 {
+			t.Fatal("submit called for a profile that is not running")
+		}
+	}
+}
+
+func TestUpdateBusyAndUnknownProfile(t *testing.T) {
+	m := &fakeMgr{busy: func(string) (string, bool) { return "j_run", true }}
+	wantErr(t, call(t, jobsServer(m, &fakeGate{status: "running"}), "POST", "/api/profiles/dev/update", ""), 409, "profile_busy")
+	wantErr(t, call(t, jobsServer(&fakeMgr{}, &fakeGate{err: ErrProfileNotFound}), "POST", "/api/profiles/dev/update", ""), 404, "profile_not_found")
 }
 
 func TestBusyComesBeforeInvalidState(t *testing.T) {
