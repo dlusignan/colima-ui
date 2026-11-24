@@ -9,6 +9,8 @@ import type { Profile } from '@/lib/api/types'
 import { expectNoA11yViolations } from '@/test/axe'
 import { jobFixture, profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
+import { Toaster } from '@/lib/toast/Toaster'
+import { ToastProvider } from '@/lib/toast/ToastProvider'
 import { CreateProfileProvider } from '@/views/create/CreateProfileProvider'
 import { DashboardView } from './DashboardView'
 
@@ -21,9 +23,12 @@ function setup(profiles: Profile[] | Error) {
   const view = render(
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter>
-        <CreateProfileProvider>
-          <DashboardView />
-        </CreateProfileProvider>
+        <ToastProvider>
+          <CreateProfileProvider>
+            <DashboardView />
+          </CreateProfileProvider>
+          <Toaster />
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
@@ -131,7 +136,7 @@ describe('actions', () => {
     await waitFor(() => expect(stop).toHaveBeenCalledWith('dev'))
   })
 
-  it('invalid_state shows a dismissible error and refreshes the list', async () => {
+  it('invalid_state shows an error toast, no inline box, and refreshes the list', async () => {
     vi.spyOn(api, 'startProfile').mockRejectedValue(
       new ApiError(409, 'invalid_state', 'x', { status: 'running' }),
     )
@@ -139,9 +144,10 @@ describe('actions', () => {
     await user.click(await screen.findByRole('button', { name: 'Start prod' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('prod is already running.')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.queryByRole('button', { name: /dismiss error/i })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Notifications' })).toContainElement(alert)
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-    await user.click(within(alert).getByRole('button', { name: /dismiss error/i }))
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   it('profile_busy adopts the running job', async () => {
@@ -153,9 +159,10 @@ describe('actions', () => {
     await user.click(await screen.findByRole('button', { name: 'Start prod' }))
     expect(await screen.findByText('restarting')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Log prod' })).toHaveAttribute('href', '/profiles/prod/log?job=j_9')
+    expect(await screen.findByRole('alert')).toHaveTextContent('Another job is already running on prod.')
   })
 
-  it('shows the progress label of a create job and holds its failed outcome', async () => {
+  it('shows the progress label of a create job and adds no outcome text to the row', async () => {
     vi.spyOn(api, 'startProfile').mockRejectedValue(
       new ApiError(409, 'profile_busy', 'x', { jobId: 'j_c' }),
     )
@@ -167,10 +174,11 @@ describe('actions', () => {
     const { user } = setup([stopped])
     await user.click(await screen.findByRole('button', { name: 'Start prod' }))
     expect(await screen.findByText('creating')).toBeInTheDocument()
-    expect(await screen.findByText(/create failed \(exit 1\)/, {}, { timeout: 4000 })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('creating')).not.toBeInTheDocument(), { timeout: 4000 })
+    expect(screen.queryByText(/create failed/)).not.toBeInTheDocument()
   }, 10_000)
 
-  it('refetches the list when a job finishes and holds a failed outcome', async () => {
+  it('refetches the list when a job finishes and adds nothing under the status', async () => {
     vi.spyOn(api, 'startProfile').mockResolvedValue({ jobId: 'j_2' })
     const get = vi
       .spyOn(api, 'getJob')
@@ -180,13 +188,13 @@ describe('actions', () => {
       )
     const { user, list } = setup([stopped])
     await user.click(await screen.findByRole('button', { name: 'Start prod' }))
-    expect(await screen.findByText(/start failed \(exit 1\)/, {}, { timeout: 4000 })).toBeInTheDocument()
+    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 4000 })
     expect(get).toHaveBeenCalled()
-    await waitFor(() => expect(list.mock.calls.length).toBeGreaterThanOrEqual(3))
+    expect(screen.queryByText(/start failed/)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /outcome/i })).not.toBeInTheDocument()
+    // The old hidden announcement is gone: the toast viewport is the only live region.
+    expect(document.querySelectorAll('[aria-live]')).toHaveLength(1)
     expect(screen.getByRole('link', { name: 'Log prod' })).toBeInTheDocument()
-    await waitFor(() => expect(document.querySelector('[aria-live="polite"]')).toHaveTextContent('prod: start failed'))
-    await user.click(screen.getByRole('button', { name: 'Dismiss prod outcome' }))
-    expect(screen.queryByText(/start failed \(exit/)).not.toBeInTheDocument()
   }, 10_000)
 })
 
@@ -196,9 +204,11 @@ describe('states', () => {
     render(
       <QueryClientProvider client={createTestClient()}>
         <MemoryRouter>
-          <CreateProfileProvider>
-            <DashboardView />
-          </CreateProfileProvider>
+          <ToastProvider>
+            <CreateProfileProvider>
+              <DashboardView />
+            </CreateProfileProvider>
+          </ToastProvider>
         </MemoryRouter>
       </QueryClientProvider>,
     )

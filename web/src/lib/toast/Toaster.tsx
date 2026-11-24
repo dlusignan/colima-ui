@@ -40,7 +40,11 @@ export function Toaster() {
                 nativeButton={false}
                 role="link"
                 render={<a href={action.href} />}
-                onClick={() => {
+                onClick={(event) => {
+                  // With an onClick the caller handles the navigation (a router link): keep the page.
+                  if (action.onClick && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+                    event.preventDefault()
+                  }
                   action.onClick?.()
                   close(toast.id)
                 }}

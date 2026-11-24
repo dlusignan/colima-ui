@@ -22,7 +22,7 @@ describe('useJobTracker', () => {
     expect(result.current.jobs.has('synthetic-b')).toBe(false)
   })
 
-  it('holds a failed outcome after the list drops the job, refetches the list once, and dismisses', async () => {
+  it('keeps a finished job after the list drops it and refetches the list once', async () => {
     const get = vi.spyOn(api, 'getJob').mockResolvedValue(jobFixture({ id: 'j_1' }))
     const client = createTestClient()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
@@ -42,14 +42,11 @@ describe('useJobTracker', () => {
       invalidate.mock.calls.filter(([f]) => f?.queryKey === queryKeys.profiles),
     ).toHaveLength(1)
 
-    // The list no longer carries activeJobId; the outcome stays.
+    // The list no longer carries activeJobId; the finished job stays.
     rerender({ p: [profileFixture({ activeJobId: null })] })
     await waitFor(() =>
       expect(result.current.jobs.get('synthetic-a')).toMatchObject({ state: 'failed', exitCode: 1 }),
     )
-
-    act(() => result.current.dismiss('synthetic-a'))
-    expect(result.current.jobs.has('synthetic-a')).toBe(false)
   })
 
   it('follows a create job and holds its failed outcome', async () => {

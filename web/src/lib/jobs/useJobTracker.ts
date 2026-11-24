@@ -13,12 +13,10 @@ export interface TrackedJob {
 }
 
 export interface JobTracker {
-  /** The latest job per profile name: running, or the held outcome. */
+  /** The latest job per profile name: running, or the last one that finished. */
   jobs: ReadonlyMap<string, TrackedJob>
   /** Follow a job id this tab did not start (a 409 profile_busy answer). */
   adopt: (profile: string, jobId: string) => void
-  /** Drop a held outcome. */
-  dismiss: (profile: string) => void
 }
 
 /** One retry for a job_not_found: a profile_busy id can be unreadable for a few ms. */
@@ -28,21 +26,20 @@ const RUNNING_POLL_MS = 1_000
 /**
  * Follows the latest job per profile: the `activeJobId` on the list plus any
  * adopted id. The followed id stays after the list drops it, so a finished
- * outcome (failed, exit code) remains readable until it is dismissed or a newer
- * job replaces it. Deliberately thin: it reads `queryKeys.job(id)` and
- * refetches the list once when a job ends. The log view uses `useJobLog`,
+ * job stays known (the log link) until a newer job replaces it.
+ * Deliberately thin: it reads `queryKeys.job(id)` and refetches the list once
+ * when a job ends. The log view uses `useJobLog`,
  * which also reads the event stream.
  */
 export function useJobTracker(profiles: readonly Profile[] | undefined): JobTracker {
   const queryClient = useQueryClient()
   // profile -> job id being followed.
   const [followed, setFollowed] = useState<ReadonlyMap<string, string>>(new Map())
-  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set())
 
   // A job id on the list that we do not follow yet replaces the old one.
   // Setting state while rendering is the supported way to derive state from props.
   const fresh = (profiles ?? []).filter(
-    (p) => p.activeJobId && p.activeJobId !== followed.get(p.name) && !dismissed.has(p.activeJobId),
+    (p) => p.activeJobId && p.activeJobId !== followed.get(p.name),
   )
   if (fresh.length > 0) {
     const next = new Map(followed)
@@ -50,7 +47,7 @@ export function useJobTracker(profiles: readonly Profile[] | undefined): JobTrac
     setFollowed(next)
   }
 
-  const entries = [...followed].filter(([, id]) => !dismissed.has(id))
+  const entries = [...followed]
   const results = useQueries({
     queries: entries.map(([, id]) => ({
       queryKey: queryKeys.job(id),
@@ -87,15 +84,5 @@ export function useJobTracker(profiles: readonly Profile[] | undefined): JobTrac
   return {
     jobs,
     adopt: (profile, jobId) => setFollowed((prev) => new Map(prev).set(profile, jobId)),
-    dismiss: (profile) => {
-      const id = followed.get(profile)
-      if (!id) return
-      setDismissed((prev) => new Set(prev).add(id))
-      setFollowed((prev) => {
-        const next = new Map(prev)
-        next.delete(profile)
-        return next
-      })
-    },
   }
 }
