@@ -366,3 +366,14 @@ func TestContainersNewFields(t *testing.T) {
 		t.Fatalf("raw body %s", rec.Body.String())
 	}
 }
+
+func (f *fakeDockerClient) TagImage(context.Context, string, string, string) error { return nil }
+func (f *fakeDockerClient) InspectImage(context.Context, string) (dockerc.ImageDetail, error) {
+	return dockerc.ImageDetail{}, nil
+}
+func (f *fakeDockerClient) RemoveImage(context.Context, string) (dockerc.ImageRemoval, error) {
+	return dockerc.ImageRemoval{}, nil
+}
+func (f *fakeDockerClient) PruneImages(context.Context, bool) (dockerc.ImagePruneResult, error) {
+	return dockerc.ImagePruneResult{}, nil
+}

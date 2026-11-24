@@ -194,3 +194,36 @@ func TestFakeNetworkWritesValidateLikeTheRealClient(t *testing.T) {
 		t.Fatalf("prune: %v %+v", err, r)
 	}
 }
+
+func TestFakeImageWritesValidateLikeTheRealClient(t *testing.T) {
+	f := &Fake{ImageDetail: dockerc.ImageDetail{ID: "ok"}}
+	ctx := context.Background()
+	if err := f.TagImage(ctx, "../x", "app", "v1"); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("bad ref: %v", err)
+	}
+	if err := f.TagImage(ctx, "app", "app:v1", "v1"); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("bad repository: %v", err)
+	}
+	if err := f.TagImage(ctx, "app", "app", "-x"); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("bad tag: %v", err)
+	}
+	if err := f.TagImage(ctx, "app:v1", "team/app", "v2"); err != nil {
+		t.Fatalf("ok: %v", err)
+	}
+	if _, err := f.InspectImage(ctx, "a b"); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("inspect: %v", err)
+	}
+	if _, err := f.RemoveImage(ctx, ""); !errors.Is(err, dockerc.ErrBadName) {
+		t.Fatalf("remove: %v", err)
+	}
+	if d, err := f.InspectImage(ctx, "app"); err != nil || d.ID != "ok" {
+		t.Fatalf("inspect ok: %v %+v", err, d)
+	}
+	f.FailWith("PruneImages", dockerc.ErrConflict)
+	if r, err := f.PruneImages(ctx, true); !errors.Is(err, dockerc.ErrConflict) || r.Untagged != nil {
+		t.Fatalf("prune: %v %+v", err, r)
+	}
+	if c := f.CallsTo("PruneImages"); len(c) != 1 || c[0].Args[0] != true {
+		t.Fatalf("calls = %+v", c)
+	}
+}

@@ -493,3 +493,14 @@ func (d *fakeDocker) RemoveNetwork(context.Context, string) error { return nil }
 func (d *fakeDocker) PruneNetworks(context.Context) (dockerc.NetworkPruneResult, error) {
 	return dockerc.NetworkPruneResult{}, nil
 }
+
+func (d *fakeDocker) TagImage(context.Context, string, string, string) error { return nil }
+func (d *fakeDocker) InspectImage(context.Context, string) (dockerc.ImageDetail, error) {
+	return dockerc.ImageDetail{}, nil
+}
+func (d *fakeDocker) RemoveImage(context.Context, string) (dockerc.ImageRemoval, error) {
+	return dockerc.ImageRemoval{}, nil
+}
+func (d *fakeDocker) PruneImages(context.Context, bool) (dockerc.ImagePruneResult, error) {
+	return dockerc.ImagePruneResult{}, nil
+}

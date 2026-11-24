@@ -101,3 +101,30 @@ func RefPath(root, ref string) (string, error) {
 	}
 	return root + "/" + strings.Join(parts, "/"), nil
 }
+
+// ValidImageTag reports whether tag is a well-formed image tag: 1 to 128 of
+// [a-zA-Z0-9_.-], not starting with "." or "-". ASCII only, so no control or
+// format character passes.
+func ValidImageTag(tag string) bool { return refTag.MatchString(tag) }
+
+// ValidImageRepository reports whether repo can be the repository part of a
+// new tag: a ValidImageRef with no tag and no digest, optionally qualified
+// with a registry host ("localhost:5000/app", "ghcr.io/owner/app"). The host is
+// kept as given and Docker applies its own defaulting. A single 64 character
+// hex component is refused (Docker refuses it too: it would read like an
+// image ID).
+func ValidImageRepository(repo string) bool {
+	if strings.ContainsRune(repo, '@') || !ValidImageRef(repo) {
+		return false
+	}
+	if strings.LastIndexByte(repo, ':') > strings.LastIndexByte(repo, '/') {
+		return false // a tag, or a port with no path
+	}
+	return !(len(repo) == 64 && isHexID(repo))
+}
+
+// ValidImageTarget reports whether repository and tag together make a valid
+// reference (so the 255 byte limit covers both).
+func ValidImageTarget(repository, tag string) bool {
+	return ValidImageRepository(repository) && ValidImageTag(tag) && ValidImageRef(repository+":"+tag)
+}

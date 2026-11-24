@@ -13,7 +13,7 @@ import (
 )
 
 func imagesServer(g ProfileGate, p dockerc.Provider) http.Handler {
-	return NewHandler(testPort, testToken, NewAPI(WithImages(g, p)), nil)
+	return NewHandler(testPort, testToken, NewAPI(WithImages(g, p, fakeBusy{}, nil)), nil)
 }
 
 const imagesURL = "/api/profiles/synthetic-a/images"
