@@ -237,6 +237,115 @@ describe('field keys and order', () => {
   it('maps request positions back to form rows', () => {
     expect(
       requestRows(v({ dns: ['', 'a', ' ', 'b'], dnsHosts: [{ name: '', address: '' }, { name: 'x', address: '' }] })),
-    ).toEqual({ dns: [1, 3], dnsHosts: [1] })
+    ).toMatchObject({ dns: [1, 3], dnsHosts: [1] })
+  })
+})
+
+describe('mounts and environment rules', () => {
+  const m = (path: string, writable = false) => ({ path, writable })
+  const e = (key: string, value = '') => ({ key, value, shown: false })
+
+  it.each(['/', '/home/user/src', '/srv/a b', '/data/x.y'])('accepts the mount path %j', (path) => {
+    expect(validateCreate(v({ mounts: [m(path)] }))).toEqual({})
+  })
+
+  it.each([
+    'relative/dir',
+    '~/src',
+    '/a/../b',
+    '/a/./b',
+    '/a//b',
+    '/a/b/',
+    '/a,b',
+    '/a"b',
+    '/a:b',
+    '/a{b',
+    '/a}b',
+    '/a$b',
+    '/a\nb',
+    '/a\u0000b',
+    '/a\u007fb',
+    '/' + 'x'.repeat(4096),
+  ])('rejects the mount path %j on its row', (path) => {
+    expect(validateCreate(v({ mounts: [m(path)] }))['mounts[0].path']).toBeTruthy()
+  })
+
+  it('skips blank mount rows and flags a case-insensitive duplicate on the later row', () => {
+    const errors = validateCreate(v({ mounts: [m('/srv/a'), m('  '), m('/SRV/A')] }))
+    expect(errors).toEqual({ 'mounts[2].path': 'Path repeats an earlier mount.' })
+  })
+
+  it('caps the mounts and variables', () => {
+    const mounts = Array.from({ length: 17 }, (_, i) => m(`/srv/d${i}`))
+    expect(validateCreate(v({ mounts })).mounts).toMatch(/at most 16/)
+    const env = Array.from({ length: 33 }, (_, i) => e(`K${i}`))
+    expect(validateCreate(v({ env })).env).toMatch(/at most 32/)
+  })
+
+  it('gives only an advisory hint for broad writable mounts', async () => {
+    const { broadMountHint } = await import('./validateCreate')
+    expect(broadMountHint(m('/', true))).toMatch(/broad/)
+    expect(broadMountHint(m('/Users', true))).toMatch(/broad/)
+    expect(broadMountHint(m('/Users', false))).toBe('')
+    expect(broadMountHint(m('/srv/data', true))).toBe('')
+    expect(validateCreate(v({ mounts: [m('/', true)] }))).toEqual({})
+  })
+
+  it.each(['A', '_x', 'HTTP_PROXY', 'a1', 'x'.repeat(128)])('accepts the variable name %s', (key) => {
+    expect(validateCreate(v({ env: [e(key, 'ok')] }))).toEqual({})
+  })
+
+  it.each(['1A', 'A-B', 'A B', 'A=B', 'A,B', 'A"B', 'é', 'x'.repeat(129)])('rejects the variable name %j', (key) => {
+    expect(validateCreate(v({ env: [e(key)] }))['env[0].key']).toBeTruthy()
+  })
+
+  it('requires a name when only a value is given, treats case as distinct, flags exact repeats', () => {
+    expect(validateCreate(v({ env: [e('', 'x')] }))['env[0].key']).toBeTruthy()
+    expect(validateCreate(v({ env: [e('A', '1'), e('a', '2')] }))).toEqual({})
+    expect(validateCreate(v({ env: [e('A', '1'), e('B'), e('A', '2')] }))).toEqual({
+      'env[2].key': 'Name repeats an earlier variable.',
+    })
+  })
+
+  it.each(['', 'plain', 'a,b', '"hi" there', 'x=1', 'a=b;c', 'q"uote'])('accepts the value %j', (value) => {
+    expect(validateCreate(v({ env: [e('K', value)] }))).toEqual({})
+  })
+
+  it.each(['x"', '"', 'a=1,b', 'a=1"b', 'a=1\nb', 'a=1\rb', 'a\u0000b', 'x'.repeat(4097)])(
+    'rejects the value %j',
+    (value) => {
+      expect(validateCreate(v({ env: [e('K', value)] }))['env[0].value']).toBeTruthy()
+    },
+  )
+
+  it('accepts a 4096 byte value and counts bytes, not characters', () => {
+    expect(validateCreate(v({ env: [e('K', 'x'.repeat(4096))] }))).toEqual({})
+    expect(validateCreate(v({ env: [e('K', 'é'.repeat(2049))] }))['env[0].value']).toMatch(/4096 bytes/)
+  })
+
+  it('builds mounts and env with exact JSON and omits empty groups', () => {
+    expect(JSON.stringify(buildRequest(v({ mounts: [m('')], env: [e('', '')] })))).toBe('{"name":"synthetic-a"}')
+    const body = buildRequest(
+      v({ mounts: [m(' /srv/a ', true), m('/srv/b')], env: [e(' A ', 'x=1'), e('B'), e('__proto__', 'p')] }),
+    )
+    expect(JSON.stringify(body)).toBe(
+      '{"name":"synthetic-a","mounts":[{"path":"/srv/a","writable":true},{"path":"/srv/b","writable":false}],' +
+        '"env":{"A":"x=1","B":"","__proto__":"p"}}',
+    )
+  })
+
+  it('maps request positions back to rows: blank rows skipped, env sorted by key bytes', () => {
+    const rows = requestRows(v({ mounts: [m(''), m('/a'), m('/b')], env: [e('b', '1'), e('', ''), e('B', '2'), e('a')] }))
+    expect(rows.mounts).toEqual([1, 2])
+    expect(rows.envSorted).toEqual([2, 3, 0]) // B, a, b
+    expect(rows.envByKey.get('a')).toBe(3)
+  })
+
+  it('orders the new keys last and knows them', () => {
+    const order = fieldOrder(v({ mounts: [m('/a')], env: [e('A')] }))
+    expect(order.slice(-6)).toEqual(['cpuType', 'mounts', 'mounts[0].path', 'env', 'env[0].key', 'env[0].value'])
+    expect(isFieldKey('mounts[3].path')).toBe(true)
+    expect(isFieldKey('env[1].value')).toBe(true)
+    expect(isFieldKey('mounts[x].path')).toBe(false)
   })
 })

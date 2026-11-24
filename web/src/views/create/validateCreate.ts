@@ -1,4 +1,4 @@
-import type { CreateProfileRequest, DnsHost } from '@/lib/api/types'
+import type { CreateProfileRequest, DnsHost, Mount } from '@/lib/api/types'
 
 export type NumberField = 'cpus' | 'memoryGiB' | 'diskGiB' | 'rootDiskGiB'
 export type SelectField = 'runtime' | 'vmType' | 'arch' | 'mountType'
@@ -16,9 +16,31 @@ export type FieldName =
   | 'vzRosetta'
   | 'dns'
   | 'dnsHosts'
+  | 'mounts'
+  | 'env'
 
 export const MAX_DNS = 8
 export const MAX_DNS_HOSTS = 16
+export const MAX_MOUNTS = 16
+export const MAX_ENV = 32
+const MAX_MOUNT_PATH = 4096
+const MAX_ENV_KEY = 128
+const MAX_ENV_VALUE = 4096
+
+/** The exposure note shown with the Mounts group (it is the same sentence the API docs use). */
+export const MOUNT_EXPOSURE_NOTE = 'Mounted folders are visible to every container in this VM.'
+
+export interface MountRow {
+  path: string
+  writable: boolean
+}
+
+/** One environment variable row. `shown` only controls whether the value field is masked. */
+export interface EnvRow {
+  key: string
+  value: string
+  shown: boolean
+}
 
 export interface DnsHostRow {
   name: string
@@ -49,6 +71,8 @@ const ADVANCED_ORDER = [
   'networkInterface',
   'vzRosetta',
   'cpuType',
+  'mounts',
+  'env',
 ] as const
 
 /** Every error key in screen order, rows included, so focus goes to the first invalid field. */
@@ -57,7 +81,10 @@ export function fieldOrder(values: CreateValues): string[] {
   values.dns.forEach((_, i) => out.push(`dns[${i}]`))
   out.push('dnsHosts')
   values.dnsHosts.forEach((_, i) => out.push(`dnsHosts[${i}].name`, `dnsHosts[${i}].address`))
-  out.push(...ADVANCED_ORDER.slice(4))
+  out.push('networkMode', 'networkInterface', 'vzRosetta', 'cpuType', 'mounts')
+  values.mounts.forEach((_, i) => out.push(`mounts[${i}].path`))
+  out.push('env')
+  values.env.forEach((_, i) => out.push(`env[${i}].key`, `env[${i}].value`))
   return out
 }
 
@@ -67,7 +94,9 @@ export function isFieldKey(key: string): boolean {
     (FIELD_NAMES as readonly string[]).includes(key) ||
     (ADVANCED_ORDER as readonly string[]).includes(key) ||
     /^dns\[\d+\]$/.test(key) ||
-    /^dnsHosts\[\d+\]\.(name|address)$/.test(key)
+    /^dnsHosts\[\d+\]\.(name|address)$/.test(key) ||
+    /^mounts\[\d+\]\.path$/.test(key) ||
+    /^env\[\d+\]\.(key|value)$/.test(key)
   )
 }
 
@@ -94,6 +123,8 @@ export interface CreateValues {
   networkMode: string
   networkInterface: string
   cpuType: string
+  mounts: MountRow[]
+  env: EnvRow[]
 }
 
 export type FieldErrors = Partial<Record<string, string>>
@@ -121,6 +152,8 @@ export const EMPTY_VALUES: CreateValues = {
   networkMode: '',
   networkInterface: '',
   cpuType: '',
+  mounts: [],
+  env: [],
 }
 
 export const NUMBER_LIMITS: Record<NumberField, { label: string; integer: boolean; max: number }> = {
@@ -314,19 +347,135 @@ export function validateCreate(values: CreateValues): FieldErrors {
     errors.cpuType =
       'CPU type must be one model name such as max or cortex-a72 (no feature list), at most 64 characters.'
   }
+  validateMounts(values.mounts, errors)
+  validateEnv(values.env, errors)
   return errors
+}
+
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+// eslint-disable-next-line no-control-regex
+const CONTROL_RE = /[\u0000-\u001f\u007f]/
+
+const byteLength = (s: string) => new TextEncoder().encode(s).length
+
+/** A mount row counts when its path is not blank; blank rows are not sent. */
+export const mountUsed = (r: MountRow) => r.path.trim() !== ''
+/** An env row counts when it has a key or a value; fully blank rows are not sent. */
+export const envUsed = (r: EnvRow) => r.key.trim() !== '' || r.value !== ''
+
+/**
+ * Why a mount path is unacceptable, or ''. The same rules as the server's
+ * syntax check, with its wording. Whether the folder exists is the server's call.
+ */
+export function mountPathProblem(p: string): string {
+  if (byteLength(p) > MAX_MOUNT_PATH) return `Path must be at most ${MAX_MOUNT_PATH} bytes.`
+  if (LONE_SURROGATE_RE.test(p)) return 'Path must be valid UTF-8.'
+  if (!p.startsWith('/')) return 'Path must be an absolute path, starting with /.'
+  if (/[,":{}$]/.test(p)) return 'Path must not contain a comma, double quote, colon, brace or dollar sign.'
+  if (CONTROL_RE.test(p)) return 'Path must not contain a control character.'
+  const segments = p.split('/')
+  if (segments.includes('..')) return 'Path must not contain .. segments.'
+  if (p !== '/' && (p.endsWith('/') || p.includes('//') || segments.includes('.'))) {
+    return 'Path must be clean: no repeated or trailing slash and no . segments.'
+  }
+  return ''
+}
+
+/** True for the root and a top-level folder such as /Users: worth a warning when writable. */
+export function broadMountHint(row: MountRow): string {
+  const p = row.path.trim()
+  if (!row.writable || mountPathProblem(p) !== '' || p.split('/').filter(Boolean).length > 1) return ''
+  return 'This looks like a broad folder, and a writable mount lets containers change it. The server refuses writable mounts of the root, your home folder and the folders above it.'
+}
+
+function validateMounts(rows: MountRow[], errors: FieldErrors) {
+  const used = rows.filter(mountUsed).length
+  if (used > MAX_MOUNTS) errors.mounts = `List at most ${MAX_MOUNTS} mounts.`
+  const seen = new Set<string>()
+  rows.forEach((row, i) => {
+    if (!mountUsed(row)) return
+    const p = row.path.trim()
+    const problem = mountPathProblem(p)
+    if (problem) {
+      errors[`mounts[${i}].path`] = problem
+      return
+    }
+    // A lexical hint only: the server decides identity (case, links, firmlinks).
+    const folded = p.toLowerCase()
+    if (seen.has(folded)) errors[`mounts[${i}].path`] = 'Path repeats an earlier mount.'
+    seen.add(folded)
+  })
+}
+
+/** Why an environment value is refused (the server's two parser-quirk rules), or ''. */
+export function envValueProblem(v: string): string {
+  if (byteLength(v) > MAX_ENV_VALUE) return `Value must be at most ${MAX_ENV_VALUE} bytes.`
+  if (v.includes('\0')) return 'Value must not contain a NUL byte.'
+  if (v.endsWith('"') || (v.includes('=') && /[,"\r\n]/.test(v))) {
+    return 'Value must not end with a double quote, and must not combine = with a comma, double quote or line break.'
+  }
+  return ''
+}
+
+function validateEnv(rows: EnvRow[], errors: FieldErrors) {
+  const used = rows.filter(envUsed).length
+  if (used > MAX_ENV) errors.env = `List at most ${MAX_ENV} variables.`
+  const seen = new Set<string>()
+  rows.forEach((row, i) => {
+    if (!envUsed(row)) return
+    const key = row.key.trim()
+    if (key === '') {
+      errors[`env[${i}].key`] = 'Enter a name for this variable.'
+      return
+    }
+    if (key.length > MAX_ENV_KEY || !ENV_KEY_RE.test(key)) {
+      errors[`env[${i}].key`] =
+        `Name must be letters, digits and underscores, not starting with a digit, at most ${MAX_ENV_KEY} characters.`
+      return
+    }
+    if (seen.has(key)) {
+      errors[`env[${i}].key`] = 'Name repeats an earlier variable.'
+      return
+    }
+    seen.add(key)
+    const problem = envValueProblem(row.value)
+    if (problem) errors[`env[${i}].value`] = problem
+  })
+}
+
+/** Orders two strings by UTF-8 bytes, as the server sorts env keys. */
+function compareBytes(a: string, b: string): number {
+  const x = new TextEncoder().encode(a)
+  const y = new TextEncoder().encode(b)
+  for (let i = 0; i < Math.min(x.length, y.length); i++) if (x[i] !== y[i]) return x[i] - y[i]
+  return x.length - y.length
 }
 
 /**
  * Which row of the form each element of the request arrays came from. Blank
  * rows are not sent, so a server error on `dns[1]` can belong to row 2 or 3.
  */
-export function requestRows(values: CreateValues): { dns: number[]; dnsHosts: number[] } {
+export function requestRows(values: CreateValues): {
+  dns: number[]
+  dnsHosts: number[]
+  mounts: number[]
+  /** Form rows in the order of their sorted keys, which is how the server numbers `env[i]`. */
+  envSorted: number[]
+  /** Form row of each key, for `env.KEY` errors. */
+  envByKey: Map<string, number>
+} {
   const keep = <T,>(rows: T[], used: (r: T) => boolean) =>
     rows.flatMap((r, i) => (used(r) ? [i] : []))
+  const envRows = values.env.flatMap((r, i) => (envUsed(r) ? [{ i }] : []))
   return {
     dns: keep(values.dns, (d) => d.trim() !== ''),
     dnsHosts: keep(values.dnsHosts, (r) => r.name.trim() !== '' || r.address.trim() !== ''),
+    mounts: keep(values.mounts, mountUsed),
+    envSorted: envRows
+      .map((r) => r.i)
+      .sort((a, b) => compareBytes(values.env[a].key.trim(), values.env[b].key.trim())),
+    envByKey: new Map(envRows.map((r) => [values.env[r.i].key.trim(), r.i])),
   }
 }
 
@@ -361,5 +510,12 @@ export function buildRequest(values: CreateValues): CreateProfileRequest {
     body.networkInterface = values.networkInterface.trim()
   }
   if (!cpuTypeBlocked(values) && values.cpuType.trim() !== '') body.cpuType = values.cpuType.trim()
+  const mounts: Mount[] = values.mounts
+    .filter(mountUsed)
+    .map((r) => ({ path: r.path.trim(), writable: r.writable }))
+  if (mounts.length > 0) body.mounts = mounts
+  // fromEntries defines own properties, so a key such as __proto__ stays plain data.
+  const env = values.env.filter(envUsed).map((r) => [r.key.trim(), r.value] as const)
+  if (env.length > 0) body.env = Object.fromEntries(env)
   return body
 }

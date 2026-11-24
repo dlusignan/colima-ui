@@ -5,9 +5,13 @@ import { Message } from './formParts'
 import {
   ADVANCED_SELECTS,
   cpuTypeBlocked,
+  broadMountHint,
   interfaceVisible,
   MAX_DNS,
   MAX_DNS_HOSTS,
+  MAX_ENV,
+  MAX_MOUNTS,
+  MOUNT_EXPOSURE_NOTE,
   rosettaBlocked,
   type AdvancedSelect,
   type CreateValues,
@@ -20,6 +24,13 @@ export interface RowHandlers {
   onHost: (index: number, field: 'name' | 'address', value: string) => void
   addHost: () => void
   removeHost: (index: number) => void
+  onMount: (index: number, field: 'path' | 'writable', value: string | boolean) => void
+  addMount: () => void
+  removeMount: (index: number) => void
+  onEnv: (index: number, field: 'key' | 'value', value: string) => void
+  toggleEnvShown: (index: number) => void
+  addEnv: () => void
+  removeEnv: (index: number) => void
 }
 
 interface Props {
@@ -317,6 +328,162 @@ export function AdvancedFields({ formId, values, pending, open, onToggle, errorF
             hint: cpuBlocked || 'One CPU model name, for example max or cortex-a72.',
           })}
         </div>
+        <fieldset
+          className="flex flex-col gap-2"
+          aria-describedby={[id('mounts-hint'), id('mounts-default'), errorFor('mounts') ? id('mounts-error') : null]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          <legend className={SUBHEAD}>Mounts</legend>
+          <p id={id('mounts-hint')} className="text-xs font-medium text-foreground">
+            {MOUNT_EXPOSURE_NOTE}
+          </p>
+          <p id={id('mounts-default')} className="text-xs text-muted-foreground">
+            {`Folders must exist on this machine, at most ${MAX_MOUNTS}. A writable mount lets containers change files on your Mac. Listing mounts here may replace Colima's default mount of your home folder. Empty rows are not sent.`}
+          </p>
+          {errorFor('mounts') && (
+            <p id={id('mounts-error')} className="text-xs text-destructive">
+              {errorFor('mounts')}
+            </p>
+          )}
+          {values.mounts.map((row, i) => {
+            const key = `mounts[${i}].path`
+            const error = errorFor(key)
+            const hint = broadMountHint(row)
+            return (
+              <div key={i} className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <Input
+                    id={id(key)}
+                    aria-label={`Mount ${i + 1} path`}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    placeholder="/Users/me/src"
+                    value={row.path}
+                    disabled={pending}
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={describe(id(key), !!hint, error)}
+                    onChange={(e) => rows.onMount(i, 'path', e.target.value)}
+                  />
+                  <label className="flex shrink-0 items-center gap-1 text-sm">
+                    <input
+                      type="checkbox"
+                      aria-label={`Mount ${i + 1} writable`}
+                      checked={row.writable}
+                      disabled={pending}
+                      onChange={(e) => rows.onMount(i, 'writable', e.target.checked)}
+                    />
+                    Writable
+                  </label>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    aria-label={`Remove mount ${i + 1}`}
+                    onClick={() => rows.removeMount(i)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <Message id={id(key)} error={error} hint={hint} />
+              </div>
+            )
+          })}
+          <div>
+            <Button
+              id={id('mounts-add')}
+              type="button"
+              variant="outline"
+              disabled={pending || values.mounts.length >= MAX_MOUNTS}
+              onClick={rows.addMount}
+            >
+              Add mount
+            </Button>
+          </div>
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-2" aria-describedby={describe(id('env'), true, errorFor('env'))}>
+          <legend className={SUBHEAD}>Environment variables</legend>
+          <Message
+            id={id('env')}
+            error={errorFor('env')}
+            hint={`Set in the VM, at most ${MAX_ENV}. Values are hidden by default and names are case sensitive. Empty rows are not sent.`}
+          />
+          {values.env.map((row, i) => {
+            const keyKey = `env[${i}].key`
+            const valueKey = `env[${i}].value`
+            const keyError = errorFor(keyKey)
+            const valueError = errorFor(valueKey)
+            const label = row.key.trim() === '' ? `variable ${i + 1}` : row.key.trim()
+            return (
+              <div key={i} className="flex flex-col gap-1">
+                <div className="flex gap-2">
+                  <Input
+                    id={id(keyKey)}
+                    aria-label={`Environment variable ${i + 1} name`}
+                    autoComplete="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    placeholder="HTTP_PROXY"
+                    value={row.key}
+                    disabled={pending}
+                    aria-invalid={keyError ? true : undefined}
+                    aria-describedby={describe(id(keyKey), false, keyError)}
+                    onChange={(e) => rows.onEnv(i, 'key', e.target.value)}
+                  />
+                  <Input
+                    id={id(valueKey)}
+                    type={row.shown ? 'text' : 'password'}
+                    aria-label={`Environment variable ${i + 1} value`}
+                    autoComplete="new-password"
+                    autoCapitalize="none"
+                    spellCheck={false}
+                    data-1p-ignore
+                    data-lpignore="true"
+                    value={row.value}
+                    disabled={pending}
+                    aria-invalid={valueError ? true : undefined}
+                    aria-describedby={describe(id(valueKey), false, valueError)}
+                    onChange={(e) => rows.onEnv(i, 'value', e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    aria-label={`Show value of ${label}`}
+                    aria-pressed={row.shown}
+                    onClick={() => rows.toggleEnvShown(i)}
+                  >
+                    {row.shown ? 'Hide' : 'Show'}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={pending}
+                    aria-label={`Remove environment variable ${i + 1}`}
+                    onClick={() => rows.removeEnv(i)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <Message id={id(keyKey)} error={keyError} />
+                <Message id={id(valueKey)} error={valueError} />
+              </div>
+            )
+          })}
+          <div>
+            <Button
+              id={id('env-add')}
+              type="button"
+              variant="outline"
+              disabled={pending || values.env.length >= MAX_ENV}
+              onClick={rows.addEnv}
+            >
+              Add variable
+            </Button>
+          </div>
+        </fieldset>
       </div>
     </div>
   )
