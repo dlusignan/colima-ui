@@ -25,6 +25,11 @@ const (
 	// ActionImagePull is a Docker image pull. It is a task job (SubmitTask):
 	// it never holds the profile slot and no Launcher sees it.
 	ActionImagePull Action = "image-pull"
+	// ActionCachePrune clears colima's cached downloads (`colima prune
+	// --force`, plus --all). It is a task job (SubmitTask) that runs the colima
+	// binary but belongs to no profile: it holds no slot and no Launcher sees
+	// it.
+	ActionCachePrune Action = "cache-prune"
 )
 
 // Request is a job request. Start, stop and restart take no other input: a

@@ -21,6 +21,10 @@ var (
 	// ErrDuplicateTask means an identical task (same profile, action and
 	// subject) is already running.
 	ErrDuplicateTask = errors.New("operations: identical task already running")
+	// ErrTaskNotRun is wrapped by a task that failed before the work it names
+	// began (colima could not be started). The job is reported as not run, so
+	// no log row claims the work was attempted.
+	ErrTaskNotRun = errors.New("operations: task did not run")
 	// ErrIDExhausted means the ID generator kept returning IDs already in use.
 	ErrIDExhausted = errors.New("operations: could not generate a unique job id")
 )
@@ -49,4 +53,16 @@ type NotRunningError struct {
 
 func (e *NotRunningError) Error() string {
 	return fmt.Sprintf("operations: job %s is not running (state %s)", e.JobID, e.State)
+}
+
+// TaskBlockedError means a task refused to start because a colima job of one of
+// its TaskRequest.RefuseWhileRunning actions is running.
+type TaskBlockedError struct {
+	Action  Action
+	Profile string
+	JobID   string
+}
+
+func (e *TaskBlockedError) Error() string {
+	return fmt.Sprintf("operations: task blocked by running %s job %s", e.Action, e.JobID)
 }

@@ -2,8 +2,10 @@ package operations
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +33,11 @@ type TaskRequest struct {
 	// MaxPerProfile is how many tasks of this action may run on this profile at
 	// once. Zero or negative means no limit.
 	MaxPerProfile int
-	Run           TaskFunc
+	// RefuseWhileRunning lists colima job actions that, while one runs on any
+	// profile, make SubmitTask fail with *TaskBlockedError. The check happens
+	// under the same mutex as the limits, so it cannot race the reservation.
+	RefuseWhileRunning []Action
+	Run                TaskFunc
 }
 
 // emitAfterCancelWait bounds how long a line emitted after cancel waits for
@@ -56,6 +62,13 @@ func (m *Manager) SubmitTask(r TaskRequest) (JobSummary, error) {
 	if m.closed {
 		m.mu.Unlock()
 		return JobSummary{}, ErrClosed
+	}
+	for _, s := range m.slots {
+		if s.job != nil && slices.Contains(r.RefuseWhileRunning, s.job.action) {
+			e := &TaskBlockedError{Action: s.job.action, Profile: s.job.profile, JobID: s.job.id}
+			m.mu.Unlock()
+			return JobSummary{}, e
+		}
 	}
 	group := taskGroupKey(r.Profile, r.Action)
 	dup := group + "\x00" + r.Subject
@@ -124,6 +137,8 @@ type taskProc struct {
 	once   sync.Once
 	done   chan struct{}
 	exit   colima.Exit
+	// notRun is written before done closes: the task ended with ErrTaskNotRun.
+	notRun bool
 }
 
 func startTaskProc(ctx context.Context, cancel context.CancelFunc, run TaskFunc) *taskProc {
@@ -146,6 +161,7 @@ func startTaskProc(ctx context.Context, cancel context.CancelFunc, run TaskFunc)
 	}
 	go func() {
 		err := runRecovered(ctx, emit, run)
+		p.notRun = errors.Is(err, ErrTaskNotRun)
 		switch {
 		case err == nil:
 			p.exit = colima.Exit{ExitCode: 0}
@@ -178,3 +194,6 @@ func (p *taskProc) Wait() (colima.Exit, error) {
 }
 
 func (p *taskProc) Cancel() { p.once.Do(p.cancel) }
+
+// NotRun reports that the task ended with ErrTaskNotRun. It is read after Wait.
+func (p *taskProc) NotRun() bool { return p.notRun }
