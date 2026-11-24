@@ -55,6 +55,20 @@ func Update(ctx context.Context, s Streamer, profile string) (Process, error) {
 	return stream(ctx, s, []string{"update", "-p", profile})
 }
 
+// Prune runs `colima prune --force`, plus --all when includeLima is set. It
+// deletes colima's cached downloads (VM images); --all also deletes the cached
+// assets of Lima. The vector is fixed and takes no input beyond that flag.
+// --force is always passed: without it colima asks for a confirmation on stdin
+// that nobody can answer, so the confirmation lives in the UI and the API.
+// The cache is global, not per profile, so there is no profile argument.
+func Prune(ctx context.Context, s Streamer, includeLima bool) (Process, error) {
+	args := []string{"prune", "--force"}
+	if includeLima {
+		args = append(args, "--all")
+	}
+	return stream(ctx, s, args)
+}
+
 func stopLike(ctx context.Context, s Streamer, verb, profile string, force bool) (Process, error) {
 	if err := ValidateProfile(profile); err != nil {
 		return nil, err

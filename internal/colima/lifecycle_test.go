@@ -249,3 +249,31 @@ func TestDeleteRejectsHostileNamesAndNilStreamer(t *testing.T) {
 		t.Error("nil streamer: want error")
 	}
 }
+
+func TestPruneArgvAlwaysForcesAndAddsAllOnlyWhenAsked(t *testing.T) {
+	for _, c := range []struct {
+		all  bool
+		want string
+	}{{false, "prune --force"}, {true, "prune --force --all"}} {
+		f := &fakeStreamer{proc: newFakeProcess(nil, Exit{}, nil)}
+		if _, err := Prune(context.Background(), f, c.all); err != nil {
+			t.Fatal(err)
+		}
+		if got := f.argv(t); got != c.want {
+			t.Fatalf("all=%v argv = %q, want %q", c.all, got, c.want)
+		}
+	}
+}
+
+func TestPruneWithoutStreamerFails(t *testing.T) {
+	if _, err := Prune(context.Background(), nil, false); err == nil {
+		t.Fatal("want an error")
+	}
+}
+
+func TestPruneReturnsStreamError(t *testing.T) {
+	boom := errors.New("boom")
+	if _, err := Prune(context.Background(), &fakeStreamer{err: boom}, false); !errors.Is(err, boom) {
+		t.Fatalf("err = %v", err)
+	}
+}
