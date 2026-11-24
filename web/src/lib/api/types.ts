@@ -209,6 +209,35 @@ export interface DockerNetwork {
   containers: number
 }
 
+/** Body of `POST /api/profiles/{name}/volumes`. */
+export interface CreateVolumeRequest {
+  name: string
+  /** At most 16 pairs; sent only when not empty. */
+  labels?: Record<string, string>
+}
+
+/** Answer of `GET /api/profiles/{name}/volumes/{volume}`. No host path. */
+export interface VolumeDetail {
+  name: string
+  driver: string
+  createdAt: string
+  sizeBytes: number | null
+  labels: Record<string, string>
+  containers: number
+  containerNames: string[]
+}
+
+/**
+ * Answer of `POST /api/profiles/{name}/volumes/prune`. On the pinned Docker API
+ * v1.41 every unused volume is removed, named ones included, and
+ * `includesNamedVolumes` says so. Irreversible.
+ */
+export interface VolumePruneResult {
+  removed: string[]
+  reclaimedBytes: number
+  includesNamedVolumes: boolean
+}
+
 export interface NetworkList {
   networks: DockerNetwork[]
 }

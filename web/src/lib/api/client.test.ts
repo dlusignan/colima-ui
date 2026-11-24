@@ -76,6 +76,49 @@ describe('request', () => {
     expect(init.headers['Content-Type']).toBeUndefined()
   })
 
+  it('builds the volume write requests and treats a 204 as success', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(201, { name: 'data' }))
+    await api.createVolume('dev', { name: 'data', labels: { k: 'v' } })
+    let [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('/api/profiles/dev/volumes')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('{"name":"data","labels":{"k":"v"}}')
+
+    fetchMock.mockResolvedValue(jsonResponse(200, { name: 'a/b' }))
+    await api.getVolume('dev', 'a/b')
+    ;[url, init] = fetchMock.mock.calls[1]
+    expect(url).toBe('/api/profiles/dev/volumes/a%2Fb')
+    expect(init.method).toBe('GET')
+
+    fetchMock.mockResolvedValue(new Response(null, { status: 204 }))
+    await expect(api.removeVolume('dev', 'data')).resolves.toBeUndefined()
+    ;[url, init] = fetchMock.mock.calls[2]
+    expect(url).toBe('/api/profiles/dev/volumes/data')
+    expect(init.method).toBe('DELETE')
+    expect(init.body).toBeUndefined()
+    expect(url).not.toContain('force')
+
+    fetchMock.mockResolvedValue(
+      jsonResponse(200, { removed: [], reclaimedBytes: 0, includesNamedVolumes: true }),
+    )
+    await api.pruneVolumes('dev')
+    ;[url, init] = fetchMock.mock.calls[3]
+    expect(url).toBe('/api/profiles/dev/volumes/prune')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeUndefined()
+  })
+
+  it('decodes the in-use conflict of a volume removal', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(409, {
+        error: { code: 'conflict', message: 'm', details: { name: 'data', containers: 2 } },
+      }),
+    )
+    const e = await failure(api.removeVolume('dev', 'data'))
+    expect(e.status).toBe(409)
+    expect(e.details.containers).toBe(2)
+  })
+
   it('builds query strings for metrics and actions', async () => {
     fetchMock.mockImplementation(() => Promise.resolve(jsonResponse(200, {})))
     await api.getMetrics('dev', { scope: 'vm', maxPoints: 50 })

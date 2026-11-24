@@ -31,7 +31,7 @@ If the history file cannot be opened (for example a newer version wrote it), the
 
 ### Added to the backlog this round: planned, not built yet
 
-The enhanced Docker view (issues #78 to #86 and #92) is done. Nothing else from that plan is left.
+The enhanced Docker view (issues #78 to #86 and #92) is done. The Docker manager (issues #116 to #125) is in progress: the shared write rules and the volume routes (create, inspect, remove and prune, issue #117) are built in the backend, but no screen uses them yet; the Volumes section gets its buttons in issue #122, and that is when the feature becomes visible. Prune removes every unused volume, named ones included (Docker API v1.41 behaviour, see `docs/api.md` 3.21).
 
 Colima has no rename command, so renaming is not planned. Mounts and environment variables are accepted by `POST /api/profiles` under strict validation and have a form in the New profile dialog (item 18 above). Security note: a mount exposes a host folder to the VM and every container in it, so the API accepts only existing directories, refuses the root, the home folder and the folders above it when writable, and never logs or echoes a path or an environment value. Custom disk images and raw k3s arguments are deliberately not supported.
 
@@ -54,6 +54,7 @@ This list moves from "planned" to "done" as each issue merges.
 13. The Docker engine of a profile, with its version, resources, container and image counts and a disk usage breakdown: `GET /api/profiles/{name}/engine`. A running profile that does not use Docker gets `409`.
 14. The recent output of one container, as a bounded snapshot with Docker's timestamps (the last 200 lines by default, at most 1000), stopped containers included: `GET /api/profiles/{name}/containers/{id}/logs?tail=N`. There is no streaming.
 15. Creating a profile with the basic settings (name, CPUs, memory, disk, root disk, runtime, VM type, architecture, mount type and Kubernetes) and the advanced ones (hostname, DNS servers and DNS hosts, SSH agent, Rosetta, port forwarder, inotify, network address, mode and interface, CPU type), host folder mounts and environment variables: `POST /api/profiles`. It starts a new VM as a `create` job that streams like any other job, and it refuses a name that already exists in any letter case. There is no route to delete or rename a profile.
+16. Planned with the Docker manager (the screen comes in #122): creating, inspecting, removing and pruning volumes: `POST /api/profiles/{name}/volumes`, `GET` and `DELETE /api/profiles/{name}/volumes/{volume}` and `POST /api/profiles/{name}/volumes/prune`. A removal is never forced and a volume that a container mounts answers `409`. Prune deletes all unused volumes, named ones included, and says so in its answer.
 
 The full contract is in [`docs/api.md`](docs/api.md).
 

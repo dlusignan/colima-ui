@@ -17,6 +17,7 @@ export const queryKeys = {
   engine: (name: string) => ['profiles', name, 'engine'] as const,
   images: (name: string) => ['profiles', name, 'images'] as const,
   volumes: (name: string) => ['profiles', name, 'volumes'] as const,
+  volume: (name: string, volume: string) => ['profiles', name, 'volumes', volume] as const,
   networks: (name: string) => ['profiles', name, 'networks'] as const,
   actions: (name: string, limit?: number) =>
     ['profiles', name, 'actions', limit] as const,

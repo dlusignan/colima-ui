@@ -3,6 +3,8 @@ import type {
   ActionList,
   ConfigUpdate,
   CreateProfileRequest,
+  CreateVolumeRequest,
+  DockerVolume,
   ConfigUpdateResult,
   ContainerList,
   ContainerLogs,
@@ -17,7 +19,9 @@ import type {
   ProfileConfig,
   ProfileCreated,
   ProfileList,
+  VolumeDetail,
   VolumeList,
+  VolumePruneResult,
 } from './types'
 
 const enc = encodeURIComponent
@@ -76,6 +80,16 @@ export const api = {
     request<ImageList>('GET', `/api/profiles/${enc(name)}/images`, { signal }),
   getVolumes: (name: string, signal?: AbortSignal) =>
     request<VolumeList>('GET', `/api/profiles/${enc(name)}/volumes`, { signal }),
+  createVolume: (name: string, body: CreateVolumeRequest) =>
+    request<DockerVolume>('POST', `/api/profiles/${enc(name)}/volumes`, { body }),
+  getVolume: (name: string, volume: string, signal?: AbortSignal) =>
+    request<VolumeDetail>('GET', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`, { signal }),
+  /** Never forced: a volume still mounted answers 409 with `details.containers`. */
+  removeVolume: (name: string, volume: string) =>
+    request<void>('DELETE', `/api/profiles/${enc(name)}/volumes/${enc(volume)}`),
+  /** Irreversible. Removes every unused volume, named ones included. */
+  pruneVolumes: (name: string) =>
+    request<VolumePruneResult>('POST', `/api/profiles/${enc(name)}/volumes/prune`),
   getNetworks: (name: string, signal?: AbortSignal) =>
     request<NetworkList>('GET', `/api/profiles/${enc(name)}/networks`, { signal }),
   getActions: (name: string, limit?: number, signal?: AbortSignal) =>

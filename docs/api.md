@@ -113,11 +113,11 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
+For `422`, `details.fields` maps each rejected field name to a message. The volume routes (3.18 to 3.20) use `name`, `labels` and `volume` (the path parameter). Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
 
 ## 3. Routes
 
-There are 19 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
+There are 23 routes under `/api` plus `/healthz`. All `/api` routes need the token and can also return `401` and `403` as described in 1.1, so those two are not repeated in each error table.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -136,6 +136,10 @@ There are 19 routes under `/api` plus `/healthz`. All `/api` routes need the tok
 | `GET` | `/api/profiles/{name}/containers` | Containers with current usage |
 | `GET` | `/api/profiles/{name}/images` | Docker images |
 | `GET` | `/api/profiles/{name}/volumes` | Docker volumes |
+| `POST` | `/api/profiles/{name}/volumes` | Create a volume (3.18) |
+| `GET` | `/api/profiles/{name}/volumes/{volume}` | Inspect one volume (3.19) |
+| `DELETE` | `/api/profiles/{name}/volumes/{volume}` | Remove a volume, never forced (3.20) |
+| `POST` | `/api/profiles/{name}/volumes/prune` | Remove all unused volumes, named ones included (3.21) |
 | `GET` | `/api/profiles/{name}/networks` | Docker networks |
 | `GET` | `/api/profiles/{name}/engine` | Docker engine facts and disk usage |
 | `GET` | `/api/profiles/{name}/containers/{id}/logs` | Recent output of one container |
@@ -533,7 +537,7 @@ Response `200`:
 - A running VM with no volumes returns `{"volumes":[]}`. So does a running profile whose runtime is not Docker.
 - The engine measures volume sizes while it answers, so this route is slower on VMs with large volumes. It has a 15 second budget.
 
-This route only reads. There is no volume create, remove or prune.
+This route only reads. Volumes are created, inspected, removed and pruned by the routes in 3.18 to 3.21.
 
 Errors:
 
@@ -741,6 +745,94 @@ Errors:
 7. `500` `internal_error`: unexpected failure.
 
 A failed creation can leave a half-created profile behind (a folder, a YAML file, a partial VM). It then shows up in the profile list as stopped. The API has no delete route, so the user removes it in a terminal. Until Colima has written the profile's folder, `GET /api/profiles/{name}/actions` answers `404` for the new name, even though the job and its action row exist.
+
+### 3.18 `POST /api/profiles/{name}/volumes`
+
+Token: yes. Creates a local volume. It follows the Docker write rules in 1.3 (profile, busy check, strict body, validation, one fixed Docker call, action log row `docker.volume.create`). The body is at most 16 KiB.
+
+Request:
+
+```json
+{
+  "name": "data",
+  "labels": { "team": "backend" }
+}
+```
+
+- `name` is required and follows the object name rule of 1.3.
+- `labels` is optional (absent, `null` and `{}` mean none). It is the one nested value of a write body, so this route validates it itself, by hand, before Docker is reached: it must be an object whose values are all strings; at most 16 labels; a repeated key is refused (the usual JSON parsers let the last one win, so it is refused instead); two keys that differ only in letter case are refused; a key is 1 to 63 characters of `[a-zA-Z0-9_.-]` starting with a letter or digit, and may not start with `com.docker.`, `io.docker.` or `org.dockerproject.` (compared without regard to case), which Docker reserves; a value is valid UTF-8 of at most 256 bytes without control characters, and may be empty. Any failure is `422 invalid_request` with `details.fields` holding the single key `labels` and a fixed message: the answer never repeats a key or a value.
+- No driver and no driver options are accepted (`driver`, `driverOpts` are unknown keys, `400`). The volume is always created with the `local` driver.
+
+Response `201`, the same fields as a list entry (3.13):
+
+```json
+{
+  "name": "data",
+  "driver": "local",
+  "createdAt": "2026-04-11T18:02:55Z",
+  "sizeBytes": null,
+  "containers": null
+}
+```
+
+`sizeBytes` and `containers` are `null` because Docker's create answer carries no usage figures. The labels are not echoed; read them with 3.19.
+
+Errors: the shared ones of 1.3, plus `409 conflict` (`details.name`) when a volume with that name already exists. Docker itself answers `201` with the existing volume when the name and driver match, so the backend checks for the name first (an inspect, `404` means free) and refuses. Two creates of the same name racing each other can both pass that check; Docker then treats the second as a no-op on the same volume, nothing is overwritten.
+
+### 3.19 `GET /api/profiles/{name}/volumes/{volume}`
+
+Token: yes. Request body: none. Inspects one volume. It goes through the Docker write rules (1.3) like the other volume routes, so it also checks the busy state and leaves an action log row `docker.volume.inspect` with the volume name.
+
+Response `200`:
+
+```json
+{
+  "name": "pgdata",
+  "driver": "local",
+  "createdAt": "2026-04-11T18:02:55Z",
+  "sizeBytes": 73400320,
+  "labels": { "team": "backend" },
+  "containers": 1,
+  "containerNames": ["db"]
+}
+```
+
+- `labels` are the volume's labels as Docker reports them (an empty object when none). They are the user's own data and are returned as stored; they are never logged and never appear in an error answer.
+- `containers` is the number of containers, running or not, that mount the volume, and `containerNames` lists their names (sorted; a container without a name shows its short id).
+- `sizeBytes` is `null` when the engine has no figure. It comes from the engine's disk usage report, the only call that has sizes, so this route can be slow on VMs with large volumes.
+- The response never contains the mountpoint, the driver options or any other host path.
+
+Errors: the shared ones of 1.3, plus `404 not_found` (`details.name`) for an unknown volume and `422 invalid_request` (`details.fields.volume`) for a malformed name.
+
+### 3.20 `DELETE /api/profiles/{name}/volumes/{volume}`
+
+Token: yes. Request body: none. Removes one volume. Response `204` with no body. Action log row `docker.volume.remove`.
+
+The removal is never forced: no `force` parameter exists, and the backend never sends one to Docker. Before removing, it asks Docker which containers, running or stopped, mount the volume. If there is at least one, no remove request is sent and the answer is `409 conflict` with `details.name` and `details.containers` (the number of containers; no names, no paths). If a container starts using the volume after that check, Docker refuses itself and the answer is the same `409` without `details.containers`.
+
+Errors: the shared ones of 1.3, plus `404 not_found` for an unknown volume, `409 conflict` for a mounted volume and `422 invalid_request` (`details.fields.volume`) for a malformed name. A volume literally named `prune` is removed with this route like any other.
+
+### 3.21 `POST /api/profiles/{name}/volumes/prune`
+
+Token: yes. Request body: none (empty or `{}`; any key, including a filter, is `400`). Removes unused volumes. **This deletes data and cannot be undone.** Action log row `docker.volume.prune` with no detail. It has a 2 minute budget.
+
+Response `200`:
+
+```json
+{
+  "removed": ["scratch", "9f2c0d1e4b7a"],
+  "reclaimedBytes": 104857600,
+  "includesNamedVolumes": true
+}
+```
+
+- `removed` lists the volumes Docker deleted (sorted, `[]` when there was nothing to remove). Names that do not follow the object name rule of 1.3 are left out of the list, never echoed.
+- `reclaimedBytes` is the space Docker says it freed, at least `0`.
+- `includesNamedVolumes` is `true`: on the Docker API version this backend pins (v1.41) the prune removes every volume that no container uses, **named volumes included**, not only anonymous ones. A volume you created by name and have not attached yet is removed too.
+
+How this was verified. The v1.41 API description of `POST /volumes/prune` lists `label` as the only filter and no `all` filter. The API version history for v1.42 says: "`POST /volumes/prune` will now only prune "anonymous" volumes (volumes which were not given a name) by default. A new filter parameter `all` can be set to a truth-y value (`true`, `1`) to get the old behavior." The backend sends `/v1.41/volumes/prune` with no filters, so it gets the pre-1.42 behaviour: all unused volumes. A newer engine keeps that behaviour for a client that asks for v1.41 (the engine answers each request according to the version in its URL). The check was made against the published documentation only; nothing was pruned on any engine to test it. A unit test pins the API version and fails if it changes, so moving the pin forces this decision to be made again.
+
+Errors: the shared ones of 1.3.
 
 ## 4. Routes that do not exist
 
