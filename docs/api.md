@@ -85,7 +85,7 @@ Error codes in use:
 
 Reserved for later: `unsupported_version` (`502` or `409`, decided in the Colima versions issue #1). It is additive and no route changes if it arrives.
 
-For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface` and `cpuType` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name` and `dnsHosts[0].address`).
+For `422`, `details.fields` maps each rejected field name to a message. Field names are the request body keys: `cpu`, `memoryGiB` and `diskGiB` for the config route (3.8), and `name`, `cpus`, `memoryGiB`, `diskGiB`, `rootDiskGiB`, `runtime`, `vmType`, `arch`, `mountType`, `kubernetesVersion`, `hostname`, `dns`, `dnsHosts`, `vzRosetta`, `portForwarder`, `networkMode`, `networkInterface`, `cpuType`, `mounts` and `env` for profile creation (3.17; array elements are named `dns[0]`, `dnsHosts[0].name`, `dnsHosts[0].address` and `mounts[0].path`; environment entries are named `env[0]` or `env.KEY`, see 3.17).
 
 ## 3. Routes
 
@@ -194,6 +194,14 @@ Errors: `404` `profile_not_found`, `502` `colima_failed`.
 `POST /api/profiles/{name}/start`, `POST /api/profiles/{name}/stop`, `POST /api/profiles/{name}/restart`
 
 Token: yes. Request body: none (an empty body or `{}`). The call returns at once and does not wait for the command.
+
+8. `mounts` and `env` are the settings with real security weight, so they are validated more strictly than the rest. Both are optional; `null`, `[]` and `{}` mean the same as leaving the key out. Neither is ever repeated back in an error message or written to a log: a rejection names only the field.
+   1. `mounts` (`--mount`, repeated): an array of at most 16 objects with exactly the keys `path` (a string) and `writable` (a boolean, default `false`). A read-only mount becomes `--mount path` and a writable one `--mount path:w`, in array order. Every mounted folder is visible to every container in the VM, and a writable one can be changed from inside it. An array of more than 16 is rejected on `mounts` alone, before any element is examined. A null or non-object element, an unknown key, a differently cased key (`Path`) or a repeated key is a `400`.
+   2. `mounts[i].path` must be absolute and already clean: it starts with `/` and has no `..` or `.` segment, no repeated slash and no trailing slash (`/` itself is clean). It is at most 4096 bytes, valid UTF-8, and has no control character (NUL, newline and so on). It must not contain a comma, a double quote or a colon: Colima reads `--mount` as a comma separated, CSV-quoted list (so a comma would add a second mount and a quote is a parse error), and a colon begins the `:w` suffix. Spaces and other punctuation are fine and stay inside one argument.
+   3. The path must exist on this machine at request time and be a directory. A missing path, a file and an unreadable path get the same message. Symlinks are resolved on purpose: the path that is checked is the resolved one, and the resolved path is what is passed to Colima, so a link cannot hide a broad folder, two names for one folder count as a duplicate, and a link swapped after the check has no effect. Two entries that are equal, or that resolve to the same folder, are rejected on the later `mounts[i].path`. The root `/` and the home folder, and the folders that contain the home folder (such as `/Users`), are too broad: they are refused when `writable` is `true` and allowed read-only. If the home folder cannot be determined, every writable mount is refused. The home check ignores letter case, because the default macOS filesystem does. It does not see through Unicode normalisation differences or bind mounts.
+   4. `env` (`--env KEY=value`, repeated): a JSON object of string values, at most 32 entries. A repeated key is a `400`; keys that differ only in case are different variables. The entries are passed in the order of their keys (byte order), so the same body always gives the same command. Each key matches `[A-Za-z_][A-Za-z0-9_]*` and has at most 128 characters. Each value is at most 4096 bytes and has no NUL byte; it may be empty and may contain any other character, including `=`, `,`, quotes, semicolons and newlines, because the whole `KEY=value` is one argument and Colima does not split `--env` on commas (probed with `colima start --env 'a=b,c' --help`; a double quote is not treated as CSV either). An object of more than 32 entries is rejected on `env` alone. A bad key is answered on `env[i]`, `i` being its position in the sorted order (the key text is never echoed); a bad value is answered on `env.KEY`, where KEY has already passed the key pattern.
+   5. What Colima does with the values is Colima's: for example, how it writes a value that holds a newline into the VM is not checked here.
+9. What `colima start --help` (Colima 0.10.3, read-only) says about these flags: `-V, --mount strings: directories to mount, suffix ':w' for writable, disable with 'none'` and `--env stringToString: environment variables for the VM (default [])`. The help does not say whether giving `--mount` replaces the default mount of the home folder; that behaviour is unverified here. The UI must therefore tell the user that mounts they list may replace the default home mount. The API never sends `none`, so a request cannot ask for the default mounts to be disabled.
 
 Response `202`:
 
@@ -625,9 +633,9 @@ Errors:
 
 ### 3.17 `POST /api/profiles`
 
-Token: yes. Creates a profile by starting a new VM with the basic settings and, optionally, the advanced ones (networking, DNS, hostname, SSH agent, Rosetta, port forwarder). It is the same kind of job as a start (3.4), so the call returns at once, the output streams over the event stream (section 5) and the job appears in the action log with the action `create`.
+Token: yes. Creates a profile by starting a new VM with the basic settings and, optionally, the advanced ones (networking, DNS, hostname, SSH agent, Rosetta, port forwarder) and host folder mounts and environment variables for the VM. It is the same kind of job as a start (3.4), so the call returns at once, the output streams over the event stream (section 5) and the job appears in the action log with the action `create`.
 
-Request body: a JSON object with a required `name` and these optional settings. Unknown keys are rejected, keys match exactly (case included) and may appear once. A key set to `null` counts as absent. The body is at most 64 KiB.
+Request body: a JSON object with a required `name` and these optional settings. Unknown keys are rejected, keys match exactly (case included) and may appear once. A key set to `null` counts as absent. The body is at most 256 KiB.
 
 ```json
 {
@@ -651,7 +659,9 @@ Request body: a JSON object with a required `name` and these optional settings. 
   "mountInotify": false,
   "networkAddress": true,
   "networkMode": "bridged",
-  "networkInterface": "en0"
+  "networkInterface": "en0",
+  "mounts": [{ "path": "/home/user/src", "writable": false }],
+  "env": { "HTTP_PROXY": "http://192.0.2.1:3128" }
 }
 ```
 
@@ -684,7 +694,7 @@ Response `202`:
 
 Errors:
 
-1. `400` `bad_request`: malformed JSON, a body that is not an object, an unknown, repeated or differently cased key, a value of the wrong type (including a number that is not an integer where one is needed or does not fit), or a body over 64 KiB. Nothing is launched.
+1. `400` `bad_request`: malformed JSON, a body that is not an object, an unknown, repeated or differently cased key, a value of the wrong type (including a number that is not an integer where one is needed or does not fit), or a body over 256 KiB. Nothing is launched.
 2. `422` `validation_failed`: `details.fields` maps every rejected key to a fixed message, `name` included (missing, empty or malformed). Messages never repeat the request text. Nothing is launched. Example:
 
 ```json
@@ -707,7 +717,7 @@ A failed creation can leave a half-created profile behind (a folder, a YAML file
 
 ## 4. Routes that do not exist
 
-By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings only (no mounts, environment variables, k3s arguments or custom disk images); they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
+By design the API has no route for arbitrary commands, container control, profile deletion or renaming, YAML editing, or VM and control logs. Profiles can be created (3.17) with the basic and advanced settings, host folder mounts and environment variables, and nothing else. These `colima start` options are deliberately not supported: `--disk-image` and `--force-disk-image` (a custom disk image is an arbitrary file), `--k3s-arg` (raw k3s arguments), `--edit`, `--editor` and `--foreground` (interactive editor and a process that never returns), `--template`, `--save-config` (Colima's default, saving the settings, is left as it is) and `--downloader`. Mounts and environment variables of an existing profile cannot be edited here either; they cannot be deleted or renamed here (Colima has no rename). Container output is readable, but only as a bounded snapshot (see 3.16), never as a stream. A separate "current usage" route is also not defined, see 3.9.
 
 ## 5. Event stream
 
