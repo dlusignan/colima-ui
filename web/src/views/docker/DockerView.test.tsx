@@ -9,6 +9,7 @@ import type { DockerImage, DockerNetwork, DockerVolume, EngineInfo, Profile } fr
 import { expectNoA11yViolations } from '@/test/axe'
 import { profileFixture } from '@/test/fixtures'
 import { createTestClient } from '@/test/queryWrapper'
+import { ToastProvider } from '@/lib/toast/ToastProvider'
 import { DockerView } from './DockerView'
 
 afterEach(() => vi.restoreAllMocks())
@@ -50,9 +51,11 @@ function setup(profile: Profile = profileFixture({ name: 'dev', status: 'running
   const view = render(
     <QueryClientProvider client={createTestClient()}>
       <MemoryRouter initialEntries={['/profiles/dev/docker']}>
-        <Routes>
-          <Route path="/profiles/:name/docker" element={<DockerView />} />
-        </Routes>
+        <ToastProvider>
+          <Routes>
+            <Route path="/profiles/:name/docker" element={<DockerView />} />
+          </Routes>
+        </ToastProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   )
