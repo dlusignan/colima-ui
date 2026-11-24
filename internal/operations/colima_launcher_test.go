@@ -203,3 +203,108 @@ func TestRefusedDeleteIsAFailedJob(t *testing.T) {
 		t.Fatal("slot still held")
 	}
 }
+
+func k8sLauncher(s colima.Streamer, status string, enabled bool) ColimaLauncher {
+	return ColimaLauncher{
+		S:                 s,
+		VMStatus:          func(context.Context, string) (string, error) { return status, nil },
+		KubernetesEnabled: func(string) (bool, error) { return enabled, nil },
+	}
+}
+
+var k8sActions = []Action{ActionKubernetesStart, ActionKubernetesStop, ActionKubernetesReset, ActionKubernetesDelete}
+
+func TestColimaLauncherKubernetesArgv(t *testing.T) {
+	s := &argsStreamer{}
+	l := k8sLauncher(s, "Running", true)
+	for _, a := range k8sActions {
+		if !a.IsKubernetes() {
+			t.Fatalf("%s: IsKubernetes false", a)
+		}
+		if _, err := l.Launch(context.Background(), Request{Action: a, Profile: "dev"}); err != nil {
+			t.Fatalf("%s: %v", a, err)
+		}
+	}
+	want := [][]string{
+		{"kubernetes", "start", "-p", "dev"},
+		{"kubernetes", "stop", "-p", "dev"},
+		{"kubernetes", "reset", "-p", "dev"},
+		{"kubernetes", "delete", "-p", "dev"},
+	}
+	if !reflect.DeepEqual(s.args, want) {
+		t.Fatalf("args = %v, want %v", s.args, want)
+	}
+	if ActionStart.IsKubernetes() {
+		t.Fatal("start is not a kubernetes action")
+	}
+}
+
+// A stopped cluster is the normal state for Start: only the configuration
+// decides, never whether k3s is running.
+func TestColimaLauncherKubernetesRefusalsAreFailedJobsNotRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		status  string
+		enabled bool
+	}{
+		{"stopped", "stopped", true},
+		{"broken", "broken", true},
+		{"empty", "", true},
+		{"disabled", "running", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &argsStreamer{}
+			p, err := k8sLauncher(s, tc.status, tc.enabled).Launch(context.Background(), Request{Action: ActionKubernetesReset, Profile: "dev"})
+			if err != nil || p == nil {
+				t.Fatalf("p=%v err=%v", p, err)
+			}
+			if nr, ok := p.(interface{ NotRun() bool }); !ok || !nr.NotRun() {
+				t.Fatal("refusal must be marked NotRun")
+			}
+			if ex, _ := p.Wait(); ex.ExitCode == 0 {
+				t.Fatal("refusal must fail")
+			}
+			if len(s.args) != 0 {
+				t.Fatalf("streamer called: %v", s.args)
+			}
+		})
+	}
+}
+
+func TestColimaLauncherKubernetesFailsClosed(t *testing.T) {
+	boom := errors.New("boom")
+	for _, l := range []ColimaLauncher{
+		{S: &argsStreamer{}}, // no hooks at all
+		{S: &argsStreamer{}, VMStatus: func(context.Context, string) (string, error) { return "running", nil }},
+		{S: &argsStreamer{}, KubernetesEnabled: func(string) (bool, error) { return true, nil }},
+		{S: &argsStreamer{}, VMStatus: func(context.Context, string) (string, error) { return "", boom },
+			KubernetesEnabled: func(string) (bool, error) { return true, nil }},
+		{S: &argsStreamer{}, VMStatus: func(context.Context, string) (string, error) { return "running", nil },
+			KubernetesEnabled: func(string) (bool, error) { return false, boom }},
+	} {
+		s := &argsStreamer{}
+		l.S = s
+		if _, err := l.Launch(context.Background(), Request{Action: ActionKubernetesStop, Profile: "dev"}); err == nil {
+			t.Fatal("want an error")
+		}
+		if len(s.args) != 0 {
+			t.Fatalf("colima ran: %v", s.args)
+		}
+	}
+}
+
+func TestColimaLauncherKubernetesRejectsBadProfileBeforeAnyRead(t *testing.T) {
+	s := &argsStreamer{}
+	calls := 0
+	l := ColimaLauncher{S: s,
+		VMStatus:          func(context.Context, string) (string, error) { calls++; return "running", nil },
+		KubernetesEnabled: func(string) (bool, error) { calls++; return true, nil }}
+	for _, a := range k8sActions {
+		if _, err := l.Launch(context.Background(), Request{Action: a, Profile: "--all"}); err == nil {
+			t.Fatalf("%s: want invalid profile error", a)
+		}
+	}
+	if len(s.args) != 0 || calls != 0 {
+		t.Fatalf("process or read started: %v %d", s.args, calls)
+	}
+}

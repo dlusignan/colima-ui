@@ -83,13 +83,36 @@ export interface ProfileCreated {
 
 /** What a profile's buttons can start. */
 export type ProfileAction = 'start' | 'stop' | 'restart' | 'update'
+/** The four Kubernetes cluster actions (docs/api.md 3.34); each is a job on the profile. */
+export type KubernetesAction =
+  | 'kubernetes-start'
+  | 'kubernetes-stop'
+  | 'kubernetes-reset'
+  | 'kubernetes-delete'
+
+/** Answer of `GET /api/profiles/{name}/kubernetes` (docs/api.md 3.33): enabled in the profile's configuration. */
+export interface KubernetesStatus {
+  enabled: boolean
+}
+
+/** Body of the reset and delete routes (docs/api.md 3.34). */
+export interface KubernetesConfirmRequest {
+  confirm: string
+}
+
 /**
  * What a job can be doing: a profile action, creating the profile (POST
  * /api/profiles, 3.17), or pulling an image (3.30; it never holds the profile's
  * start/stop slot, and its output is progress text rather than process output),
- * or clearing Colima's download cache (3.33; a global job with an empty profile).
+ * or clearing Colima's download cache (3.35; a global job with an empty profile).
  */
-export type JobAction = ProfileAction | 'delete' | 'create' | 'image-pull' | 'cache-prune'
+export type JobAction =
+  | ProfileAction
+  | KubernetesAction
+  | 'delete'
+  | 'create'
+  | 'image-pull'
+  | 'cache-prune'
 export type JobState = 'running' | 'succeeded' | 'failed' | 'cancelled'
 
 export interface JobOutputLine {
@@ -211,7 +234,7 @@ export interface PullImageAccepted extends JobRef {
 }
 
 /**
- * Body of `POST /api/colima/cache/prune` (docs/api.md 3.33). `confirm` must be
+ * Body of `POST /api/colima/cache/prune` (docs/api.md 3.35). `confirm` must be
  * the exact text `delete-cached-assets`; `includeLima` adds `--all`.
  */
 export interface CachePruneRequest {

@@ -19,6 +19,13 @@ const (
 	ActionDelete Action = "delete"
 	// ActionUpdate refreshes the container runtime of a running profile.
 	ActionUpdate Action = "update"
+	// The four Kubernetes actions run `colima kubernetes <verb>` on a running
+	// profile whose cluster is enabled. Reset and delete destroy workloads and
+	// cluster state; a cancelled one can leave the cluster half done.
+	ActionKubernetesStart  Action = "kubernetes-start"
+	ActionKubernetesStop   Action = "kubernetes-stop"
+	ActionKubernetesReset  Action = "kubernetes-reset"
+	ActionKubernetesDelete Action = "kubernetes-delete"
 	// ActionCreate starts a profile that does not exist yet, with the options
 	// in Request.Options. The route that submits it checks existence.
 	ActionCreate Action = "create"
@@ -48,4 +55,13 @@ type Request struct {
 // mutex held.
 type Launcher interface {
 	Launch(ctx context.Context, r Request) (colima.Process, error)
+}
+
+// IsKubernetes reports whether a is one of the four Kubernetes actions.
+func (a Action) IsKubernetes() bool {
+	switch a {
+	case ActionKubernetesStart, ActionKubernetesStop, ActionKubernetesReset, ActionKubernetesDelete:
+		return true
+	}
+	return false
 }

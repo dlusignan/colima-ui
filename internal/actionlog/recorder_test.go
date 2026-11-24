@@ -479,3 +479,52 @@ func TestImagePullRunningWritesNothing(t *testing.T) {
 		t.Fatal("row written for a running pull")
 	}
 }
+
+func TestKubernetesJobsRecordTheVerb(t *testing.T) {
+	cases := []struct {
+		action operations.Action
+		state  operations.State
+		code   *int
+		detail string
+	}{
+		{operations.ActionKubernetesStart, operations.StateSucceeded, intp(0), "kubernetes start"},
+		{operations.ActionKubernetesStop, operations.StateFailed, intp(2), "kubernetes stop: colima exited with status 2"},
+		{operations.ActionKubernetesStart, operations.StateCancelled, nil, "kubernetes start: cancelled before it finished"},
+		{operations.ActionKubernetesReset, operations.StateSucceeded, intp(0), "kubernetes reset"},
+		{operations.ActionKubernetesReset, operations.StateCancelled, nil, "kubernetes reset: cancelled before it finished; the cluster may be partly changed"},
+		{operations.ActionKubernetesDelete, operations.StateCancelled, nil, "kubernetes delete: cancelled before it finished; the cluster may be partly changed"},
+		{operations.ActionKubernetesDelete, operations.StateFailed, nil, "kubernetes delete: colima did not exit normally; the cluster may be partly changed"},
+		{operations.ActionKubernetesReset, operations.StateFailed, intp(1), "kubernetes reset: colima exited with status 1; the cluster may be partly changed"},
+		{operations.ActionKubernetesStop, operations.StateFailed, intp(1), "kubernetes stop: colima exited with status 1"},
+	}
+	for _, c := range cases {
+		t.Run(c.detail, func(t *testing.T) {
+			fs := &fakeSink{}
+			r := New(fs)
+			r.JobFinished(summary(c.action, c.state, c.code))
+			if err := r.Close(ctxT(t)); err != nil {
+				t.Fatal(err)
+			}
+			rows := fs.snapshot()
+			if len(rows) != 1 || rows[0].Action != string(c.action) || rows[0].Detail == nil || *rows[0].Detail != c.detail {
+				t.Fatalf("rows = %+v", rows)
+			}
+		})
+	}
+}
+
+func TestKubernetesNotRunRowHasNoPartialWarning(t *testing.T) {
+	fs := &fakeSink{}
+	r := New(fs)
+	j := summary(operations.ActionKubernetesReset, operations.StateFailed, intp(1))
+	j.NotRun = true
+	r.JobFinished(j)
+	if err := r.Close(ctxT(t)); err != nil {
+		t.Fatal(err)
+	}
+	rows := fs.snapshot()
+	want := "kubernetes reset: not run: profile was not running or Kubernetes is not enabled"
+	if len(rows) != 1 || rows[0].Detail == nil || *rows[0].Detail != want {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
