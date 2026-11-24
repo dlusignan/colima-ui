@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/dlusignan/colima-ui/internal/colima"
@@ -25,6 +26,8 @@ type profileCreator struct {
 	mgr    creationManager
 	exists func(ctx context.Context, name string) (bool, error)
 	limits config.Limits
+	// host is the filesystem the mount checks read. Nil means the real one.
+	host config.HostFS
 }
 
 // reservedNameRule is the fixed message for a name Colima maps onto another
@@ -83,8 +86,31 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 		adv.DNSHosts = append(adv.DNSHosts, config.DNSHost{Name: h.Name, Address: h.Address})
 		hosts = append(hosts, colima.DNSHost{Name: h.Name, Address: h.Address})
 	}
+	for _, m := range p.Mounts {
+		adv.Mounts = append(adv.Mounts, config.NewMount{Path: m.Path, Writable: m.Writable})
+	}
+	// Sorted by key, so the argv is deterministic and an error on a bad key
+	// is named by its index in this order (documented in docs/api.md).
+	env := append(httpapi.EnvVars(nil), p.Env...)
+	sort.SliceStable(env, func(i, j int) bool { return env[i].Key < env[j].Key })
+	for _, e := range env {
+		adv.Env = append(adv.Env, config.NewEnvVar{Key: e.Key, Value: e.Value})
+	}
 	// ValidateNew names the advanced fields with the creation body's keys.
-	for _, fe := range config.ValidateNew(prof, adv, c.limits) {
+	verrs := config.ValidateNew(prof, adv, c.limits)
+	// The host checks run only when the mounts are well formed, so the
+	// filesystem is never asked about a hostile or oversized list.
+	var mounts []config.NewMount
+	if !hasMountError(verrs) {
+		host := c.host
+		if host == nil {
+			host = config.OSHostFS{}
+		}
+		var herrs []config.FieldError
+		mounts, herrs = config.ResolveMounts(adv.Mounts, host)
+		verrs = append(verrs, herrs...)
+	}
+	for _, fe := range verrs {
 		key := fe.Field
 		if w, ok := creationFieldNames[key]; ok {
 			key = w
@@ -106,6 +132,16 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 		return "", httpapi.ErrProfileExists
 	}
 
+	// The resolved paths are what was checked, so they are what is mounted.
+	var cmounts []colima.Mount
+	for _, m := range mounts {
+		cmounts = append(cmounts, colima.Mount{Path: m.Path, Writable: m.Writable})
+	}
+	var cenv []colima.EnvVar
+	for _, e := range env {
+		cenv = append(cenv, colima.EnvVar{Key: e.Key, Value: e.Value})
+	}
+
 	sum, err := c.mgr.Submit(operations.Request{
 		Action:  operations.ActionCreate,
 		Profile: p.Name,
@@ -118,6 +154,7 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 			PortForwarder: colima.PortForwarder(p.PortForwarder), MountInotify: p.MountInotify,
 			NetworkAddress: p.NetworkAddress, NetworkMode: colima.NetworkMode(p.NetworkMode),
 			NetworkInterface: p.NetworkInterface, CPUType: p.CPUType,
+			Mounts: cmounts, Env: cenv,
 		},
 	})
 	if err != nil {
@@ -130,4 +167,14 @@ func (c profileCreator) Create(ctx context.Context, p httpapi.NewProfile) (strin
 // creation route and the config PUT share the same ranges.
 func colimaLimits(l config.Limits) colima.Limits {
 	return colima.Limits{MaxCPU: l.MaxCPU, MaxMemoryGiB: l.MaxMemoryGiB, MaxDiskGiB: l.MaxDiskGiB}
+}
+
+// hasMountError reports whether errs name a mounts field.
+func hasMountError(errs []config.FieldError) bool {
+	for _, e := range errs {
+		if e.Field == "mounts" || strings.HasPrefix(e.Field, "mounts[") {
+			return true
+		}
+	}
+	return false
 }

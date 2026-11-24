@@ -992,13 +992,19 @@ func TestAppCreateProfileFlow(t *testing.T) {
 		`{"name":"fresh","unknown":1}`:   400,
 		`{"name":"fresh","cpus":"2"}`:    400,
 		`{"name":"a/b"}`:                 422,
-		`{"name":"fresh","kubernetesVersion":"--edit"}`: 422,
+		`{"name":"fresh","kubernetesVersion":"--edit"}`:                     422,
+		`{"name":"fresh","mounts":[{"path":"/nonexistent-synthetic-dir"}]}`: 422,
+		`{"name":"fresh","mounts":[{"path":"/","writable":true}]}`:          422,
+		`{"name":"fresh","mounts":[{"path":"/tmp,/etc"}]}`:                  422,
+		`{"name":"fresh","mounts":[{"path":"/tmp","path":"/tmp"}]}`:         400,
+		`{"name":"fresh","env":{"A-B":"1"}}`:                                422,
+		`{"name":"fresh","env":{"A":"1","A":"2"}}`:                          400,
 	} {
 		if code, out := ts.do(t, "POST", "/api/profiles", body); code != want {
 			t.Fatalf("%s: %d %s, want %d", body, code, out, want)
 		}
 	}
-	if code, out := ts.do(t, "POST", "/api/profiles", strings.Repeat(" ", 65<<10)+`{"name":"fresh"}`); code != 400 {
+	if code, out := ts.do(t, "POST", "/api/profiles", strings.Repeat(" ", 257<<10)+`{"name":"fresh"}`); code != 400 {
 		t.Fatalf("oversized: %d %s", code, out)
 	}
 	if r.streamCount() != 0 {
@@ -1066,6 +1072,44 @@ func TestAppCreateProfileFlow(t *testing.T) {
 	}
 	if rows := historyAt(t, dbPath, "fresh"); len(rows) != 1 || rows[0].Action != "create" {
 		t.Fatalf("history %+v", rows)
+	}
+	assertNoLeak(t, baseline)
+}
+
+// A mount and a variable go through the real route, creator and adapter, and
+// reach colima as one argv element each. The mount is a temporary folder, read
+// only, passed as the path it resolves to.
+func TestAppCreateWithMountAndEnv(t *testing.T) {
+	baseline := ownGoroutines()
+	r := &fakeRunner{list: listJSON, script: []string{"ok"}, exit: 0}
+	a, _ := testAppAt(t, r)
+	ts := serve(t, a)
+	dir := t.TempDir()
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch, _ := ts.openStream(t, "?profile=withmount")
+	body := `{"name":"withmount","mounts":[{"path":` + strconv.Quote(dir) + `}],"env":{"Z":"a;b --edit","A":"x=y"}}`
+	if code, out := ts.do(t, "POST", "/api/profiles", body); code != 202 {
+		t.Fatalf("create: %d %s", code, out)
+	}
+	nextJobEvent(t, ch) // output
+	if fin := nextJobEvent(t, ch); fin.name != "job.finished" || fin.data["state"] != "succeeded" {
+		t.Fatalf("finished: %#v", fin)
+	}
+	want := []string{"start", "-p", "withmount", "--mount", resolved, "--env", "A=x=y", "--env", "Z=a;b --edit"}
+	if got := r.streams[0]; !reflect.DeepEqual(got, want) {
+		t.Fatalf("argv %v, want %v", got, want)
+	}
+	a.closeStreams()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := ts.srv.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.shutdown(ctx); err != nil {
+		t.Fatal(err)
 	}
 	assertNoLeak(t, baseline)
 }

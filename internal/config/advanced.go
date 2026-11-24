@@ -63,6 +63,10 @@ type NewAdvanced struct {
 	NetworkMode      string
 	NetworkInterface string
 	CPUType          string
+	// Mounts and Env are checked for syntax by ValidateNew and against the host
+	// by ResolveMounts. Env must be sorted by key.
+	Mounts []NewMount
+	Env    []NewEnvVar
 }
 
 // validAddress reports whether s is one IPv4 or IPv6 address in the textual
@@ -156,5 +160,6 @@ func validateAdvanced(a NewAdvanced, vmType, arch string) []FieldError {
 	if a.VZRosetta && ((vmType != "" && vmType != "vz") || arch != "aarch64") {
 		add("vzRosetta", "requires vmType vz and arch aarch64")
 	}
+	errs = append(errs, validateMountsEnv(a.Mounts, a.Env)...)
 	return errs
 }

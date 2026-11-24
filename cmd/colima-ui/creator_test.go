@@ -30,7 +30,7 @@ var testLimits = config.Limits{MaxCPU: 8, MaxMemoryGiB: 32, MaxDiskGiB: 500}
 
 func newCreator(m *fakeMgr, exists bool, existsErr error) (profileCreator, *int) {
 	calls := new(int)
-	return profileCreator{mgr: m, limits: testLimits, exists: func(context.Context, string) (bool, error) {
+	return profileCreator{mgr: m, limits: testLimits, host: defaultFakeHost(), exists: func(context.Context, string) (bool, error) {
 		*calls++
 		return exists, existsErr
 	}}, calls
