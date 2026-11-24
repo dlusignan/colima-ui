@@ -227,3 +227,41 @@ func TestFakeImageWritesValidateLikeTheRealClient(t *testing.T) {
 		t.Fatalf("calls = %+v", c)
 	}
 }
+
+func TestFakeContainerActionsValidateLikeTheRealClient(t *testing.T) {
+	f := &Fake{}
+	ctx := context.Background()
+	id := "0123456789ab"
+	calls := map[string]func(string) (bool, error){
+		"StartContainer":   func(s string) (bool, error) { return f.StartContainer(ctx, s) },
+		"StopContainer":    func(s string) (bool, error) { return f.StopContainer(ctx, s) },
+		"RestartContainer": func(s string) (bool, error) { return f.RestartContainer(ctx, s) },
+	}
+	for name, run := range calls {
+		if changed, err := run(id); err != nil || !changed {
+			t.Errorf("%s: changed=%v err=%v", name, changed, err)
+		}
+		for _, bad := range []string{"", "web", "0123456789AB", "0123456789a/", "../x"} {
+			if changed, err := run(bad); !errors.Is(err, dockerc.ErrBadName) || changed {
+				t.Errorf("%s %q: changed=%v err=%v", name, bad, changed, err)
+			}
+		}
+		if n := len(f.CallsTo(name)); n != 6 {
+			t.Errorf("%s recorded %d calls", name, n)
+		}
+	}
+	f.ContainerUnchanged = true
+	if c, _ := f.StartContainer(ctx, id); c {
+		t.Error("start should report unchanged")
+	}
+	if c, _ := f.StopContainer(ctx, id); c {
+		t.Error("stop should report unchanged")
+	}
+	if c, _ := f.RestartContainer(ctx, id); !c {
+		t.Error("restart always changes")
+	}
+	f.FailWith("StopContainer", dockerc.ErrConflict)
+	if c, err := f.StopContainer(ctx, id); !errors.Is(err, dockerc.ErrConflict) || c {
+		t.Errorf("injected failure: %v %v", c, err)
+	}
+}

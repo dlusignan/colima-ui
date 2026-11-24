@@ -114,6 +114,10 @@ type writeSpec struct {
 	// busy check and writes no action log row. Everything else, including the
 	// profile lookup, the body rules and the error mapping, is unchanged.
 	ReadOnly bool
+	// EmptyBodyOnly makes a route without Body keys refuse {} as well: only an
+	// empty (or all-whitespace) body is accepted, anything else is 400. It is
+	// for routes whose request carries no data at all (container actions).
+	EmptyBodyOnly bool
 	// EmptyBodyIsObject makes an empty body mean {} for a route with Body keys,
 	// so that a missing key is the route's own 422 and not a 400. Any other
 	// malformed body is still a 400.
@@ -133,6 +137,12 @@ type writePlan struct {
 	// AuditDetail, when set, replaces Object as the detail of the action log row
 	// (the answer still echoes Object). Built only from validated parts.
 	AuditDetail string
+	// AuditDetailAfter, when set, builds the detail of the action log row after
+	// the call has run, from its error, for a detail that depends on the
+	// outcome (container actions record whether anything changed). It takes
+	// precedence over AuditDetail and Object and is held to the same rules:
+	// printable ASCII only, at most 1024 bytes, built from validated parts.
+	AuditDetailAfter func(runErr error) string
 	// Run makes the Docker call, normally one typed dockerc.Client method.
 	Run func(ctx context.Context, c dockerc.Client) error
 	// Status is the success status (default 200 with Result, 204 without).
@@ -171,7 +181,13 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 	}
 
 	if spec.Body == nil {
-		if err := emptyBody(w, r); err != nil {
+		var err error
+		if spec.EmptyBodyOnly {
+			err = emptyBodyOnly(w, r)
+		} else {
+			err = emptyBody(w, r)
+		}
+		if err != nil {
 			return err
 		}
 	} else {
@@ -200,7 +216,7 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 	// A plan that breaks its own contract is a bug, not user input: stop
 	// before Docker, and keep the value out of the log row and the answer.
 	if plan.Run == nil || (plan.Object != "" && !dockerc.ValidObjectName(plan.Object) && !dockerc.ValidImageRef(plan.Object)) ||
-		len(plan.AuditDetail) > 1024 || strings.ContainsFunc(plan.AuditDetail, func(r rune) bool { return r < 0x20 || r > 0x7e }) {
+		!validAuditDetail(plan.AuditDetail) {
 		slog.Error("docker write plan is invalid", "action", spec.Action)
 		return errInternal()
 	}
@@ -219,6 +235,13 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 		detail := plan.Object
 		if plan.AuditDetail != "" {
 			detail = plan.AuditDetail
+		}
+		if plan.AuditDetailAfter != nil {
+			detail = plan.AuditDetailAfter(err)
+			if !validAuditDetail(detail) {
+				slog.Error("docker write audit detail is invalid", "action", spec.Action)
+				detail = ""
+			}
 		}
 		d.record(r.Context(), name, spec.Action, detail, err)
 	}
@@ -240,6 +263,12 @@ func (d *dockerWriter) serve(w http.ResponseWriter, r *http.Request, spec writeS
 		w.WriteHeader(code)
 	}
 	return nil
+}
+
+// validAuditDetail reports whether detail may go into an action log row: at
+// most 1024 bytes of printable ASCII (empty is fine).
+func validAuditDetail(detail string) bool {
+	return len(detail) <= 1024 && !strings.ContainsFunc(detail, func(r rune) bool { return r < 0x20 || r > 0x7e })
 }
 
 // record appends the action log row of one attempt. A failed append is logged

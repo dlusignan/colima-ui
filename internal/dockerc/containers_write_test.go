@@ -58,7 +58,6 @@ type containerCall struct {
 	name string
 	run  func(c *httpClient, id string) (bool, error)
 	path string
-	// ok is the status that means "did it".
 }
 
 var containerCalls = []containerCall{

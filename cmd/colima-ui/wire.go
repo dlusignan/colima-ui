@@ -276,6 +276,10 @@ func (a *app) handler() http.Handler {
 	opts = append(opts, httpapi.WithVolumes(a.gate, a.containers, a.mgr, a.store))
 	opts = append(opts, httpapi.WithNetworks(a.gate, a.containers, a.mgr, a.store))
 
+	// #151 container start, stop and restart (write routes: they need the job
+	// manager's busy lookup and the action log)
+	opts = append(opts, httpapi.WithContainerActions(a.gate, a.containers, a.mgr, a.store))
+
 	// #81 engine
 	opts = append(opts, httpapi.WithEngine(a.gate, a.containers))
 

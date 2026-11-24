@@ -506,3 +506,7 @@ func (d *fakeDocker) PruneImages(context.Context, bool) (dockerc.ImagePruneResul
 }
 
 func (d *fakeDocker) PullImage(context.Context, string, func(string)) error { return nil }
+
+func (d *fakeDocker) StartContainer(context.Context, string) (bool, error)   { return false, nil }
+func (d *fakeDocker) StopContainer(context.Context, string) (bool, error)    { return false, nil }
+func (d *fakeDocker) RestartContainer(context.Context, string) (bool, error) { return false, nil }

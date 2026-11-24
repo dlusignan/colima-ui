@@ -379,3 +379,9 @@ func (f *fakeDockerClient) PruneImages(context.Context, bool) (dockerc.ImagePrun
 }
 
 func (f *fakeDockerClient) PullImage(context.Context, string, func(string)) error { return nil }
+
+func (f *fakeDockerClient) StartContainer(context.Context, string) (bool, error) { return false, nil }
+func (f *fakeDockerClient) StopContainer(context.Context, string) (bool, error)  { return false, nil }
+func (f *fakeDockerClient) RestartContainer(context.Context, string) (bool, error) {
+	return false, nil
+}
