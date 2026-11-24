@@ -139,6 +139,21 @@ type Client interface {
 	// PruneVolumes removes unused volumes. On API v1.41 that includes named
 	// ones (PruneIncludesNamedVolumes).
 	PruneVolumes(ctx context.Context) (PruneResult, error)
+
+	// CreateNetwork creates a bridge network (never another driver). name and
+	// subnet are validated here (ValidObjectName, NormalizeSubnet; an empty
+	// subnet lets Docker choose); an invalid one gives ErrBadName before any
+	// request. An existing name gives ErrConflict.
+	CreateNetwork(ctx context.Context, name string, internal bool, subnet string) (Network, error)
+	// InspectNetwork reads one network by name or ID with its subnets and
+	// attached containers. An unknown one gives ErrObjectNotFound.
+	InspectNetwork(ctx context.Context, ref string) (NetworkDetail, error)
+	// RemoveNetwork removes a network, never with force. A predefined network
+	// gives ErrConflict without a request to remove it, one with containers
+	// *InUseError (an ErrConflict) and an unknown one ErrObjectNotFound.
+	RemoveNetwork(ctx context.Context, ref string) error
+	// PruneNetworks removes unused networks; Docker keeps the predefined ones.
+	PruneNetworks(ctx context.Context) (NetworkPruneResult, error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,

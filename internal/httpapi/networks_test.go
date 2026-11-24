@@ -12,7 +12,7 @@ import (
 )
 
 func networksServer(g ProfileGate, p dockerc.Provider) http.Handler {
-	return NewHandler(testPort, testToken, NewAPI(WithNetworks(g, p)), nil)
+	return NewHandler(testPort, testToken, NewAPI(WithNetworks(g, p, fakeBusy{}, nil)), nil)
 }
 
 const networksURL = "/api/profiles/synthetic-a/networks"

@@ -60,6 +60,11 @@ type Fake struct {
 	VolumeDetail  dockerc.VolumeDetail
 	PruneResult   dockerc.PruneResult
 
+	// Results of the network write methods.
+	CreatedNetwork dockerc.Network
+	NetworkDetail  dockerc.NetworkDetail
+	NetworkPrune   dockerc.NetworkPruneResult
+
 	mu    sync.Mutex
 	calls []Call
 	errs  map[string]error
@@ -196,6 +201,30 @@ func (f *Fake) RemoveVolume(_ context.Context, name string) error {
 
 func (f *Fake) PruneVolumes(context.Context) (dockerc.PruneResult, error) {
 	return zeroOnErr(f.PruneResult, f.record("PruneVolumes"))
+}
+
+// CreateNetwork validates like the real client: the name and a non-empty
+// subnet, else ErrBadName.
+func (f *Fake) CreateNetwork(_ context.Context, name string, internal bool, subnet string) (dockerc.Network, error) {
+	err := f.RecordObject("CreateNetwork", name, internal, subnet)
+	if err == nil && subnet != "" {
+		if _, ok := dockerc.NormalizeSubnet(subnet); !ok {
+			err = dockerc.ErrBadName
+		}
+	}
+	return zeroOnErr(f.CreatedNetwork, err)
+}
+
+func (f *Fake) InspectNetwork(_ context.Context, ref string) (dockerc.NetworkDetail, error) {
+	return zeroOnErr(f.NetworkDetail, f.RecordObject("InspectNetwork", ref))
+}
+
+func (f *Fake) RemoveNetwork(_ context.Context, ref string) error {
+	return f.RecordObject("RemoveNetwork", ref)
+}
+
+func (f *Fake) PruneNetworks(context.Context) (dockerc.NetworkPruneResult, error) {
+	return zeroOnErr(f.NetworkPrune, f.record("PruneNetworks"))
 }
 
 // Provider implements dockerc.Provider. It records the profile of every For

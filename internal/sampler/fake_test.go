@@ -483,3 +483,13 @@ func (d *fakeDocker) RemoveVolume(context.Context, string) error { return nil }
 func (d *fakeDocker) PruneVolumes(context.Context) (dockerc.PruneResult, error) {
 	return dockerc.PruneResult{}, nil
 }
+func (d *fakeDocker) CreateNetwork(context.Context, string, bool, string) (dockerc.Network, error) {
+	return dockerc.Network{}, nil
+}
+func (d *fakeDocker) InspectNetwork(context.Context, string) (dockerc.NetworkDetail, error) {
+	return dockerc.NetworkDetail{}, nil
+}
+func (d *fakeDocker) RemoveNetwork(context.Context, string) error { return nil }
+func (d *fakeDocker) PruneNetworks(context.Context) (dockerc.NetworkPruneResult, error) {
+	return dockerc.NetworkPruneResult{}, nil
+}
