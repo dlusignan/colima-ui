@@ -12,10 +12,13 @@ const maxStatsInFlight = 4
 
 // Container is one entry of the container list.
 type Container struct {
-	ID    string // 12-char short form
-	Name  string // without the leading "/"
-	Image string
-	State string // "running", "exited", ...
+	ID string // 12-char short form
+	// FullID is the 64-character id the write calls need (ValidContainerID);
+	// empty when Docker reported something else.
+	FullID string
+	Name   string // without the leading "/"
+	Image  string
+	State  string // "running", "exited", ...
 
 	Status  string    // Docker's status text, "Up 2 hours"
 	Created time.Time // UTC
@@ -178,6 +181,19 @@ type Client interface {
 	// reported is a *PullError whose Message is safe to show; cancelling ctx
 	// stops the HTTP stream and returns an error wrapping ctx.Err().
 	PullImage(ctx context.Context, ref string, emit func(line string)) error
+
+	// StartContainer, StopContainer and RestartContainer act on one container
+	// by full id (ValidContainerID: exactly 64 lowercase hex characters; a name or
+	// anything else gives ErrBadName before any request). They report whether
+	// anything changed: false when Docker answered 304 because the container
+	// was already running (start) or already stopped (stop). Stop and restart
+	// send no timeout, so Docker's default grace period applies. An unknown
+	// id gives ErrObjectNotFound and a container Docker refuses to act on (a
+	// paused container, or limits that no longer fit: Docker 409 or 400)
+	// ErrConflict.
+	StartContainer(ctx context.Context, id string) (changed bool, err error)
+	StopContainer(ctx context.Context, id string) (changed bool, err error)
+	RestartContainer(ctx context.Context, id string) (changed bool, err error)
 }
 
 // Provider returns a Client for a profile, or ErrVMNotRunning,

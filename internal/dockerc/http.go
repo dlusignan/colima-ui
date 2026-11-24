@@ -221,6 +221,9 @@ func (c *httpClient) Containers(ctx context.Context) ([]Container, error) {
 			ID: shortID(r.ID), Image: r.Image, State: r.State,
 			Status: r.Status, Created: time.Unix(r.Created, 0).UTC(),
 		}
+		if ValidContainerID(r.ID) {
+			ct.FullID = r.ID
+		}
 		for _, p := range r.Ports {
 			ct.Ports = append(ct.Ports, Port{
 				ContainerPort: p.PrivatePort, Protocol: p.Type,

@@ -184,6 +184,8 @@ export interface ContainerPort {
 
 export interface Container {
   id: string
+  /** The full 64 character id the container action routes need (3.36); empty when unknown. */
+  fullId: string
   name: string
   image: string
   state: string
@@ -247,6 +249,15 @@ export interface CachePruneAccepted extends JobRef {
   action: 'cache-prune'
   profile: string
   state: 'running'
+}
+
+/**
+ * The 200 answer of `POST /api/profiles/{name}/containers/{id}/{start|stop|restart}`
+ * (docs/api.md 3.36). `changed` is false when Docker said the container was
+ * already in that state.
+ */
+export interface ContainerActionResult {
+  changed: boolean
 }
 
 /** Body of `POST /api/profiles/{name}/images/{image}/tag`. Both fields are required. */

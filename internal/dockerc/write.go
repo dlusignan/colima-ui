@@ -70,17 +70,26 @@ func joinSuffix(s []fixedPath) string {
 // success (200, 201 and 204 when ok is empty); any other status is mapped by
 // writeStatusErr, and the daemon's error text is dropped.
 func (c *httpClient) post(ctx context.Context, timeout time.Duration, t target, query url.Values, body, dst any, ok ...int) error {
-	return c.send(ctx, http.MethodPost, timeout, t.path, query, body, dst, ok)
+	_, err := c.send(ctx, http.MethodPost, timeout, t.path, query, body, dst, ok)
+	return err
+}
+
+// postStatus is post for a call whose success statuses mean different things
+// (204 done, 304 already in that state). It returns the status that was
+// accepted; on an error the status is 0.
+func (c *httpClient) postStatus(ctx context.Context, timeout time.Duration, t target, query url.Values, ok ...int) (int, error) {
+	return c.send(ctx, http.MethodPost, timeout, t.path, query, nil, nil, ok)
 }
 
 // delete performs one DELETE with a deadline, with the same rules as post.
 func (c *httpClient) delete(ctx context.Context, timeout time.Duration, t target, query url.Values, dst any, ok ...int) error {
-	return c.send(ctx, http.MethodDelete, timeout, t.path, query, nil, dst, ok)
+	_, err := c.send(ctx, http.MethodDelete, timeout, t.path, query, nil, dst, ok)
+	return err
 }
 
-func (c *httpClient) send(ctx context.Context, method string, timeout time.Duration, path string, query url.Values, body, dst any, ok []int) error {
+func (c *httpClient) send(ctx context.Context, method string, timeout time.Duration, path string, query url.Values, body, dst any, ok []int) (int, error) {
 	if !safeURLPath(path) {
-		return ErrBadName
+		return 0, ErrBadName
 	}
 	if timeout <= 0 {
 		timeout = writeTimeout
@@ -89,7 +98,7 @@ func (c *httpClient) send(ctx context.Context, method string, timeout time.Durat
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("%w: bad request body", ErrInvalidRequest)
+			return 0, fmt.Errorf("%w: bad request body", ErrInvalidRequest)
 		}
 		rdr = bytes.NewReader(b)
 	}
@@ -101,35 +110,35 @@ func (c *httpClient) send(ctx context.Context, method string, timeout time.Durat
 	}
 	req, err := http.NewRequestWithContext(callCtx, method, u, rdr)
 	if err != nil {
-		return fmt.Errorf("%w: bad request", ErrDockerUnavailable)
+		return 0, fmt.Errorf("%w: bad request", ErrDockerUnavailable)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return c.transportErr(ctx, callCtx)
+		return 0, c.transportErr(ctx, callCtx)
 	}
 	defer resp.Body.Close()
 	if !statusOK(resp.StatusCode, ok) {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return writeStatusErr(resp.StatusCode)
+		return 0, writeStatusErr(resp.StatusCode)
 	}
 	if dst == nil {
 		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
-		return nil
+		return resp.StatusCode, nil
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBody+1))
 	if err != nil {
-		return c.transportErr(ctx, callCtx)
+		return 0, c.transportErr(ctx, callCtx)
 	}
 	if int64(len(raw)) > c.maxBody {
-		return fmt.Errorf("%w: response too large: %w", ErrDockerUnavailable, errUnusableAnswer)
+		return 0, fmt.Errorf("%w: response too large: %w", ErrDockerUnavailable, errUnusableAnswer)
 	}
 	if err := json.Unmarshal(raw, dst); err != nil {
-		return fmt.Errorf("%w: malformed response: %w", ErrDockerUnavailable, errUnusableAnswer)
+		return 0, fmt.Errorf("%w: malformed response: %w", ErrDockerUnavailable, errUnusableAnswer)
 	}
-	return nil
+	return resp.StatusCode, nil
 }
 
 func statusOK(status int, ok []int) bool {

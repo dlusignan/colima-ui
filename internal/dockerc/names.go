@@ -130,3 +130,22 @@ func ValidImageRepository(repo string) bool {
 func ValidImageTarget(repository, tag string) bool {
 	return ValidImageRepository(repository) && ValidImageTag(tag) && ValidImageRef(repository+":"+tag)
 }
+
+// ValidContainerID reports whether id can name a container in a write call:
+// exactly 64 lowercase hex characters (a full id) and nothing else. Docker
+// resolves a full id before it looks at names or prefixes, so a container
+// whose name looks like an id can never take the place of another one, and no
+// request is ambiguous. Short ids, names, uppercase and any character that
+// could change a URL path or add a query are refused.
+func ValidContainerID(id string) bool {
+	if len(id) != 64 {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}

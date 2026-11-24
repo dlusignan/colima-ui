@@ -8,6 +8,7 @@ import type {
   ActionList,
   ApiErrorBody,
   Container,
+  ContainerActionResult,
   ContainerLogs,
   ContainerPort,
   ContainerList,
@@ -210,6 +211,7 @@ export const containerPortShape = {
 
 export const containerShape = {
   id: 'string',
+  fullId: 'string',
   name: 'string',
   image: 'string',
   state: 'string',
@@ -259,6 +261,10 @@ export const cachePruneAcceptedShape = {
   profile: 'string',
   state: 'string',
 } as const satisfies Record<keyof CachePruneAccepted, Kind>
+
+export const containerActionResultShape = {
+  changed: 'boolean',
+} as const satisfies Record<keyof ContainerActionResult, Kind>
 
 export const tagImageRequestShape = {
   repository: 'string',

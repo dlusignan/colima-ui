@@ -70,6 +70,11 @@ type Fake struct {
 	ImageRemoval dockerc.ImageRemoval
 	ImagePrune   dockerc.ImagePruneResult
 
+	// ContainerUnchanged makes StartContainer and StopContainer answer
+	// changed=false, as Docker's 304 does for a container that is already in
+	// the asked state. RestartContainer always reports a change.
+	ContainerUnchanged bool
+
 	// PullLines are emitted by PullImage, in order, before it returns. PullFunc,
 	// when set, replaces that: it receives the context and the emit function, so
 	// a test can block until cancelled, fail, panic or emit hostile lines. Set
@@ -282,6 +287,38 @@ func (f *Fake) PullImage(ctx context.Context, ref string, emit func(string)) err
 		emit(l)
 	}
 	return nil
+}
+
+// containerID records a container call with the id first in Args and returns
+// ErrBadName when the id fails dockerc.ValidContainerID, as the real client
+// would before any request, else the failure set for the method.
+func (f *Fake) containerID(method, id string) error {
+	err := f.record(method, id)
+	if !dockerc.ValidContainerID(id) {
+		return dockerc.ErrBadName
+	}
+	return err
+}
+
+func (f *Fake) StartContainer(_ context.Context, id string) (bool, error) {
+	if err := f.containerID("StartContainer", id); err != nil {
+		return false, err
+	}
+	return !f.ContainerUnchanged, nil
+}
+
+func (f *Fake) StopContainer(_ context.Context, id string) (bool, error) {
+	if err := f.containerID("StopContainer", id); err != nil {
+		return false, err
+	}
+	return !f.ContainerUnchanged, nil
+}
+
+func (f *Fake) RestartContainer(_ context.Context, id string) (bool, error) {
+	if err := f.containerID("RestartContainer", id); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Provider implements dockerc.Provider. It records the profile of every For

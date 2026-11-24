@@ -61,3 +61,16 @@ func emptyBody(w http.ResponseWriter, r *http.Request) error {
 	}
 	return errBadRequest("This route takes no request body.")
 }
+
+// emptyBodyOnly is emptyBody without the "{}" allowance: a route whose request
+// carries no data at all takes an empty body and nothing else.
+func emptyBodyOnly(w http.ResponseWriter, r *http.Request) error {
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, emptyBodyLimit))
+	if err != nil {
+		return errBadRequest("Request body is not valid.")
+	}
+	if len(bytes.TrimSpace(b)) != 0 {
+		return errBadRequest("This route takes no request body.")
+	}
+	return nil
+}
