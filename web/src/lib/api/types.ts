@@ -193,7 +193,7 @@ export interface PullImageRequest {
 }
 
 /**
- * Body of `POST /api/profiles/{name}/delete` (docs/api.md 3.31). `confirm` must
+ * Body of `POST /api/profiles/{name}/delete` (docs/api.md 3.32). `confirm` must
  * equal the profile name exactly; `deleteData` also removes the container
  * runtime data and defaults to false.
  */

@@ -4,7 +4,7 @@ import { queryKeys } from '@/lib/api/keys'
 import type { JobRef, ProfileList } from '@/lib/api/types'
 
 /**
- * Deletes one profile (docs/api.md 3.31). The caller has already made the user
+ * Deletes one profile (docs/api.md 3.32). The caller has already made the user
  * type the profile name, so `confirm` is that name. Pessimistic like
  * useProfileAction: on 202 the job id goes into the cached list as
  * `activeJobId` so every button disables at once, and the list is refetched.
