@@ -264,6 +264,9 @@ func (a *app) handler() http.Handler {
 	// #86 logs
 	opts = append(opts, httpapi.WithLogs(a.gate, a.containers))
 
+	// #138 ssh-config (a read through the colima adapter: no busy check, no action log)
+	opts = append(opts, httpapi.WithSSHConfig(a.gate, sshConfigSource{r: a.runner}))
+
 	// #39 actions
 	opts = append(opts, httpapi.WithActions(a.store, a.gate))
 
@@ -322,4 +325,26 @@ func (a *app) shutdown(ctx context.Context) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+// sshConfigSource adapts the colima adapter to httpapi.SSHConfigSource.
+type sshConfigSource struct{ r colima.Runner }
+
+func (s sshConfigSource) SSHConfig(ctx context.Context, name string) (httpapi.SSHConfigDoc, error) {
+	cfg, err := colima.ReadSSHConfig(ctx, s.r, name)
+	var exit *colima.ExitError
+	var parse *colima.ParseError
+	switch {
+	case errors.As(err, &exit):
+		return httpapi.SSHConfigDoc{}, httpapi.ErrSSHConfigRefused
+	case errors.As(err, &parse):
+		return httpapi.SSHConfigDoc{}, httpapi.ErrSSHConfigUnparseable
+	case err != nil:
+		return httpapi.SSHConfigDoc{}, err
+	}
+	doc := httpapi.SSHConfigDoc{Raw: cfg.Raw, Entries: make([]httpapi.SSHConfigEntry, 0, len(cfg.Entries))}
+	for _, e := range cfg.Entries {
+		doc.Entries = append(doc.Entries, httpapi.SSHConfigEntry{Key: e.Key, Value: e.Value})
+	}
+	return doc, nil
 }
