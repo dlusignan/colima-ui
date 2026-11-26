@@ -1,6 +1,6 @@
 # Colima UI: C4 Architecture Documentation
 
-Status: Draft 0.3, 23 November 2026 (adds decisions on Colima versions, runtimes, metric history, profiles, platform and finished job output)
+Status: Draft 0.4, 26 November 2026. Adds the Docker write side (images, volumes, networks and container start, stop and restart), task jobs that hold no profile slot, the update, delete, Kubernetes and cache prune jobs, profile deletion guarded by Docker contents, the action log and its `_global` key, the responsive layout, and the matching flows, security rules and decisions. Draft 0.3 (23 November 2026) added the decisions on Colima versions, runtimes, metric history, profiles, platform and finished job output.
 Scope: Levels 1 to 3 of the C4 model (Context, Containers, Components). Level 4 (code) is intentionally left out until the first implementation exists.
 
 ## 1. Purpose
@@ -11,7 +11,7 @@ The tool runs only on the developer's own machine. It is not a hosted service an
 
 ## 2. Level 1: System Context
 
-The developer opens the UI in a browser. The UI does not manage containers or VMs by itself. It delegates to Colima for the VM lifecycle and to the Docker Engine API for container and usage details.
+The developer opens the UI in a browser. The UI does not manage containers or VMs by itself. It delegates to Colima for the VM lifecycle and to the Docker Engine API for container and usage details, and for changes to containers, images, volumes and networks.
 
 ```mermaid
 C4Context
@@ -27,7 +27,7 @@ C4Context
 
     Rel(dev, ui, "Uses", "Browser, localhost")
     Rel(ui, colima, "Runs whitelisted subcommands", "Process execution")
-    Rel(ui, docker, "Reads containers and stats", "Unix socket")
+    Rel(ui, docker, "Reads and changes containers, images, volumes and networks", "Unix socket")
     Rel(ui, files, "Reads and edits", "Filesystem")
 ```
 
@@ -48,14 +48,14 @@ C4Container
     }
 
     System_Ext(colima, "Colima CLI", "Lifecycle and configuration")
-    System_Ext(docker, "Docker Engine API", "Containers and stats")
+    System_Ext(docker, "Docker Engine API", "Containers, images, volumes, networks and stats")
     System_Ext(files, "Colima config files", "Profile YAML")
 
     Rel(dev, spa, "Uses", "HTTP, 127.0.0.1")
     Rel(spa, api, "Calls", "REST and Server Sent Events")
     Rel(api, db, "Reads and writes history", "SQL, embedded")
     Rel(api, colima, "Executes", "os/exec, whitelisted")
-    Rel(api, docker, "Queries", "Docker Engine API, Unix socket")
+    Rel(api, docker, "Queries and changes", "Docker Engine API, Unix socket")
     Rel(api, files, "Reads and writes", "Filesystem")
 ```
 
@@ -88,9 +88,9 @@ C4Component
         Component(profiles, "Profile Service", "Go", "Lists profiles and reports status, merges CLI and config data")
         Component(config, "Config Service", "Go, YAML", "Reads, validates and writes profile configuration, flags changes that need a restart")
         Component(adapter, "Colima Adapter", "Go, os/exec", "Only place that runs the colima binary. Whitelist of subcommands and arguments, parses JSON output, isolates version differences")
-        Component(ops, "Operation Manager", "Go, goroutines", "Tracks long running jobs such as start and stop, supports cancellation, captures output")
+        Component(ops, "Operation Manager", "Go, goroutines", "Tracks long running jobs (profile jobs that hold a slot, task jobs that do not), supports cancellation, captures output")
         Component(events, "Event Stream", "Server Sent Events", "Pushes operation output and live metrics to connected browsers")
-        Component(dockerc, "Docker Client", "Docker Engine API, hand-rolled client over the Colima Unix socket", "Containers, per container stats, disk usage, container log snapshots")
+        Component(dockerc, "Docker Client", "Docker Engine API, hand-rolled client over the Colima Unix socket", "Reads containers, images, volumes, networks, per container stats, disk usage and container log snapshots. Writes through typed targets and validators: image tag, remove, prune and pull; volume create, remove and prune; network create, remove and prune; container start, stop and restart")
         Component(sampler, "Metrics Sampler", "Go, ticker", "Collects VM and container usage at a fixed interval")
         Component(store, "History Store", "Ring buffer and SQLite", "Short window in memory, long history on disk, retention cleanup")
     }
@@ -100,9 +100,11 @@ C4Component
     Rel(router, profiles, "Uses")
     Rel(router, config, "Uses")
     Rel(router, ops, "Starts and cancels jobs")
+    Rel(router, dockerc, "Reads and changes Docker objects")
     Rel(profiles, adapter, "Queries status")
     Rel(config, files, "Reads and writes")
     Rel(ops, adapter, "Runs commands")
+    Rel(ops, dockerc, "Runs image pulls as task jobs")
     Rel(ops, events, "Publishes output")
     Rel(sampler, dockerc, "Reads stats")
     Rel(sampler, adapter, "Reads VM details")
@@ -121,7 +123,11 @@ The Colima Adapter is the single choke point for process execution. Every subcom
 
 The Config Service treats the YAML files as the authority. It validates changes, shows which ones require a VM restart, and refuses to write while an operation is running on the same profile.
 
-The Operation Manager serializes work per profile, so two starts or a start and a stop can never run at once on the same VM. Each job has an identifier, a status, captured output, and a context that cancels the child process.
+The Operation Manager serializes work per profile, so two starts or a start and a stop can never run at once on the same VM. Each job has an identifier, a status, captured output, and a context that cancels the child process. The jobs that hold the profile slot are start, stop, restart, create, update (`colima update`, running profiles only), delete and the four Kubernetes verbs. A second kind, the task job, holds no profile slot: the image pull (a Go function that streams from the Docker client) and the download cache clearing (`colima prune`, which belongs to no profile). Task jobs share the job table, output capture, cancellation and event publishing, but never block a start, stop, restart or configuration write and are not blocked by them. The limits are two pulls at a time and one identical reference per profile, and one cache prune at a time across the backend. A delete is refused while a task job runs on its profile, and a cache prune and the jobs that download assets (create, start, restart, Kubernetes start) refuse each other, both checks made under the manager's own lock so neither side slips past the other. Jobs that check a state before running (delete, Kubernetes, update) repeat the check inside the slot and fail closed.
+
+The Docker write foundation gives every Docker route the same steps, in order: the profile gate (the profile exists, the VM is running, the runtime is Docker), an advisory busy check (it sees only this backend's own start, stop and restart jobs, not a terminal or a configuration write), a strict flat body (exact keys, a size limit, nothing nested), validation of every name, reference and value, one fixed typed Docker call whose errors map to fixed messages, and an action log row per attempt that reached Docker. Docker's own text is never sent to the browser, except the cleaned registry error of a failed pull, which answers the user's own request. The details are in `docs/api.md` section 1.3.
+
+The action log records one row per job and per Docker write attempt: the profile, the action name (`start`, `delete`, `docker.volume.remove` and so on), the outcome and a short detail. The Operation Manager feeds it through an observer, and the Docker routes append their own row. A job that belongs to no profile (the cache prune) is stored under the reserved key `_global`, a name no profile can have; no route reads it yet.
 
 The Metrics Sampler feeds the capacity view. It records what the VM is using and what each container is using. Allocated figures are not stored: the capacity view takes the limits from the profile and plots the recorded usage against them, which is what lets the UI show the gap between limit and reality.
 
@@ -141,6 +147,8 @@ Layout favors compact tables over padded cards, status dots for state, and usage
 
 Two specialized libraries cover the rich parts. The operation log uses xterm.js, so streamed Colima output renders exactly like a real terminal, colors included. The capacity charts use uPlot for fast live time series, with thin lines, no gradients, and subtle grid lines. Recharts is the fallback if uPlot proves too manual to style.
 
+The layout uses the full window width with fluid padding instead of a fixed page width, and it adapts to narrow windows by one rule: tables hide their lower priority columns progressively as the window narrows (for example the image id and creation time), the header and tabs wrap, and dialogs keep a side gutter. A table scroll region is the last resort, not the first.
+
 Retro component libraries such as NES.css or 98.css are deliberately avoided. The personality comes from theme and typography, while the layout stays conventional enough to be pleasant in daily use.
 
 ## 5. Key Flows
@@ -151,6 +159,10 @@ Viewing capacity. The Metrics Sampler wakes on its interval, reads VM and contai
 
 Creating a profile. The user submits a name and basic settings. The route validates every value, refuses a name that already exists (in Colima's list or as a folder, in any letter case) and asks the Operation Manager for a `create` job, which runs `colima start` on the new name. From there it behaves like a start.
 
+Deleting a profile. The user opens the delete dialog, which asks `GET /api/profiles/{name}/contents` for the number of Docker containers, images and volumes in the VM (counts only, three Docker reads, advisory). The user types the profile name as confirmation. The route checks the body, the busy state, that the profile exists, the confirmation and then the state: a running VM with the Docker runtime must hold nothing, a running VM on containerd or incus is allowed, a broken VM is always allowed without reading Docker, and a stopped, starting or unknown VM is refused. A refusal is a 409 `invalid_state` whose `details.reason` says why (`docker_not_empty`, `cannot_verify`, `task_running`) and a Docker read that fails answers 502. If everything allows it, the Operation Manager reserves the profile slot and the job reads the status and the Docker counts again inside the slot. If the state changed, the job ends as failed without running Colima and its action log row says `not run: ...`. Otherwise it runs `colima delete -p <name> --force`, plus `--data` when asked, streams its output, writes the action log row, and the profile leaves the list. History rows stay.
+
+Changing a Docker object. The user, for example, removes an image from the Docker tab and confirms. The browser sends one request to the image route. The HTTP Layer authenticates it, the profile gate checks that the VM is running on the Docker runtime, and the busy check looks for a start, stop or restart job. The body and the image text are validated, and then the Docker Client makes its fixed calls: it counts the containers that use the image and refuses with a conflict when any does, otherwise it removes the tags it found, never forced, and reads the image again. The answer lists what Docker untagged and deleted, the action log gets a `docker.image.remove` row with the image text, and the browser refreshes the list. Prune routes follow the same path after a fixed confirmation text, and an image pull answers 202 and continues as a task job that streams its progress like any other job.
+
 Editing configuration. The user changes CPU, memory or disk. The Config Service validates the values, writes the YAML, and returns a list of changes that need a restart. The UI shows that cost and offers a restart, which runs as a normal operation.
 
 ## 6. Security Boundaries
@@ -158,6 +170,15 @@ Editing configuration. The user changes CPU, memory or disk. The Config Service 
 This application can control the VM and, through the Docker socket, effectively the machine, so the backend is the security perimeter.
 
 The server binds to 127.0.0.1 only and never to all interfaces. Every API call requires a random token generated at startup. The HTTP Layer checks the Host and Origin headers to defend against DNS rebinding and cross site requests. There is no endpoint that accepts an arbitrary command, only the fixed set of operations the Colima Adapter exposes. Configuration values are validated against allowed ranges before they touch disk or a command line.
+
+Destructive actions have more guards:
+
+1. Typed confirmations. A profile delete needs the profile name, the Kubernetes reset and delete need a fixed text, the cache clearing and each Docker prune need their own fixed text. The server compares the text exactly and starts nothing without it.
+2. State allowlists. A delete is allowed only in the states listed in the Profile deletion decision, Kubernetes controls only on a running profile with Kubernetes enabled, an update only on a running profile, and a Docker write only on a running VM with the Docker runtime. Anything else, and any read that cannot be made, is refused.
+3. In-slot re-check. A route reads state outside the profile slot, so a delete, a Kubernetes job and an update repeat their checks inside the slot and fail closed without running Colima.
+4. Counts only. The contents route returns numbers, never a container, image or volume name or id.
+5. Typed Docker access. Docker routes take validated names and references, one fixed call each, never a forced delete, never registry credentials, and no Docker text in the answer. Image pull accepts public registries only and a tag or digest.
+6. Truthful audit. The action log says what happened, including `not run:` rows for a refusal inside the slot and `changed=unknown` after a timeout.
 
 ## 7. Data Model (History Database)
 
@@ -190,9 +211,9 @@ CREATE TABLE metric_sample_1m (
 
 CREATE TABLE action_log (
     id          INTEGER PRIMARY KEY,
-    profile     TEXT    NOT NULL,
+    profile     TEXT    NOT NULL,     -- '_global' for jobs that belong to no profile
     started_at  INTEGER NOT NULL,
-    action      TEXT    NOT NULL,     -- 'start', 'stop', 'config_change', ...
+    action      TEXT    NOT NULL,     -- 'start', 'stop', 'delete', 'docker.volume.remove', ...
     outcome     TEXT    NOT NULL,     -- 'success', 'failed', 'cancelled'
     detail      TEXT
 );
@@ -243,7 +264,20 @@ One Go binary containing the embedded React build. It runs as a normal process o
 | Profile deletion | Allowed from the UI as a `delete` job (`colima delete -p <name> --force`, plus `--data` when the user asks for the runtime data to go too). `--force` is always passed so the process never waits for a prompt the UI cannot answer; the confirmation is the profile name typed in the dialog and sent as `confirm`. A VM is deleted only when it holds no Docker containers, images or volumes (issue #157; counts only, stopped containers included, read through the existing Docker client lists). An allowlist of states: a `broken` VM is always deletable and its Docker contents are not read (Colima cannot be asked about a broken VM; this is how a damaged profile is cleaned up, and the typed-name confirmation is the guard); a `running` VM is allowed when all three counts are zero or its runtime is containerd or incus (only `docker`, `containerd` and `incus`, optionally with `+k3s`, are recognised; an empty or unknown runtime, or a list and status that disagree, fail closed as 502), and refused with 409 `invalid_state` and `details.reason` `docker_not_empty` (with the counts) otherwise, or 502 `docker_unavailable` when Docker cannot be read (fail closed); a `stopped` VM is refused with `details.reason` `cannot_verify` because its Docker data cannot be read, so the user starts it, empties it and deletes it; starting or unknown states are refused, and so is any delete while a task job such as an image pull runs on the profile (`details.reason` `task_running`). The status and the count are read again inside the profile slot right before the command runs, and the count fails closed there too (a refused re-check is a failed job that never ran colima, and its action log row names the reason: `not run: docker not empty`, `not run: could not check docker contents`, `not run: profile is stopped, docker contents cannot be checked` or `not run: profile state did not allow deleting`). `GET /api/profiles/{name}/contents` gives the UI the same counts for the dialog (three Docker calls: containers of every state, images, volumes; intermediate layers and build cache are not counted, `colima delete` destroys them too), and the profile must exist as a Colima listing or a real directory in Colima's folder (`default` is not special). History rows stay | `colima delete` is irreversible, and a VM that still holds containers, images or volumes would lose them with it. The in-slot re-check closes the window left by the slow `colima list` and Docker reads, but stays best effort against `colima` runs in a terminal. Residual race: the count and `colima delete` are not atomic, so a container created (for example from a terminal) after the in-slot count and before the VM is removed is deleted with it; a one-shot check cannot close that, and the owner accepted it. A stray file in Colima's folder must not pass for a profile. |
 | Kubernetes cluster control | Start, stop, reset and delete of the cluster are four fixed `colima kubernetes <verb>` jobs through the Operation Manager, allowed only on a running profile whose configuration has `kubernetes.enabled` true (read through the Config Service, never by parsing YAML in a route). The cluster's own state is not the gate: `colima status` reports `kubernetes: false` for a stopped cluster, which would make Start unreachable. Hand-editing the YAML while the VM runs can make the flag drift from the real cluster (true: Start may run on a VM booted without Kubernetes; false: a running cluster cannot be stopped or deleted from the UI). The UI never enables Kubernetes through them. Reset and delete need an exact confirmation text, and a cancelled or failed one can leave the cluster half done | These are the destructive cluster operations Colima offers. The job repeats the running and enabled checks inside the profile slot and fails closed (a refusal is a failed job that never runs colima, like a refused delete), because the route's reads happen outside the slot. |
 | Profile creation: mounts, environment and exclusions | Mounts and environment variables are accepted on creation. A mount is an absolute, clean path with no comma, quote, colon, brace, dollar sign or control character, at most 16, no duplicates, existing and a directory on the host at request time, with symlinks resolved and the resolved path passed to Colima. The root, the home folder and the folders above it are refused when writable (decided by file identity, so firmlinks and case variants are caught) and allowed read-only. Environment variables are `KEY=value` with a `[A-Za-z_][A-Za-z0-9_]*` key, a value up to 4 KiB without NUL, at most 32; a value is refused when it ends in a double quote or combines `=` with a comma, quote or line break, because pflag would parse it differently. Neither is ever logged or repeated in an error. Not supported by design: `--disk-image`, `--force-disk-image`, `--k3s-arg`, `--edit`, `--editor`, `--foreground`, `--template`, `--save-config` and `--downloader` | A mount exposes a host folder to the VM and every container in it, and a disk image is an arbitrary file, so the conservative choice ships first and can be widened later. Colima parses `--mount` as a CSV list, so a comma in a path would add a second mount. The Config Service and the adapter apply the same syntax rules, pinned together by a parity test |
+| Docker manager scope and rules | The Docker tab manages images (tag, inspect, remove, prune, pull), volumes (create, inspect, remove, prune) and networks (bridge only: create, inspect, remove, prune). A prune needs its own fixed confirmation string (`delete-unused-volumes`, `delete-unused-networks`, `delete-unused-images`). A delete is never forced: no route sends `force`. Inspect is a read, with no busy check and no action log row. Removing an object that is in use or protected is refused with `409 conflict`. A pull accepts public registries only and a reference with a tag or a digest, never an implicit `latest`, and takes no credentials, platform or other option | Pruning and removing cannot be undone, and volumes can hold the only copy of data, so each destructive step needs an explicit confirmation and Docker is never asked to override its own safety checks. Prune removes named volumes too (Docker API v1.41 behaviour), which is why its text is distinct per resource. Private registries would mean storing credentials, which is deliberately out of scope. |
+| Container actions | Start, stop and restart of one container only. The route accepts the full 64 character id only, never a name, a short id or a prefix, because Docker resolves an id first, then a name, then a prefix, and a container named like another one's id could take its place. The body is empty. Docker's answer that the container is already in the state is a success with `changed:false`. A Docker 400 on start (resource limits that no longer fit) maps to `409 conflict`. Remove, pause, kill, exec, a custom grace period and bulk actions are out of scope | The three actions are reversible and cover the daily need. Anything destructive or interactive would need its own guards and was not asked for. Mapping the 304 and the 400 to fixed answers keeps Docker's text out of the browser. |
+| Update runtime | `colima update` runs as an `update` job on a running profile only, holds the profile slot, can be cancelled and writes an `update` action log row. A profile that is not running gets `409 invalid_state` and nothing starts | The command refreshes the container runtime inside a running VM, so there is nothing to update in a stopped one, and sharing the slot keeps it from overlapping a start or stop. |
+| SSH config view | `colima ssh-config` is shown as a read: the raw text and the parsed key and value lines, fetched once when the dialog opens and never polled, with no busy check and no action log row. The text holds the identity file path and no key material. A profile that is not running is not rejected up front; if Colima refuses, the route answers `409 invalid_state` | The data is for IDE remote access and `scp`, it changes only when the VM does, and it changes nothing. Letting Colima decide avoids a second opinion about when it can answer. |
+| Clearing the download cache | `colima prune --force` (plus `--all` when asked, to include Lima's cache) runs as a global task job with the action `cache-prune`, no profile and no slot. It needs the typed text `delete-cached-assets`. At most one runs at a time, and it and the jobs that download assets (create, start, restart, Kubernetes start) refuse each other with `409 invalid_state` (`details.reason` `assets_in_use` or `cache_prune_running`). A cancelled one can leave a partial cache, which the next create or start refills | The cache is shared by every profile and Colima removes the folder whatever is using it, so the two sides refuse each other under the manager's lock instead of relying on open files. The only cost of a clear is a new download. The action log row is stored under the reserved key `_global`. |
+| Error convention | A refusal that depends on the current state reuses `409 invalid_state` and puts the cause in `details.reason` (`docker_not_empty`, `cannot_verify`, `task_running`, `kubernetes_not_enabled`, `cache_prune_running`, `assets_in_use`) together with `details.status` where it applies. No new error code is added for a state refusal | Clients already switch on `code`, so a new cause is additive and a route never needs a new code. The reason keys are stable strings, the message is for people. |
+| Audit truthfulness | The action log never claims more than is known. A refusal that happens inside the profile slot is a failed job whose row starts with `not run:` and names the reason, never a Colima exit status. A Docker write whose outcome is unknown (socket failure, Docker 5xx, timeout) is recorded as failed, and a container action row then says `changed=unknown`, because the change may or may not have been applied. A request refused before Docker is contacted writes no row, so a hostile name never lands in the log | The log is the record of what the UI did to the machine, so a guess presented as a fact would mislead the next person who reads it. |
+| Responsive layout | The interface uses the full window width with fluid padding. Table columns of lower priority hide progressively as the window narrows, the header and tabs wrap, dialogs keep a side gutter, and a scroll region around a table is the last resort | A fixed page width wasted space on large windows and broke on small ones. Hiding the least useful column first keeps the row name and its actions visible at every width. |
 
 ## 10. Open Questions
 
-The first release ships Catppuccin Mocha, Tokyo Night, Gruvbox, Nord, Dracula and a light theme, and the theme system follows the operating system setting by default. Each palette meets the contrast test in `web/src/styles/themes/contrast.test.ts`.
+The themes question is answered: the first release ships Catppuccin Mocha, Tokyo Night, Gruvbox, Nord, Dracula and a light theme, the theme system follows the operating system setting by default, and each palette meets the contrast test in `web/src/styles/themes/contrast.test.ts`.
+
+Two questions stay open and are on hold, with no work planned:
+
+1. Distribution. How the binary reaches other people (release builds, signing, an install route) is undecided.
+2. A macOS app wrapper. Packaging as a menu bar or desktop app (section 8) is possible without changing the architecture, and is not started.
